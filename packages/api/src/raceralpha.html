@@ -2185,6 +2185,34 @@
       border-radius: 8px;
     }
     .console-conf-summary::-webkit-details-marker { display: none; }
+    /* Account strip: where a new user stands (connect, fund, trade) and the one action that moves them on */
+    .alpha-account-strip {
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px 20px;
+      padding: 14px 16px; margin-bottom: 16px; border: 1px solid var(--color-border); border-radius: 12px;
+      background: var(--color-surface);
+    }
+    .aas-steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
+    .aas-steps li {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: 9999px;
+      font-size: 12px; font-weight: 600; color: var(--color-text-subtle); border: 1px solid transparent;
+    }
+    .aas-num {
+      display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 9999px;
+      font: 600 11px var(--font-mono); border: 1px solid var(--color-border); color: var(--color-text-muted);
+    }
+    .aas-steps li[data-state="current"] { color: var(--color-text); border-color: rgba(106, 204, 220, 0.35); background: rgba(106, 204, 220, 0.08); }
+    .aas-steps li[data-state="current"] .aas-num { border-color: var(--color-primary); color: var(--color-primary); }
+    .aas-steps li[data-state="done"] { color: var(--color-text-muted); }
+    .aas-steps li[data-state="done"] .aas-num { border-color: transparent; background: rgba(52, 211, 153, 0.16); color: #34D399; }
+    .aas-title { font-size: 15px; font-weight: 700; color: var(--color-text); }
+    .aas-title .aas-amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--color-primary); }
+    .aas-sub { font-size: 12.5px; color: var(--color-text-muted); line-height: 1.45; margin-top: 2px; max-width: 70ch; }
+    .aas-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .aas-actions button { min-height: 44px; padding: 0 18px; font-size: 13px; }
+    @media (max-width: 1023px) {
+      .alpha-account-strip { grid-template-columns: minmax(0, 1fr); }
+      .aas-actions { justify-content: flex-start; }
+    }
     .console-conf-summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
     .console-conf-summary-title { display: inline-flex; align-items: center; gap: 8px; }
     .console-conf-chevron { transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); color: var(--color-text-muted); }
@@ -4194,11 +4222,7 @@
           <div class="alpha-top-left">
             <div class="alpha-logo-badge">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--color-text);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-              <span>RACER // Console CONFIDENTIAL TRADING CONSOLE</span>
-            </div>
-            <div class="alpha-network-pill">
-              <span class="live-dot" style="width:6px;height:6px;"></span>
-              <span>NEAR Intent Router • Confidential</span>
+              <span>Private trading console</span>
             </div>
           </div>
           
@@ -4217,12 +4241,21 @@
               <span class="alpha-m-label">ACTIVE ALPHA CALLERS</span>
               <span class="alpha-m-val" style="color:var(--color-racer-cyan);" id="alpha-active-traders-count">--</span>
             </div>
-            <div class="alpha-metric-divider"></div>
-            <div class="alpha-metric-item">
-              <span class="alpha-m-label">CONFIDENTIALITY</span>
-              <span class="alpha-m-val" style="color:var(--color-text); font-weight:700;">Private</span>
-            </div>
           </div>
+        </div>
+
+        <!-- Account strip: connect, fund, trade -->
+        <div class="alpha-account-strip" id="alpha-account-strip" aria-live="polite">
+          <ol class="aas-steps" aria-label="Getting started">
+            <li data-step="connect"><span class="aas-num">1</span>Connect</li>
+            <li data-step="fund"><span class="aas-num">2</span>Fund</li>
+            <li data-step="trade"><span class="aas-num">3</span>Trade</li>
+          </ol>
+          <div>
+            <div class="aas-title" id="aas-title">Connect a wallet to start</div>
+            <div class="aas-sub" id="aas-sub">Solana, EVM or NEAR wallet, or your Telegram account.</div>
+          </div>
+          <div class="aas-actions" id="aas-actions"></div>
         </div>
 
         <!-- Mobile Terminal Navigation Tabs (Visible only on mobile devices) -->
@@ -4504,18 +4537,18 @@
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--color-text);">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                      <span id="intent-routing-badge">Zero-trace executor route</span>
+                      <span id="intent-routing-badge">Private trade</span>
                     </div>
-                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">EXECUTOR POOL</span>
+                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">PRIVATE</span>
                   </div>
                   <div style="font-size:11px; color:var(--color-text-muted); margin-top:4px; line-height:1.45;" id="intent-routing-desc">
-                    Executed by a disposable executor subaccount funded from NEAR Intents. On sell, funds return to Intents and the executor self-deletes on-chain.
+                    Runs from your private balance through a one-time account, so your wallet never appears in the trade. When you sell, the NEAR returns to your private balance.
                   </div>
                 </div>
 
                 <div id="alpha-trade-feedback" style="display:none; padding:10px; border-radius:8px; font-size:11.5px; line-height:1.45;"></div>
 
-                <button type="button" class="btn-primary" id="btn-alpha-execute" onclick="executeRacerAlphaConsoleTrade()" style="width:100%; justify-content:center; min-height:44px; font-size:13.5px; font-weight:700;">
+                <button type="button" class="btn-primary" id="btn-alpha-execute" onclick="handleAlphaExecuteClick()" style="width:100%; justify-content:center; min-height:44px; font-size:13.5px; font-weight:700;">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
                   <span id="btn-alpha-label">Execute Private Trade</span>
                 </button>
@@ -4622,7 +4655,7 @@
                 <summary class="console-conf-summary">
                   <span class="console-conf-summary-title">
                     <svg class="console-conf-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                    <span>Executor pool</span>
+                    <span>Advanced: executor pool</span>
                   </span>
                   <span class="console-conf-summary-meta">Ready <span id="console-conf-pool-summary">--</span> NEAR · <span id="console-conf-mode-pill" style="color:var(--color-primary);">SPLIT MODE</span></span>
                 </summary>
@@ -4630,7 +4663,7 @@
 
                 <div class="console-conf-metrics" style="grid-template-columns:1fr;">
                   <div>
-                    <div class="console-conf-metric-label">Private Balance (Intents)</div>
+                    <div class="console-conf-metric-label">Private balance</div>
                     <div class="console-conf-metric-val"><span id="console-conf-balance">--</span> <span style="font-size:11px; color:var(--color-text-muted); font-weight:500;">NEAR</span></div>
                   </div>
                 </div>
@@ -5963,12 +5996,19 @@
         const res = await fetch('/alpha/confidential', { headers: getAuthHeaders() });
         const data = await res.json();
         if (res.status === 503) {
+          lastConfidentialOverview = { enabled: false };
+          renderAccountStrip();
+          updateExecuteButtonText();
           if (note) note.textContent = 'Confidential trading switches on once its contracts are deployed.';
           if (body) body.hidden = true;
           if (consoleChipsEl) consoleChipsEl.innerHTML = '<span style="font-size:11.5px; color:var(--color-text-subtle);">Executor contracts are initializing.</span>';
           return;
         }
         if (res.status === 401) {
+          confSessionRejected = true;
+          lastConfidentialOverview = null;
+          renderAccountStrip();
+          updateExecuteButtonText();
           const activeWallet = getActiveUserAddress();
           if (note) note.textContent = data.error || 'Sign in with Telegram, or connect your wallet (Solana, EVM or NEAR) and approve the sign-in message, to use private trading.';
           if (body) body.hidden = true;
@@ -5987,6 +6027,7 @@
         }
         if (!res.ok || !data.success) throw new Error(data.error || 'HTTP ' + res.status);
         lastConfidentialOverview = data;
+        confSessionRejected = false;
         renderPrivateBalanceCard();
         renderBalanceForCurrentSide();
         if (body) body.hidden = false;
@@ -6248,7 +6289,7 @@
         if (pdepState.has(el)) { pdepRefresh(el); return; }
         pdepState.set(el, { source: 'racer', quote: null });
         el.innerHTML = `
-          <p class="conf-hint">Lands in your <b>private balance</b> (your inner NEAR Intents wallet). Executors are funded from it, so your wallet never appears in a trade.</p>
+          <p class="conf-hint">Lands in your <b>private balance</b>. Private trades run from it, so your wallet never appears in a trade.</p>
           <div class="pdep-sources" role="group" aria-label="Deposit from">
             <button type="button" class="pdep-source" data-src="racer" aria-pressed="true">RacerBot wallet</button>
             <button type="button" class="pdep-source" data-src="connected" aria-pressed="false">Connected NEAR wallet</button>
@@ -6286,8 +6327,20 @@
         el.querySelector('[data-go="connected"]').addEventListener('click', e => pdepFromConnectedWallet(el, e.currentTarget));
         el.querySelector('[data-go="chain"]').addEventListener('click', e => pdepFromChain(el, e.currentTarget));
         el.querySelector('[data-chain]').addEventListener('change', () => pdepLoadTokens(el));
-        pdepRefresh(el);
+        pdepSelect(el, pdepDefaultSource());
       });
+    }
+
+    /**
+     * Start on the source this user can actually pay from: a funded RacerBot wallet, else a connected NEAR
+     * wallet, else another chain with the chain of the wallet they signed in with (SOL for Solana, Base for EVM).
+     */
+    function pdepDefaultSource() {
+      if ((lastCachedNearBalance || 0) >= 0.2) return 'racer';
+      if (window.RacerConnect?.activeNearWallet) return 'connected';
+      const chain = window.RacerConnect?.activeWalletChain;
+      if (chain === 'solana' || chain === 'evm' || window.RacerConnect?.activeSolanaWallet || window.RacerConnect?.activeEvmWallet) return 'chain';
+      return 'racer';
     }
 
     function pdepSelect(el, src) {
@@ -6377,6 +6430,10 @@
       try {
         pdepChains ??= (await fetch('/deposit/chains').then(r => r.json())).chains || [];
         sel.innerHTML = pdepChains.filter(c => c.id !== 'near').map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+        // The chain of the wallet the user signed in with
+        const signedIn = window.RacerConnect?.activeWalletChain || (window.RacerConnect?.activeSolanaWallet ? 'solana' : window.RacerConnect?.activeEvmWallet ? 'evm' : '');
+        const preferred = signedIn === 'solana' ? 'sol' : signedIn === 'evm' ? 'base' : '';
+        if (preferred && [...sel.options].some(o => o.value === preferred)) sel.value = preferred;
         await pdepLoadTokens(el);
       } catch (err) {
         sel.innerHTML = '<option value="">Chains unavailable</option>';
@@ -6453,6 +6510,9 @@
         pdepStatus(el, err.message || 'Payment failed', 'error');
       }
     }
+
+    document.addEventListener('DOMContentLoaded', () => { renderAccountStrip(); });
+    window.addEventListener('racer:auth-changed', () => { confSessionRejected = false; renderAccountStrip(); updateExecuteButtonText(); });
 
     function openPrivateDepositModal(amountNear) {
       const modal = document.getElementById('modal-private-deposit');
@@ -7821,7 +7881,7 @@
 
       if (selectedRacerAlphaSide === 'BUY') {
         // Private buys spend executors funded from the private balance, not the public RacerBot wallet
-        const priv = privateFunds();
+        const priv = getAuthHeaders().Authorization && !confSessionRejected ? privateFunds() : null;
         if (balLabel) balLabel.textContent = 'Private balance:';
         balEl.textContent = priv ? `${priv.total.toFixed(4)} Ⓝ` : '-- Ⓝ';
         balEl.title = priv ? `${priv.balance.toFixed(4)} NEAR in your private balance + ${priv.ready.toFixed(4)} NEAR in ready executors` : 'Sign in to see your private balance';
@@ -7845,8 +7905,19 @@
       return { balance, ready, total: balance + ready };
     }
 
-    /** The card above the trade panel: the private balance this terminal trades from, and how to fund it */
+    /**
+     * The old card above the trade panel repeated the private balance; the account strip and the line above
+     * Buy carry it now. Kept as the one entry point callers use to refresh both.
+     */
     function renderPrivateBalanceCard() {
+      const card = document.getElementById('alpha-trading-wallet-card');
+      if (card) card.style.display = 'none';
+      renderAccountStrip();
+      updateExecuteButtonText();
+    }
+
+    /** Unused: the card's former markup, left out of the page */
+    function privateBalanceCardMarkup() {
       const card = document.getElementById('alpha-trading-wallet-card');
       const inner = document.getElementById('alpha-trading-wallet-inner');
       if (!card || !inner || !getAuthHeaders().Authorization) return;
@@ -7866,6 +7937,102 @@
           <button type="button" class="btn-secondary btn-sm" style="min-height:44px; padding:0 14px; font-size:12px;" onclick="openPrivateDepositModal()">Deposit</button>
         </div>
         <div style="font-size:11px; color:var(--color-text-subtle); margin-top:4px;">Private trades run from here (your inner NEAR Intents wallet). A deposit shows up about 20 seconds after it settles.</div>`;
+    }
+
+    let confSessionRejected = false;
+
+    const CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+
+    /** The account strip: which step a user is on (connect, fund, trade) and the one action that moves them on */
+    function renderAccountStrip() {
+      const strip = document.getElementById('alpha-account-strip');
+      if (!strip) return;
+      const authed = Boolean(getAuthHeaders().Authorization) && !confSessionRejected;
+      const o = lastConfidentialOverview;
+      const priv = privateFunds();
+      const step = !authed ? 'connect' : (priv && priv.total > 0 ? 'trade' : 'fund');
+      const order = ['connect', 'fund', 'trade'];
+      strip.querySelectorAll('.aas-steps li').forEach(li => {
+        const i = order.indexOf(li.dataset.step), cur = order.indexOf(step);
+        li.dataset.state = i < cur ? 'done' : i === cur ? 'current' : 'todo';
+        li.querySelector('.aas-num').innerHTML = i < cur ? CHECK_SVG : String(i + 1);
+        if (i === cur) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
+      });
+      const title = document.getElementById('aas-title');
+      const sub = document.getElementById('aas-sub');
+      const actions = document.getElementById('aas-actions');
+      const btn = (label, cls, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = cls; b.textContent = label; b.addEventListener('click', fn);
+        return b;
+      };
+      actions.innerHTML = '';
+      const connected = getActiveUserAddress();
+      if (step === 'connect' && connected) {
+        // A wallet is connected but has not signed in yet
+        title.textContent = 'Approve the sign-in message';
+        sub.textContent = `${connected.length > 22 ? connected.slice(0, 10) + '...' + connected.slice(-6) : connected} is connected. Signing a message proves it is yours; it is free and sends no transaction.`;
+        actions.append(btn('Sign in', 'btn-primary', (e) => verifyConnectedWalletSession(e.currentTarget)));
+      } else if (step === 'connect') {
+        title.textContent = 'Connect a wallet to start';
+        sub.textContent = 'Solana, EVM or NEAR wallet, or your Telegram account. Signing in is free and sends no transaction.';
+        actions.append(btn('Connect Wallet', 'btn-primary', () => openConnectModal()));
+      } else if (o && o.enabled === false) {
+        title.textContent = 'Private trading opens soon';
+        sub.textContent = 'You can already fund your private balance; trading switches on shortly.';
+        actions.append(btn('Deposit', 'btn-secondary', () => openPrivateDepositModal()));
+      } else if (step === 'fund') {
+        title.textContent = 'Fund your private balance';
+        sub.textContent = 'Private trades run from it, so your wallet never shows up in a trade. Add NEAR, or send SOL, ETH, USDC and more from another chain.';
+        actions.append(btn('Deposit', 'btn-primary', () => openPrivateDepositModal()));
+      } else {
+        title.innerHTML = `Private balance <span class="aas-amount">${priv.total.toFixed(4)} NEAR</span>`;
+        sub.textContent = priv.ready > 0
+          ? `Ready to trade: pick a token and buy. ${priv.ready.toFixed(2)} NEAR is set up for instant buys.`
+          : 'Ready to trade: pick a token and buy. Your first buy takes about 15 seconds to set up.';
+        actions.append(btn('Deposit', 'btn-secondary', () => openPrivateDepositModal()));
+        actions.append(btn('Withdraw', 'btn-secondary', () => {
+          switchNav('receipts');
+          setTimeout(() => document.getElementById('conf-withdraw-amount')?.focus(), 300);
+        }));
+      }
+    }
+
+    /**
+     * What the Buy button should do now. A new user is guided (connect, then deposit) instead of
+     * pressing Buy into an error.
+     */
+    function alphaBuyIntent(amountNear) {
+      if (!getAuthHeaders().Authorization || confSessionRejected) {
+        return { kind: 'connect', label: getActiveUserAddress() ? 'Sign in to trade' : 'Connect wallet to trade' };
+      }
+      const o = lastConfidentialOverview;
+      if (o && o.enabled === false) return { kind: 'closed', label: 'Private trading opens soon' };
+      const priv = privateFunds();
+      if (priv && priv.total <= 0) return { kind: 'deposit', label: 'Deposit to trade', need: amountNear };
+      if (priv && amountNear > priv.total + 1e-9) {
+        const more = Math.ceil((amountNear - priv.total) * 10) / 10;
+        return { kind: 'deposit', label: `Deposit ${more} NEAR more`, need: more };
+      }
+      return { kind: 'trade' };
+    }
+
+    function handleAlphaExecuteClick() {
+      const amount = parseFloat(document.getElementById('alpha-trade-amount')?.value || '0') || 0;
+      if (selectedRacerAlphaSide === 'BUY') {
+        const intent = alphaBuyIntent(amount);
+        if (intent.kind === 'connect') {
+          if (getActiveUserAddress()) verifyConnectedWalletSession(document.getElementById('btn-alpha-execute'));
+          else openConnectModal();
+          return;
+        }
+        if (intent.kind === 'deposit') { openPrivateDepositModal(intent.need); return; }
+        if (intent.kind === 'closed') { showToast('Private trading opens soon. You can already fund your private balance.', 'info'); return; }
+      } else if (!getAuthHeaders().Authorization) {
+        openConnectModal();
+        return;
+      }
+      executeRacerAlphaConsoleTrade();
     }
 
     function renderTradePresetChips() {
@@ -7937,7 +8104,9 @@
 
       if (isBuy) {
         const amtLabel = (rawVal && !isNaN(numVal) && numVal > 0) ? ` (${rawVal} NEAR)` : '';
-        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>Buy ${sym}${amtLabel}</span>`;
+        const intent = alphaBuyIntent(numVal > 0 ? numVal : 0);
+        const label = intent.kind === 'trade' ? `Buy ${sym}${amtLabel}` : escapeHtml(intent.label);
+        btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>${label}</span>`;
         btn.style.background = 'var(--color-primary)';
         btn.style.color = 'var(--color-on-primary)';
       } else {
@@ -8071,13 +8240,13 @@
             const badge = document.getElementById('intent-routing-badge');
             const desc = document.getElementById('intent-routing-desc');
             const tag = document.getElementById('intent-routing-tag');
-            if (badge) badge.textContent = 'Keyless executor pool';
+            if (badge) badge.textContent = 'Private trade';
             if (tag) {
-              tag.textContent = 'CONFIDENTIAL FLEET';
+              tag.textContent = 'PRIVATE';
               tag.style.color = 'var(--color-racer-cyan)';
               tag.style.background = 'rgba(106, 204, 220,0.12)';
             }
-            if (desc) desc.textContent = `Runs from a pool executor on ${selectedAlphaToken.venue || 'the DEX'}, so your wallet does not appear in the trade.`;
+            if (desc) desc.textContent = `Runs from your private balance through a one-time account on ${selectedAlphaToken.venue || 'the DEX'}, so your wallet never appears in the trade.`;
             if (q.amountOutFormatted && q.amountOutFormatted !== '0') {
               estEl.textContent = `≈ ${q.amountOutFormatted} ${selectedRacerAlphaSide === 'BUY' ? selectedAlphaToken.symbol : 'NEAR'}`;
             }
@@ -8157,16 +8326,15 @@
 
       if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span>Dispatching Private Intent...</span>';
+        btn.innerHTML = '<span>Placing private trade...</span>';
       }
       if (feedback) {
         feedback.style.display = 'block';
         feedback.style.background = 'rgba(106, 204, 220, 0.1)';
         feedback.style.color = 'var(--color-racer-cyan)';
-        const dispatchDesc = isBuy 
-          ? `Routing private <b>BUY</b> of <b>${inputVal} NEAR</b> for <b>${escapeHtml(selectedAlphaToken.symbol)}</b>`
-          : `Routing private <b>SELL</b> of <b>${inputVal.toLocaleString()} ${escapeHtml(selectedAlphaToken.symbol)}</b> for NEAR`;
-        feedback.innerHTML = `${dispatchDesc} via <b>Private Solver Relayer</b>...`;
+        feedback.innerHTML = isBuy
+          ? `Placing a private buy of <b>${inputVal} NEAR</b> of <b>${escapeHtml(selectedAlphaToken.symbol)}</b>...`
+          : `Placing a private sell of <b>${inputVal.toLocaleString()} ${escapeHtml(selectedAlphaToken.symbol)}</b>...`;
       }
 
       const tradePayload = () => JSON.stringify({
@@ -8226,6 +8394,24 @@
           data = await res.json();
         }
 
+        // Funds are there but no executor is set up for this amount yet: RacerBot is preparing one (about
+        // 15 seconds). Wait and retry instead of failing, so a first buy just takes a little longer.
+        if (isBuy && (!res.ok || !data.success) && /No ready executor covers this amount/i.test(String(data.error || ''))) {
+          if (feedback) {
+            feedback.style.display = 'block';
+            feedback.style.background = 'rgba(106, 204, 220, 0.1)';
+            feedback.style.color = 'var(--color-racer-cyan)';
+            feedback.textContent = 'Setting up a private account for this buy. It continues on its own; this takes about 15 seconds.';
+          }
+          for (let attempt = 0; attempt < 12; attempt++) {
+            if (btn) btn.innerHTML = '<span>Preparing private trade (about 15 s)...</span>';
+            await new Promise(r => setTimeout(r, 5000));
+            res = await fetch('/alpha/trade/execute', { method: 'POST', headers: getAuthHeaders(), body: tradePayload() });
+            data = await res.json();
+            if (!/No ready executor covers this amount/i.test(String(data.error || ''))) break;
+          }
+        }
+
         if (data && data.canRetryPublic) {
           if (feedback) {
             feedback.style.display = 'block';
@@ -8240,20 +8426,14 @@
 
         // If user needs to fund their Confidential Intents Pool to spawn disposable executors
         if (data.needsConfidentialDeposit) {
-          const depAmt = Math.max(2, Number(((data.amountNear || amtNear || 1.0) * 1.05).toFixed(2)));
-          const depBox = document.getElementById('console-conf-deposit-box');
-          if (depBox) {
-            depBox.hidden = false;
-            revealConsoleConfDrawer(depBox);
-            mountPrivateDeposits();
-            depBox.querySelectorAll('[data-amount]').forEach(i => { i.value = String(depAmt); });
-          }
+          const depAmt = Math.max(1, Number(((data.amountNear || amtNear || 1.0) * 1.05).toFixed(2)));
           if (feedback) {
             feedback.style.display = 'block';
             feedback.style.background = 'rgba(106, 204, 220, 0.14)';
             feedback.style.color = 'var(--color-racer-cyan)';
-            feedback.innerHTML = `<b>Your private balance needs funding:</b> deposit about <b>${depAmt} NEAR</b> below (from your RacerBot wallet, your connected NEAR wallet, or another chain). Executors spawn about 15 seconds after it arrives; then click <b>Buy</b> again.`;
+            feedback.innerHTML = `<b>Your private balance is too low for this buy.</b> Deposit about <b>${depAmt} NEAR</b>, then press Buy again.`;
           }
+          openPrivateDepositModal(depAmt);
           return;
         }
 
@@ -8366,11 +8546,11 @@
         const isIntent = data.routing === 'INTENT_SOLVER';
         const isVault = data.routing === 'RACER_SHIELDED_VAULT';
         const routeLabel = isExecutor
-          ? 'Disposable Executor Pool (racerbotrouter.near)'
+          ? 'Private (a one-time account, not your wallet)'
           : isIntent
           ? 'Decentralized Private Intent (Defuse Solver)'
           : isVault
-          ? 'Racer Shielded Router (racerbotrouter.near)'
+          ? 'Racer Shielded Router'
           : `AMM Relayer (${escapeHtml(selectedAlphaToken.venue)})`;
         const extraNote = isExecutor
           ? `<br><span style="font-size:11px; color:var(--color-racer-cyan);">${escapeHtml(data.message || 'Executed through disposable executor subaccount(s) with zero link to your wallet.')}</span>`
@@ -8384,7 +8564,7 @@
           ? `<br><a href="https://nearblocks.io/txns/${data.txHash}" target="_blank" style="color:var(--color-racer-cyan); text-decoration:underline; font-size:11.5px; font-family:var(--font-mono);">View Confirmed On-Chain Tx (${data.txHash.slice(0, 10)}...) ↗</a>`
           : '';
         const deliveredTo = isExecutor && Array.isArray(data.executors) && data.executors.length
-          ? `<br><span style="font-size:11px;">Held in disposable executor(s): <b style="font-family:var(--font-mono);">${escapeHtml(data.executors.join(', '))}</b></span>`
+          ? `<br><span style="font-size:11px;">Held privately by: <b style="font-family:var(--font-mono);">${escapeHtml(data.executors.join(', '))}</b></span>`
           : data.recipientAccountId
           ? `<br><span style="font-size:11px;">Delivered to <b style="font-family:var(--font-mono);">${escapeHtml(data.recipientAccountId)}</b></span>`
           : '';
@@ -8395,10 +8575,18 @@
         const signalBroadcastNote = data.signalId
           ? `<br><span style="font-size:11px; color:var(--color-racer-cyan);">Alpha Signal Broadcasted · <b>${data.autoCopyFillsCount || 0} subscriber auto-copy fill(s)</b></span>`
           : '';
+        let firstPrivateNote = '';
+        if (isExecutor && isBuy) {
+          let seen = false;
+          try { seen = localStorage.getItem('racer-first-private-buy') === '1'; localStorage.setItem('racer-first-private-buy', '1'); } catch (e) { seen = true; }
+          if (!seen) {
+            firstPrivateNote = `<br><span style="font-size:11.5px; color:var(--color-text);">Your first private position. It is held by a one-time account, not your wallet, and nothing on-chain links the two. Sell it here any time; the NEAR returns to your private balance. <a href="#" onclick="event.preventDefault(); switchNav('receipts');" style="color:var(--color-primary);">See it in Receipts</a></span>`;
+          }
+        }
         if (feedback) {
           feedback.style.background = 'rgba(52, 211, 153, 0.15)';
           feedback.style.color = 'var(--color-primary)';
-          feedback.innerHTML = `<b>Private ${selectedRacerAlphaSide} Executed!</b><br>Route: <b>${routeLabel}</b>${extraNote}${deliveredTo}${routerNote}${signalBroadcastNote}${txLink}`;
+          feedback.innerHTML = `<b>Private ${isBuy ? 'buy' : 'sell'} done</b><br>Route: <b>${routeLabel}</b>${extraNote}${deliveredTo}${routerNote}${signalBroadcastNote}${firstPrivateNote}${txLink}`;
         }
 
         // Immediately update live wallet balance, confidential executor pool, and terminal views

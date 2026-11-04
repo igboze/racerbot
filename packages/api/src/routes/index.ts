@@ -1051,7 +1051,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
               success: false,
               needsConfidentialDeposit: true,
               amountNear: numNear,
-              error: `Deposit at least ${numNear} NEAR into your Confidential Pool to spawn anonymous executor wallets for this trade.`,
+              error: `Your private balance is too low for this buy. Deposit at least ${numNear} NEAR, then buy again.`,
             });
             return;
           }

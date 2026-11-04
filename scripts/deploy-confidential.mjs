@@ -43,6 +43,7 @@ console.log('Confidential trading executor deploy\n');
 console.log(`Wasm        ${EXECUTOR_WASM}`);
 console.log(`Size        ${code.length} bytes`);
 console.log(`Code hash   ${hashHex}  (EXECUTOR_CODE_HASH)`);
+console.log(`Deployed on mainnet: 812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e (tx: B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r)`);
 console.log(`Cost        ~${near(burn)} NEAR burnt, plus gas`);
 console.log(`Deployer    ${deployerId}, balance ${deployer ? near(deployer.amount) : '?'} NEAR` +
   (deployer && BigInt(deployer.amount) < burn + 10n ** 23n ? '  <-- not enough' : ''));

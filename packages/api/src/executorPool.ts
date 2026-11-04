@@ -54,14 +54,14 @@ import { withInFlightGuard } from './inflight.js';
 
 const logger = createLogger('executor-pool');
 
-export const EXECUTORS_ENABLED = process.env.CONFIDENTIAL_EXECUTORS_ENABLED === 'true';
+export const EXECUTORS_ENABLED = process.env.CONFIDENTIAL_EXECUTORS_ENABLED !== 'false';
 /**
  * The account that creates and drives every executor (each executor is `<name>.<controller>` and only
  * accepts calls from it). There is no router contract: this account signs every executor transaction.
  */
 export const EXECUTOR_CONTROLLER = process.env.EXECUTOR_CONTROLLER_ACCOUNT_ID || process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
 /** Hex sha256 of the deployed executor global contract (scripts/deploy-confidential.mjs prints it) */
-const EXECUTOR_CODE_HASH = (process.env.EXECUTOR_CODE_HASH || '').trim().toLowerCase();
+export const EXECUTOR_CODE_HASH = (process.env.EXECUTOR_CODE_HASH || '812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e').trim().toLowerCase();
 const RPC_URL = process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com';
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '';
 
@@ -624,7 +624,7 @@ export async function confidentialOverview(user: UserRecord) {
     };
   }
   const [balance, executors, moves] = await Promise.all([
-    privateBalance(acct).catch(() => null),
+    privateBalance(acct).catch((err) => { logger.warn(`Failed reading private balance for ${acct.user_id}: ${err?.message}`); return null; }),
     listUserExecutors(acct.user_id, ['creating', 'funding', 'ready', 'claimed', 'open', 'exiting', 'exited', 'failed']),
     listUserConfidentialMoves(acct.user_id, 30),
   ]);
