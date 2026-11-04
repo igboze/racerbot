@@ -1424,20 +1424,16 @@
       try {
         const res = await fetch('/deposit/quote', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...fleetAuthHeader() },
           body: JSON.stringify({ chain, symbol, amount, subaccountId: fleetMainAccount, telegramId: fleetTelegramId || undefined }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Could not create the deposit address');
         const minNear = Number(data.minNearOut) > 0 ? Number(data.minNearOut).toFixed(4) : null;
         const sourceChain = (data.sourceChain || chain).toLowerCase();
-        const isEvmChain = ['eth', 'base', 'arb', 'bsc', 'pol', 'evm'].includes(sourceChain);
-        const isSolChain = ['sol', 'solana'].includes(sourceChain);
-        const hasEvm = Boolean(window.ethereum && (window.RacerConnect?.activeEvmWallet || window.RacerConnect?.activeWalletChain === 'evm'));
-        const hasSol = Boolean((window.phantom?.solana || window.solana) && (window.RacerConnect?.activeSolanaWallet || window.RacerConnect?.activeWalletChain === 'solana'));
-        const canPayInWallet = (isEvmChain && hasEvm) || (isSolChain && hasSol) || (sourceChain === 'near' && window.RacerConnect?.activeNearWallet);
-        const payBtnHtml = canPayInWallet
-          ? `<button type="button" class="btn btn-primary btn-sm" onclick="payFleetDepositInWallet(this, '${escapeHtml(sourceChain)}', '${escapeHtml(data.depositAddress)}', ${amount}, '${escapeHtml(symbol)}')">Pay ${escapeHtml(String(amount))} in Wallet</button>`
+        fleetDepositQuote = { ...data, sourceChain, sourceSymbol: data.sourceSymbol || symbol, sourceAmount: data.sourceAmount ?? amount };
+        const payBtnHtml = canPayFleetDepositInWallet(sourceChain, fleetDepositQuote.sourceSymbol, data.sourceContract)
+          ? `<button type="button" class="btn btn-primary btn-sm" onclick="payFleetDepositInWallet(this)">Pay ${escapeHtml(String(amount))} in Wallet</button>`
           : '';
 
         out.hidden = false;
@@ -1458,16 +1454,38 @@
       }
     }
 
-    async function payFleetDepositInWallet(btn, chain, depositAddress, amount, symbol) {
+    let fleetDepositQuote = null;
+
+    /** The connected wallet pays only what it can send exactly: a supported EVM chain's coin or ERC-20, or native SOL */
+    function canPayFleetDepositInWallet(chain, symbol, contract) {
+      const native = { eth: 'ETH', base: 'ETH', arb: 'ETH', bsc: 'BNB', pol: 'POL' };
+      const sym = String(symbol || '').toUpperCase();
+      if (native[chain]) {
+        const hasEvm = Boolean(window.ethereum && (window.RacerConnect?.activeEvmWallet || window.RacerConnect?.activeWalletChain === 'evm'));
+        return hasEvm && (Boolean(contract) || sym === native[chain]);
+      }
+      if (chain === 'sol' || chain === 'solana') {
+        const hasSol = Boolean((window.phantom?.solana || window.solana) && (window.RacerConnect?.activeSolanaWallet || window.RacerConnect?.activeWalletChain === 'solana'));
+        return hasSol && !contract && sym === 'SOL';
+      }
+      return false;
+    }
+
+    async function payFleetDepositInWallet(btn) {
+      const q = fleetDepositQuote;
+      if (!q) return;
       const oldHtml = btn.innerHTML;
       btn.disabled = true;
       btn.innerHTML = '<span>Approving in Wallet…</span>';
       try {
         await window.RacerConnect.sendConnectedWalletTransfer({
-          chain,
-          depositAddress,
-          amount,
-          symbol,
+          chain: q.sourceChain,
+          depositAddress: q.depositAddress,
+          amount: q.sourceAmount,
+          amountRaw: q.sourceAmountRaw,
+          decimals: q.sourceDecimals,
+          contract: q.sourceContract,
+          symbol: q.sourceSymbol,
         });
         showToast('Payment submitted from connected wallet! Tracking deposit...', 'success');
         btn.innerHTML = '<span>Submitted! Tracking…</span>';

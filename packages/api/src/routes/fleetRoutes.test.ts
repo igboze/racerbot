@@ -77,7 +77,7 @@ describe('fleet routes need a verified sign-in', () => {
     session.user = owner;
     const res = await call('post', '/fleet/distribute', { body: { totalNear: 5, telegramId: 999 } });
     expect(res.statusCode).toBe(200);
-    expect(fleet.distributeFundsToFleet).toHaveBeenCalledWith(111, 5);
+    expect(fleet.distributeFundsToFleet).toHaveBeenCalledWith(owner, 5);
     const status = await call('get', '/fleet/status', {});
     expect(status.body.user).toMatchObject({ subaccountId: 'owner.racerbot.near' });
   });

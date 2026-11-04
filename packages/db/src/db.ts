@@ -460,7 +460,9 @@ export async function createUser(params: CreateUserParams): Promise<UserRecord> 
   const result = await db.query(
     `INSERT INTO users (id, telegram_id, subaccount_id, scoped_key_encrypted, sui_address, sui_private_key_enc, starknet_address, starknet_private_key_enc, default_buy_pct, default_sell_pct, fee_tier, solana_address, solana_private_key_enc, evm_address, evm_private_key_enc)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-     ON CONFLICT (telegram_id) DO UPDATE SET 
+     -- Migration 068 made telegram_id unique only when positive (a partial index), so the conflict
+     -- target names that predicate; it also matches the older full unique constraint
+     ON CONFLICT (telegram_id) WHERE telegram_id IS NOT NULL AND telegram_id > 0 DO UPDATE SET 
        subaccount_id = COALESCE(users.subaccount_id, EXCLUDED.subaccount_id), 
        scoped_key_encrypted = COALESCE(users.scoped_key_encrypted, EXCLUDED.scoped_key_encrypted),
        sui_address = COALESCE(users.sui_address, EXCLUDED.sui_address),
@@ -4613,6 +4615,21 @@ function mapMove(row: any): ConfidentialMoveRecord {
 export async function getConfidentialAccount(userId: string): Promise<ConfidentialAccountRecord | null> {
   const db = await getDb();
   const res = await db.query('SELECT * FROM confidential_accounts WHERE user_id = $1', [userId]);
+  return res.rows[0] ? mapConfidentialAccount(res.rows[0]) : null;
+}
+
+/**
+ * Point a private account's payout at a new NEAR account. Executors carry a hash of the payout, so this
+ * only applies while the user has none yet; returns null otherwise.
+ */
+export async function repairConfidentialPayout(userId: string, payout: string): Promise<ConfidentialAccountRecord | null> {
+  const db = await getDb();
+  const res = await db.query(
+    `UPDATE confidential_accounts SET payout_address = $2, updated_at = NOW()
+     WHERE user_id = $1 AND NOT EXISTS (SELECT 1 FROM confidential_executors WHERE user_id = $1)
+     RETURNING *`,
+    [userId, payout]
+  );
   return res.rows[0] ? mapConfidentialAccount(res.rows[0]) : null;
 }
 

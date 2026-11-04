@@ -17,6 +17,7 @@ import {
   createConfidentialAccount,
   expireStaleConfidentialQuotes,
   getConfidentialAccount,
+  repairConfidentialPayout,
   getExecutor,
   getUserConfidentialMove,
   insertConfidentialMove,
@@ -174,10 +175,23 @@ function failureOf(outcome: any): string | null {
 // ── Accounts ──────────────────────────────────────────────────────────────────
 
 /** The user's private balance account, created on first use (no on-chain transaction) */
+/** A NEAR account a private balance can pay out to (named, 64-hex implicit, or 0x ETH-implicit) */
+export function isNearPayoutAccount(id: string | null | undefined): boolean {
+  return Boolean(id) && String(id).length <= 64 && /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/.test(String(id))
+    && (String(id).includes('.') || /^[0-9a-f]{64}$/.test(String(id)) || /^0x[0-9a-f]{40}$/.test(String(id)));
+}
+
 export async function ensureConfidentialAccount(user: UserRecord): Promise<ConfidentialAccountRecord> {
   const existing = await getConfidentialAccount(user.id);
-  if (existing) return existing;
+  if (existing) {
+    // An account made for a Solana sign-in before the user had a NEAR wallet pays out there instead
+    if (!isNearPayoutAccount(existing.payout_address) && isNearPayoutAccount(user.subaccount_id)) {
+      return (await repairConfidentialPayout(user.id, user.subaccount_id)) || existing;
+    }
+    return existing;
+  }
   if (!MASTER_KEY) throw new Error('Encryption master key is not configured');
+  if (!isNearPayoutAccount(user.subaccount_id)) throw new Error('Private trading needs a NEAR account to pay out to');
   const keys = generatePrivateAccount();
   return createConfidentialAccount({
     user_id: user.id,
@@ -319,8 +333,12 @@ async function buildPlan(p: {
       break;
     }
     case 'GenericFtCall':
+      // The executor contract only sends to these launchpads; anything else (a pre-bonding auction) is refused
+      if (!planned.custom_contract || !LAUNCHPAD_RECEIVERS.has(planned.custom_contract)) {
+        throw new Error('This token is in a pre-bonding auction, which confidential mode cannot trade');
+      }
       venue = 'Launchpad';
-      receiver = planned.custom_contract || p.tokenAddress;
+      receiver = planned.custom_contract;
       break;
     default:
       throw new Error(`Venue ${planned.venue} is not supported in confidential mode`);
@@ -334,7 +352,6 @@ async function buildPlan(p: {
     receiver,
     deadline_sec: Math.floor(Date.now() / 1000) + 120,
     correlation_id: p.correlationId,
-    custom_msg: planned.custom_msg || null,
   };
 }
 

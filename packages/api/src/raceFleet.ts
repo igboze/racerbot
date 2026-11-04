@@ -1122,8 +1122,8 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
 }
 
 // ── Telegram UI: RaceFleet Holdings & PnL View ──────────────────────────────
-export async function buildFleetHoldingsView(telegramId: number, forceRefresh = false): Promise<{ text: string; keyboard: any }> {
-  const user = await getUserByTelegramId(telegramId);
+export async function buildFleetHoldingsView(userOrTelegramId: number | string | UserRecord, forceRefresh = false): Promise<{ text: string; keyboard: any }> {
+  const user = await resolveFleetUser(userOrTelegramId);
   if (!user) throw new Error('User not found');
 
   const fleet = await getRaceFleetByUserId(user.id);

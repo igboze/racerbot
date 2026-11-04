@@ -6,6 +6,7 @@ import {
   getRacerDepositById,
   getActiveRacerDeposits,
   getUserByTelegramId,
+  getUserById,
   type RacerDepositRecord,
 } from '@racerbot/db';
 import { unwrapUserWrapNear, recoverIntentRefund } from './wallet.js';
@@ -380,12 +381,15 @@ export async function generateQrBuffer(text: string): Promise<Buffer> {
  */
 export async function create1ClickDepositQuote(params: {
   telegramId: number;
+  userId?: string;
   subaccountId: string;
   token: OneClickToken;
   amount: number;
 }): Promise<RacerDepositRecord> {
   const token = params.token;
-  const user = await getUserByTelegramId(params.telegramId);
+  const user = params.userId
+    ? await getUserById(params.userId)
+    : params.telegramId > 0 ? await getUserByTelegramId(params.telegramId) : null;
 
   // Calculate raw base units (e.g. 1 SOL = 1000000000)
   const decimals = token.decimals;
@@ -576,12 +580,22 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
 
           const check = await check1ClickDepositStatus(dep.deposit_address);
 
+          // The deposit's own account (a web-only user has no Telegram chat), and Telegram only when it has one
+          // (9900000001 was the placeholder older web quotes stored)
+          const depUser = dep.user_id ? await getUserById(dep.user_id).catch(() => null) : null;
+          const owner: any = depUser || dep.telegram_id;
+          const tgChat = Number(dep.telegram_id) > 0 && Number(dep.telegram_id) !== 9900000001 ? Number(dep.telegram_id) : 0;
+          const tg = {
+            sendMessage: (_chat: number, text: string, extra?: any) =>
+              tgChat ? bot.telegram.sendMessage(tgChat, text, extra) : Promise.resolve(null),
+          };
+
           if (check.status === 'SUCCESS' && dep.status !== 'SUCCESS') {
             notifiedMultichainDeposits.add(dep.deposit_id);
             logger.info(`Deposit ${dep.deposit_id} fulfilled! Triggering JIT auto-unwrap for user ${dep.telegram_id}`);
 
             // Explicitly suppress duplicate native NEAR deposit alert in depositWatcher for 10 minutes
-            suppressDepositAlert(dep.telegram_id, 'near', 10 * 60 * 1000);
+            if (tgChat) suppressDepositAlert(tgChat, 'near', 10 * 60 * 1000);
 
             await updateRacerDeposit(dep.deposit_id, {
               status: 'SUCCESS',
@@ -591,7 +605,7 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
 
             let unwrappedAmount = '0';
             try {
-              const unwrapRes = await unwrapUserWrapNear(dep.telegram_id);
+              const unwrapRes = await unwrapUserWrapNear(owner);
               unwrappedAmount = unwrapRes.unwrappedAmount;
               await updateRacerDeposit(dep.deposit_id, {
                 unwrapped: true,
@@ -625,7 +639,7 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
               ],
             };
 
-            await bot.telegram.sendMessage(dep.telegram_id, msg, {
+            await tg.sendMessage(tgChat, msg, {
               parse_mode: 'HTML',
               reply_markup: keyboard,
             }).catch((err) => {
@@ -641,7 +655,7 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
             });
 
             // Attempt automatic recovery
-            const recovery = await recoverIntentRefund(dep.telegram_id, dep.source_asset);
+            const recovery = await recoverIntentRefund(owner, dep.source_asset);
             const chainInfo = SUPPORTED_CHAINS[dep.source_chain.toLowerCase()];
             const chainName = chainInfo ? `${chainInfo.icon} ${chainInfo.name}` : dep.source_chain.toUpperCase();
             const sourceAmtStr = dep.source_amount ? `${dep.source_amount} ${dep.source_symbol || ''}` : '';
@@ -661,7 +675,7 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
                 `🔄 <b>Auto-Unwrap:</b> Converted to native NEAR\n\n` +
                 `<i>Your transfer was slightly below minimum due to wallet gas deductions, but our daemon auto-recovered and settled your NEAR!</i>`;
 
-              await bot.telegram.sendMessage(dep.telegram_id, recMsg, {
+              await tg.sendMessage(tgChat, recMsg, {
                 parse_mode: 'HTML',
                 reply_markup: {
                   inline_keyboard: [
@@ -680,7 +694,7 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
                 `🛡️ <b>Your funds were safely refunded</b> to your account on NEAR Intents.\n` +
                 `Tap below to view your wallet or start a new deposit:`;
 
-              await bot.telegram.sendMessage(dep.telegram_id, refMsg, {
+              await tg.sendMessage(tgChat, refMsg, {
                 parse_mode: 'HTML',
                 reply_markup: {
                   inline_keyboard: [

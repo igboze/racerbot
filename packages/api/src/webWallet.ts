@@ -44,9 +44,11 @@ export async function createWebManagedWallet(userId: string): Promise<{ address:
     if (hasManagedWallet(user)) return { address: user.subaccount_id, created: false };
 
     // Keep the wallet they signed in with linked, so its signature still finds this account
+    // (a Solana or EVM sign-in is already linked under its own chain)
     const connected = user.subaccount_id;
     const linked = await getUserWallets(userId, 'near').catch(() => []);
-    if (connected && !linked.some(w => w.address === connected)) {
+    const connectedIsNear = Boolean(connected) && connected !== user.solana_address && connected.toLowerCase() !== (user.evm_address || '').toLowerCase();
+    if (connected && connectedIsNear && !linked.some(w => w.address === connected)) {
       await createUserWallet({
         userId, chain: 'near', address: connected, name: 'Connected wallet',
         encryptedPrivateKey: EXTERNAL_WALLET_MARKER, isImported: true, isActive: false,

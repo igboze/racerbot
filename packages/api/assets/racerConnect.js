@@ -50,15 +50,23 @@
     return digits.reverse().map(d => ALPHABET[d]).join('');
   }
 
-  /** Convert ether decimal string or number to hex wei */
-  function toHexWei(amountEther) {
-    const parts = String(amountEther || '0').trim().split('.');
-    const whole = BigInt(parts[0] || '0');
-    let fraction = parts[1] || '';
-    if (fraction.length > 18) fraction = fraction.slice(0, 18);
-    else while (fraction.length < 18) fraction += '0';
-    const wei = (whole * 1000000000000000000n) + BigInt(fraction);
-    return '0x' + wei.toString(16);
+  /** EVM chains a connected wallet can pay a 1Click deposit on, with the coin it sends natively */
+  const EVM_DEPOSIT_CHAINS = {
+    eth: { id: 1, name: 'Ethereum', native: 'ETH' },
+    base: { id: 8453, name: 'Base', native: 'ETH' },
+    arb: { id: 42161, name: 'Arbitrum One', native: 'ETH' },
+    bsc: { id: 56, name: 'BNB Chain', native: 'BNB' },
+    pol: { id: 137, name: 'Polygon', native: 'POL' },
+  };
+  const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+  /** Base units of a deposit: the quote's exact raw amount when given, else the decimal amount */
+  function baseUnits(amountRaw, amount, decimals) {
+    if (amountRaw != null && /^\d+$/.test(String(amountRaw))) return BigInt(String(amountRaw));
+    const d = Number.isInteger(decimals) && decimals >= 0 ? decimals : 18;
+    const [whole, frac = ''] = String(amount ?? '0').trim().split('.');
+    if (!/^\d*$/.test(whole) || !/^\d*$/.test(frac)) return 0n;
+    return BigInt(whole || '0') * 10n ** BigInt(d) + BigInt((frac + '0'.repeat(d)).slice(0, d) || '0');
   }
 
   /** The transaction hash from whatever shape a wallet's signAndSendTransaction returns */
@@ -819,29 +827,50 @@
     }
 
     /**
-     * Send transfer directly from connected wallet to 1Click Intent Deposit Address
+     * Pay a 1Click deposit quote from the connected wallet. Sends exactly the quoted asset on the quoted
+     * chain: the chain's native coin, or an ERC-20 transfer on the token contract. Anything else (SPL or
+     * NEP-141 tokens, other chains) has to be sent by hand to the copied address.
      */
-    async sendConnectedWalletTransfer({ chain, depositAddress, amount, symbol }) {
+    async sendConnectedWalletTransfer({ chain, depositAddress, amount, amountRaw, decimals, contract, symbol }) {
       if (!depositAddress) throw new Error('Deposit address is required.');
       const targetChain = (chain || '').toLowerCase();
+      const sym = String(symbol || '').toUpperCase();
+      const manual = `Sending ${symbol || 'this token'} on ${chain} from the connected wallet is not supported. Copy the deposit address and send it from your wallet.`;
 
-      if (['eth', 'base', 'arb', 'bsc', 'pol', 'evm', 'ethereum'].includes(targetChain)) {
+      const evm = EVM_DEPOSIT_CHAINS[targetChain];
+      if (evm) {
         if (!window.ethereum) throw new Error('No EVM wallet detected to send transaction.');
-        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-        const from = accounts[0] || this.activeEvmWallet;
-        if (!from) throw new Error('Please connect your EVM wallet first.');
+        if (!EVM_ADDRESS.test(depositAddress)) throw new Error('This deposit address is not an EVM address.');
+        // A token without a contract must be the chain's own coin; never send the coin for a token
+        if (contract ? !EVM_ADDRESS.test(contract) : sym !== evm.native) throw new Error(manual);
+        const raw = baseUnits(amountRaw, amount, contract ? decimals : 18);
+        if (raw <= 0n) throw new Error('The deposit amount is missing.');
 
-        const valueHex = toHexWei(amount);
-        const txHash = await window.ethereum.request({
-          method: 'eth_sendTransaction',
-          params: [{ from, to: depositAddress, value: valueHex }],
-        });
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const from = accounts && accounts[0];
+        if (!from) throw new Error('Please connect your EVM wallet first.');
+        // The same address exists on every EVM chain: switch to the quote's chain before sending
+        const chainHex = '0x' + evm.id.toString(16);
+        const onChain = async () => String(await window.ethereum.request({ method: 'eth_chainId' })).toLowerCase() === chainHex;
+        if (!(await onChain())) {
+          await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainHex }] });
+          if (!(await onChain())) throw new Error(`Switch your wallet to ${evm.name} and try again.`);
+        }
+        const tx = contract
+          ? { from, to: contract, value: '0x0', data: '0xa9059cbb' + depositAddress.slice(2).toLowerCase().padStart(64, '0') + raw.toString(16).padStart(64, '0') }
+          : { from, to: depositAddress, value: '0x' + raw.toString(16) };
+        const txHash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [tx] });
         return { success: true, txHash, chain: targetChain };
       }
 
       if (['sol', 'solana'].includes(targetChain)) {
+        // Only native SOL: an SPL token needs token accounts this simple transfer does not create
+        if (contract || sym !== 'SOL') throw new Error(manual);
         const solana = window.phantom?.solana || window.solana;
         if (!solana) throw new Error('No Solana wallet detected to send transaction.');
+        if (!solana.publicKey) await solana.connect();
+        const lamports = baseUnits(amountRaw, amount, 9);
+        if (lamports <= 0n) throw new Error('The deposit amount is missing.');
         if (!window.solanaWeb3) {
           await new Promise((resolve, reject) => {
             const s = document.createElement('script');
@@ -851,32 +880,23 @@
             document.head.appendChild(s);
           });
         }
-        if (window.solanaWeb3) {
-          const connection = new window.solanaWeb3.Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-          const fromPubkey = solana.publicKey;
-          const toPubkey = new window.solanaWeb3.PublicKey(depositAddress);
-          const lamports = Math.round(parseFloat(amount) * 1e9);
-          const tx = new window.solanaWeb3.Transaction().add(
-            window.solanaWeb3.SystemProgram.transfer({
-              fromPubkey,
-              toPubkey,
-              lamports,
-            })
-          );
-          const { blockhash } = await connection.getLatestBlockhash();
-          tx.recentBlockhash = blockhash;
-          tx.feePayer = fromPubkey;
-          const signed = await solana.signAndSendTransaction(tx);
-          const txHash = signed.signature || signed;
-          return { success: true, txHash, chain: 'solana' };
-        }
+        if (!window.solanaWeb3) throw new Error('Failed to load Solana Web3 runtime. Please copy deposit address.');
+        const connection = new window.solanaWeb3.Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+        const fromPubkey = solana.publicKey;
+        const toPubkey = new window.solanaWeb3.PublicKey(depositAddress);
+        const tx = new window.solanaWeb3.Transaction().add(
+          window.solanaWeb3.SystemProgram.transfer({ fromPubkey, toPubkey, lamports: Number(lamports) })
+        );
+        const { blockhash } = await connection.getLatestBlockhash();
+        tx.recentBlockhash = blockhash;
+        tx.feePayer = fromPubkey;
+        const signed = await solana.signAndSendTransaction(tx);
+        const txHash = signed.signature || signed;
+        return { success: true, txHash, chain: 'solana' };
       }
 
-      if (['near'].includes(targetChain)) {
-        return this.sendNearTransaction({ receiverId: depositAddress, amountNear: amount });
-      }
-
-      throw new Error(`Sending directly from connected wallet is not yet supported for ${chain}. Please copy deposit address.`);
+      // NEAR deposits are wNEAR token transfers, not native NEAR: send those by hand
+      throw new Error(manual);
     }
 
     /**

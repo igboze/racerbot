@@ -136,4 +136,33 @@ describe('Multi-Wallet Authentication (EVM & Solana & NEAR)', () => {
       })
     ).rejects.toThrow(/does not match the issued challenge/);
   });
+
+  it('signs in only as the wallet that signed, never as a named account', async () => {
+    const attacker = ethers.Wallet.createRandom();
+    const challenge = await createWalletAuthChallenge(attacker.address, 'evm');
+    const signature = await attacker.signMessage(challenge.message);
+    const res = await authenticateWalletUser({
+      accountId: 'victim.near',
+      chain: 'evm',
+      proof: {
+        challengeId: challenge.challengeId,
+        accountId: attacker.address,
+        chain: 'evm',
+        message: challenge.message,
+        nonce: challenge.nonce,
+        recipient: challenge.recipient,
+        signature,
+      },
+    });
+    expect(res.success).toBe(false);
+    expect(res.authToken).toBeUndefined();
+    expect(res.reason).toMatch(/does not match/);
+  });
+
+  it('refuses a stated chain that does not fit the address', () => {
+    expect(() => detectWalletChain('victim.near', 'evm')).toThrow();
+    expect(() => detectWalletChain('victim.near', 'solana')).toThrow();
+    expect(() => detectWalletChain('0x' + 'ab'.repeat(20), 'solana')).toThrow();
+    expect(detectWalletChain('0x' + 'ab'.repeat(20), 'near')).toBe('near');
+  });
 });
