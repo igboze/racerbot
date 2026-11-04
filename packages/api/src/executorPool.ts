@@ -403,7 +403,16 @@ function chooseSizes(ready: ConfidentialExecutorRecord[], amount: bigint, mode: 
   const sizes = ready.map(e => BigInt(e.size_yocto)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   if (mode === 'single') {
     const fit = sizes.find(s => s >= amount);
-    return fit ? [fit] : null;
+    if (fit) return [fit];
+    // If no single executor is large enough, fall back to split across ready executors
+    const picked: bigint[] = [];
+    let left = amount;
+    for (const s of [...sizes].reverse()) {
+      if (left <= 0n) break;
+      picked.push(s);
+      left -= s;
+    }
+    return left <= 0n ? picked : null;
   }
   if (mode === 'fleet') {
     // Spread evenly over every ready executor that can carry an equal share
@@ -444,7 +453,13 @@ async function confidentialBuyLocked(p: Parameters<typeof confidentialBuy>[0], f
   const ready = await listUserExecutors(acct.user_id, ['ready']);
   const sizes = chooseSizes(ready, p.amountYocto, acct.buy_mode);
   if (!sizes) {
+    const totalReady = ready.reduce((s, e) => s + BigInt(e.size_yocto || '0'), 0n);
     void refillPool(acct).catch(() => undefined);
+    if (p.amountYocto > totalReady) {
+      const readyNear = (Number(totalReady) / 1e24).toFixed(2);
+      const wantNear = (Number(p.amountYocto) / 1e24).toFixed(2);
+      return fail(`No ready executor covers ${wantNear} Ⓝ (ready balance: ${readyNear} Ⓝ). Try ${readyNear} Ⓝ or lower, or wait for pool refilling.`);
+    }
     return fail('No ready executor covers this amount yet. Your pool is refilling (about 15 seconds); try again shortly or lower the amount.');
   }
   const claimed = await claimReadyExecutors(acct.user_id, sizes.map(String));

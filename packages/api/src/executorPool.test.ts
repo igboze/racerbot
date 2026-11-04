@@ -12,6 +12,10 @@ describe('chooseSizes', () => {
     expect(chooseSizes(ready(NEAR, NEAR), NEAR, 'single')).toEqual([NEAR]);
   });
 
+  it('single: falls back to split across ready executors when multiple cover the amount', () => {
+    expect(chooseSizes(ready(NEAR, NEAR), 2n * NEAR, 'single')).toEqual([NEAR, NEAR]);
+  });
+
   it('single: nothing when no executor is big enough', () => {
     expect(chooseSizes(ready(NEAR, NEAR), 3n * NEAR, 'single')).toBeNull();
   });

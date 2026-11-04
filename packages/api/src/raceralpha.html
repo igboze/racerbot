@@ -4498,7 +4498,7 @@
                 <div style="display:flex; flex-direction:column; gap:6px;">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <label id="alpha-amount-label" for="alpha-trade-amount" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">AMOUNT</label>
-                    <span style="font-size:11px; color:var(--color-text-subtle);"><span id="alpha-balance-label">NEAR Balance:</span> <b id="alpha-wallet-balance" style="color:var(--color-text); font-family:var(--font-mono); font-weight:700;">-- Ⓝ</b></span>
+                    <span style="font-size:11px; color:var(--color-text-subtle);"><span id="alpha-balance-label">NEAR Balance:</span> <b id="alpha-wallet-balance" onclick="useFullTradeBalance()" style="color:var(--color-text); font-family:var(--font-mono); font-weight:700; cursor:pointer;" title="Click to use ready balance">-- Ⓝ</b></span>
                   </div>
                   <div style="position:relative;">
                     <input type="number" id="alpha-trade-amount" step="0.1" min="0.1" value="2.5" placeholder="Amount in NEAR" oninput="isSelectedMaxSell=false; currentSellPct=null; updateRacerAlphaEstimatedOutput(); updateExecuteButtonText();" style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 85px 0 12px; font-size:15px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-weight:700; box-sizing:border-box;">
@@ -7884,8 +7884,13 @@
         const priv = !confSessionRejected ? privateFunds() : null;
         if (balLabel) balLabel.textContent = 'Private balance:';
         balEl.textContent = priv ? `${priv.total.toFixed(4)} Ⓝ` : '-- Ⓝ';
-        balEl.title = priv ? `${priv.balance.toFixed(4)} NEAR in your private balance + ${priv.ready.toFixed(4)} NEAR in ready executors` : 'Sign in to see your private balance';
+        balEl.title = priv ? `${priv.balance.toFixed(4)} NEAR in your private balance + ${priv.ready.toFixed(4)} NEAR in ready executors (Click to use ready balance)` : 'Sign in to see your private balance';
         balEl.style.color = 'var(--color-primary)';
+        const input = document.getElementById('alpha-trade-amount');
+        if (input && priv && priv.ready > 0 && (input.value === '2.5' || !input.value)) {
+          input.value = Math.min(1.0, priv.ready).toString();
+          updateRacerAlphaEstimatedOutput();
+        }
       } else {
         const sym = selectedAlphaToken?.symbol || selectedTokenBalance.symbol || 'TOKEN';
         if (balLabel) balLabel.textContent = `${sym} Balance:`;
@@ -7894,6 +7899,24 @@
         balEl.style.color = 'var(--color-racer-cyan)';
       }
     }
+
+    function useFullTradeBalance() {
+      const input = document.getElementById('alpha-trade-amount');
+      if (!input) return;
+      if (selectedRacerAlphaSide === 'BUY') {
+        const priv = privateFunds();
+        if (priv && priv.ready > 0) {
+          input.value = priv.ready.toString();
+          updateRacerAlphaEstimatedOutput();
+        } else if (lastCachedNearBalance > 0) {
+          input.value = Math.max(0.1, Number((lastCachedNearBalance - 0.05).toFixed(2))).toString();
+          updateRacerAlphaEstimatedOutput();
+        }
+      } else {
+        setRacerAlphaSellPercent(1.0);
+      }
+    }
+    window.useFullTradeBalance = useFullTradeBalance;
 
     /** Private funds from the last confidential overview: balance (inner wallet) and ready executors, in NEAR */
     function privateFunds() {
