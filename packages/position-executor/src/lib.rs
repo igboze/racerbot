@@ -1,15 +1,16 @@
 /*!
  * RacerBot position executor: one keyless account per confidential position.
  *
- * Deployed once as a NEAR global contract; every executor is a subaccount of the router
- * running this code. An executor holds exactly one position and only ever:
+ * Deployed once as a NEAR global contract; every executor is a subaccount of the controller
+ * (racerbot.near), which creates it and is its only trading caller. There is no router contract.
+ * An executor holds exactly one position and only ever:
  *   • swaps on a fixed list of venues, building every venue message itself from typed fields,
- *   • pays the RacerBot fee to the router (capped at MAX_FEE_BPS),
+ *   • pays the RacerBot fee straight to the treasury (capped at MAX_FEE_BPS),
  *   • sends its NEAR to a NEAR Intents deposit address or to its owner (salted-hash checked),
  *   • closes itself once every balance it tracked is zero.
  *
  * Because one account belongs to one user, balances are exact: nothing has to be attributed.
- * Arguments are borsh (the router is the only trading caller); this keeps the code small enough
+ * Arguments are borsh (the controller is the only trading caller); this keeps the code small enough
  * to deploy as a global contract, where every byte is paid for.
  */
 
@@ -87,7 +88,7 @@ pub const CLOSE_DELAY_BLOCKS: u64 = 20;
 const DUST: u128 = 3 * STORAGE_DEPOSIT;
 /// Reserve that must stay above the storage stake (registrations are paid from the reserve)
 const RESERVE_BUFFER: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
-/// After this long without router activity the owner may exit with their salt
+/// After this long without controller activity the owner may exit with their salt
 pub const OWNER_EXIT_AFTER_NS: u64 = 7 * 24 * 3600 * 1_000_000_000;
 /// Default sell fee for the owner's safety exit (the bot's standard rate)
 const DEFAULT_SELL_FEE_BPS: u32 = 150;
@@ -95,6 +96,8 @@ const DEFAULT_SELL_FEE_BPS: u32 = 150;
 const MAX_TOKENS: usize = 4;
 
 const STORAGE_DEPOSIT: u128 = 1_250_000_000_000_000_000_000; // 0.00125 NEAR
+/// Where every fee goes: fixed in the code, so the code hash commits to it
+const TREASURY: &str = "racerbottreasury.near";
 const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 
 // ── Gas ───────────────────────────────────────────────────────────────────────
@@ -103,7 +106,6 @@ const GAS_WRAP: Gas = Gas::from_tgas(10);
 const GAS_SWAP: Gas = Gas::from_tgas(120);
 const GAS_VIEW: Gas = Gas::from_tgas(5);
 const GAS_FT_XFER: Gas = Gas::from_tgas(15);
-const GAS_FEE: Gas = Gas::from_tgas(5);
 const GAS_CB_TRADE: Gas = Gas::from_tgas(25);
 const GAS_CB_EXIT: Gas = Gas::from_tgas(40);
 const GAS_CB_CLOSE: Gas = Gas::from_tgas(80);
@@ -182,7 +184,7 @@ pub enum ResultKind {
 
 #[near(contract_state)]
 pub struct PositionExecutor {
-    router: AccountId,
+    controller: AccountId,
     owner_hash: Vec<u8>,
     status: Status,
     /// Tokens this executor registered with (checked and unregistered at close)
@@ -196,7 +198,7 @@ pub struct PositionExecutor {
     /// NEAR measured for the exit, already net of fee
     exit_amount: u128,
     exited_at_block: u64,
-    last_router_call_ns: u64,
+    last_controller_call_ns: u64,
 }
 
 impl Default for PositionExecutor {
@@ -208,14 +210,14 @@ impl Default for PositionExecutor {
 #[near]
 impl PositionExecutor {
     #[init]
-    pub fn new(#[serializer(borsh)] router: AccountId, #[serializer(borsh)] owner_hash: Vec<u8>) -> Self {
+    pub fn new(#[serializer(borsh)] controller: AccountId, #[serializer(borsh)] owner_hash: Vec<u8>) -> Self {
         require!(!env::state_exists(), "Already initialized");
-        require!(env::predecessor_account_id() == router, "Only the router creates executors");
+        require!(env::predecessor_account_id() == controller, "Only the controller creates executors");
         require!(owner_hash.len() == 32, "owner_hash must be 32 bytes");
         // Everything here at creation is RacerBot's deposit; the user's funds arrive afterwards
         let reserve = env::account_balance().as_yoctonear();
         Self {
-            router,
+            controller,
             owner_hash,
             status: Status::Ready,
             tokens: Vec::new(),
@@ -224,7 +226,7 @@ impl PositionExecutor {
             value_after_buy: 0,
             exit_amount: 0,
             exited_at_block: 0,
-            last_router_call_ns: env::block_timestamp(),
+            last_controller_call_ns: env::block_timestamp(),
         }
     }
 
@@ -232,7 +234,7 @@ impl PositionExecutor {
 
     /// Buy `plan.token` with native NEAR. The fee (fee_bps of amount_in) is paid only for what the venue used.
     pub fn buy(&mut self, #[serializer(borsh)] plan: SwapPlan, #[serializer(borsh)] fee_bps: u32) -> Promise {
-        self.assert_router();
+        self.assert_controller();
         require!(self.status == Status::Ready, "Executor already holds a position");
         require!(fee_bps <= MAX_FEE_BPS, "Fee above maximum");
         let value_before = self.native_available();
@@ -273,7 +275,7 @@ impl PositionExecutor {
 
     /// Sell `plan.amount_in` of `plan.token` for NEAR. No fee here: the sell fee is charged on proceeds at exit.
     pub fn sell(&mut self, #[serializer(borsh)] plan: SwapPlan) -> Promise {
-        self.assert_router();
+        self.assert_controller();
         require!(self.status == Status::Open, "No open position");
         let mut setup: Option<Promise> = None;
         if !self.wnear_registered && plan.venue != Venue::BondingCurve && plan.venue != Venue::Intear {
@@ -300,14 +302,14 @@ impl PositionExecutor {
     /// Step 1 of an exit: unwrap any wNEAR, measure the NEAR, pay the sell fee on proceeds.
     /// Leaves `exit_amount` ready to send (net of fee and of the registrations an Intents exit needs).
     pub fn prepare_exit(&mut self, #[serializer(borsh)] fee_bps: u32) -> Promise {
-        self.assert_router();
+        self.assert_controller();
         require!(fee_bps <= MAX_FEE_BPS, "Fee above maximum");
         self.start_prepare_exit(fee_bps)
     }
 
     /// Step 2a: send exactly `amount` of the measured NEAR, as wNEAR, to a NEAR Intents deposit address.
     pub fn exit_to_intents(&mut self, #[serializer(borsh)] deposit_address: AccountId, #[serializer(borsh)] amount: u128) -> Promise {
-        self.assert_router();
+        self.assert_controller();
         require!(self.status == Status::Exiting, "Call prepare_exit first");
         require!(amount > 0 && amount <= self.exit_amount, "Amount above the measured exit amount");
         self.exit_amount -= amount;
@@ -333,7 +335,7 @@ impl PositionExecutor {
 
     /// Step 2b: send the measured NEAR to the owner (fast withdraw, publicly linked).
     pub fn exit_to_owner(&mut self, #[serializer(borsh)] to: AccountId, #[serializer(borsh)] salt: String) -> Promise {
-        self.assert_router();
+        self.assert_controller();
         self.assert_owner_address(&to, &salt);
         require!(self.status == Status::Exiting, "Call prepare_exit first");
         self.exit_to_owner_unchecked(to)
@@ -342,7 +344,7 @@ impl PositionExecutor {
     /// Send a token's whole balance to the owner (withdraw a position as tokens; publicly linked).
     pub fn send_token_to_owner(&mut self, #[serializer(borsh)] token: AccountId, #[serializer(borsh)] to: AccountId,
                                #[serializer(borsh)] salt: String) -> Promise {
-        self.assert_router();
+        self.assert_controller();
         self.assert_owner_address(&to, &salt);
         Self::sweep_token(token, to)
     }
@@ -355,11 +357,11 @@ impl PositionExecutor {
         Self::sweep_token(token, to)
     }
 
-    /// Safety exit when RacerBot is unavailable: after OWNER_EXIT_AFTER_NS without router activity,
+    /// Safety exit when RacerBot is unavailable: after OWNER_EXIT_AFTER_NS without controller activity,
     /// anyone holding the salt can measure (first call) and then send (second call) the NEAR to the owner.
     pub fn owner_exit(&mut self, #[serializer(borsh)] to: AccountId, #[serializer(borsh)] salt: String) -> Promise {
         self.assert_owner_address(&to, &salt);
-        require!(env::block_timestamp() >= self.last_router_call_ns + OWNER_EXIT_AFTER_NS, "Router still active");
+        require!(env::block_timestamp() >= self.last_controller_call_ns + OWNER_EXIT_AFTER_NS, "Controller still active");
         if self.status == Status::Exiting {
             return self.exit_to_owner_unchecked(to);
         }
@@ -367,7 +369,7 @@ impl PositionExecutor {
     }
 
     /// Delete the executor once it has exited and every tracked balance is zero.
-    /// Callable by anyone after CLOSE_DELAY_BLOCKS; what is left (storage reserve) returns to the router.
+    /// Callable by anyone after CLOSE_DELAY_BLOCKS; what is left (storage reserve) returns to the controller.
     pub fn finish_close(&mut self) -> Promise {
         require!(self.status == Status::Exited, "Not exited");
         require!(env::block_height() >= self.exited_at_block + CLOSE_DELAY_BLOCKS, "Close delay not over");
@@ -521,12 +523,8 @@ impl PositionExecutor {
                 return PromiseOrValue::Value(());
             }
         }
-        emit("closed", &cat!(r#"{"beneficiary":""#, self.router, r#""}"#));
-        // Let the router drop its record of this executor (frees the router's storage)
-        Promise::new(self.router.clone())
-            .function_call("executor_closed".to_string(), b"{}".to_vec(), NearToken::from_yoctonear(0), GAS_FEE)
-            .detach();
-        PromiseOrValue::Promise(Promise::new(env::current_account_id()).delete_account(self.router.clone()))
+        emit("closed", &cat!(r#"{"beneficiary":""#, self.controller, r#""}"#));
+        PromiseOrValue::Promise(Promise::new(env::current_account_id()).delete_account(self.controller.clone()))
     }
 
     #[private]
@@ -555,16 +553,16 @@ impl PositionExecutor {
             Status::Exited => "Exited",
         };
         let tokens: Vec<String> = self.tokens.iter().map(|t| cat!(r#"""#, t, r#"""#)).collect();
-        env::value_return(cat!(r#"{"router":""#, self.router, r#"","status":""#, status, r#"","tokens":["#, tokens.join(","), r#"],"wnear_registered":"#, self.wnear_registered, r#","value_after_buy":""#, self.value_after_buy, r#"","exit_amount":""#, self.exit_amount, r#"","native_available":""#, self.native_available(), r#"","reserve":""#, self.reserve, r#"","exited_at_block":"#, self.exited_at_block, "}").as_bytes());
+        env::value_return(cat!(r#"{"controller":""#, self.controller, r#"","status":""#, status, r#"","tokens":["#, tokens.join(","), r#"],"wnear_registered":"#, self.wnear_registered, r#","value_after_buy":""#, self.value_after_buy, r#"","exit_amount":""#, self.exit_amount, r#"","native_available":""#, self.native_available(), r#"","reserve":""#, self.reserve, r#"","exited_at_block":"#, self.exited_at_block, "}").as_bytes());
     }
 }
 
 // ═══════════════════════════ INTERNALS ═══════════════════════════════════════
 
 impl PositionExecutor {
-    fn assert_router(&mut self) {
-        require!(env::predecessor_account_id() == self.router, "Only the router");
-        self.last_router_call_ns = env::block_timestamp();
+    fn assert_controller(&mut self) {
+        require!(env::predecessor_account_id() == self.controller, "Only the controller");
+        self.last_controller_call_ns = env::block_timestamp();
     }
 
     fn assert_owner_address(&self, to: &AccountId, salt: &str) {
@@ -599,10 +597,13 @@ impl PositionExecutor {
             .then(Self::ext(env::current_account_id()).with_static_gas(GAS_CB_SMALL).on_exit_sent(to, amount, 0, false))
     }
 
+    /// A plain transfer: the treasury is an ordinary account, so it cannot fail on missing code
     fn pay_fee(&self, amount: u128) {
-        Promise::new(self.router.clone())
-            .function_call("collect_fee".to_string(), b"{}".to_vec(), NearToken::from_yoctonear(amount), GAS_FEE)
-            .detach();
+        if amount > 0 {
+            Promise::new(TREASURY.parse().unwrap_or_else(|_| env::panic_str("bad treasury")))
+                .transfer(NearToken::from_yoctonear(amount))
+                .detach();
+        }
     }
 
     fn register_with(token: &AccountId) -> Promise {

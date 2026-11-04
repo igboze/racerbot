@@ -6,8 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "turbo run build --filter=!@racerbot/contract --filter=!@racerbot/position-executor",
-    "build:contract": "npm run build --workspace=packages/contract",
+    "build": "turbo run build --filter=!@racerbot/position-executor",
     "build:executor": "npm run build --workspace=packages/position-executor",
     "build:shared": "npm run build --workspace=packages/shared",
     "build:db": "npm run build --workspace=packages/db",

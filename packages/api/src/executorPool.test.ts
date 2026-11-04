@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, extractExecutorEvents, parseRelayers, roundedReturn } from './executorPool.js';
+import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, executorInitArgs, exitToIntentsArgs, extractExecutorEvents, parseControllerKeys, roundedReturn } from './executorPool.js';
 import { generatePrivateAccount, ownerHash } from './intentsPrivate.js';
 
 const NEAR = 10n ** 24n;
@@ -88,18 +88,27 @@ describe('roundedReturn', () => {
   });
 });
 
-describe('parseRelayers', () => {
-  it('reads several relayer accounts', () => {
-    expect(parseRelayers('r1.near=ed25519:AAA, r2.near=ed25519:BBB', 'x', 'ed25519:Z')).toEqual([
-      { account: 'r1.near', key: 'ed25519:AAA' },
-      { account: 'r2.near', key: 'ed25519:BBB' },
-    ]);
+describe('parseControllerKeys', () => {
+  it('reads several keys of the controller account', () => {
+    expect(parseControllerKeys('ed25519:AAA, ed25519:BBB', 'ed25519:Z')).toEqual(['ed25519:AAA', 'ed25519:BBB']);
   });
-  it('falls back to the single relayer, or none', () => {
-    expect(parseRelayers('', 'racerbot.near', 'ed25519:Z')).toEqual([{ account: 'racerbot.near', key: 'ed25519:Z' }]);
-    expect(parseRelayers(undefined, 'racerbot.near', '')).toEqual([]);
+  it('falls back to the single key, or none', () => {
+    expect(parseControllerKeys('', 'ed25519:Z')).toEqual(['ed25519:Z']);
+    expect(parseControllerKeys(undefined, '')).toEqual([]);
   });
   it('skips malformed entries', () => {
-    expect(parseRelayers('nokey.near,bad.near=secp256k1:Q', 'f.near', 'ed25519:F')).toEqual([{ account: 'f.near', key: 'ed25519:F' }]);
+    expect(parseControllerKeys('nokey,secp256k1:Q', 'ed25519:F')).toEqual(['ed25519:F']);
+  });
+});
+
+describe('executor borsh arguments', () => {
+  it('new(controller, owner_hash): length-prefixed string, then length-prefixed bytes', () => {
+    const hash = 'ab'.repeat(32);
+    const hex = Buffer.from(executorInitArgs('racerbot.near', hash)).toString('hex');
+    expect(hex).toBe('0d000000' + Buffer.from('racerbot.near').toString('hex') + '20000000' + hash);
+  });
+  it('exit_to_intents(deposit_address, amount): string then u128 little-endian', () => {
+    const hex = Buffer.from(exitToIntentsArgs('a.near', (1n << 64n) + 5n)).toString('hex');
+    expect(hex).toBe('06000000' + Buffer.from('a.near').toString('hex') + '0500000000000000' + '0100000000000000');
   });
 });

@@ -8,8 +8,8 @@ const NEAR: u128 = 1_000_000_000_000_000_000_000_000;
 /// RacerBot's creation deposit (becomes the executor's reserve)
 const CREATION: u128 = 12_000_000_000_000_000_000_000; // 0.012 NEAR
 
-fn router() -> AccountId { "racerbotrouter.near".parse().unwrap() }
-fn exec_id() -> AccountId { "x7k2.racerbotrouter.near".parse().unwrap() }
+fn controller() -> AccountId { "racerbot.near".parse().unwrap() }
+fn exec_id() -> AccountId { "x7k2.racerbot.near".parse().unwrap() }
 fn owner_addr() -> AccountId { "lunar-nexus-9768.racerbot.near".parse().unwrap() }
 fn meme() -> AccountId { "meme.near".parse().unwrap() }
 const SALT: &str = "s3cr3t-salt";
@@ -51,9 +51,9 @@ fn u128_result(v: u128) -> PromiseResult {
 
 /// A created executor that the user has funded with `funded` NEAR
 fn funded(funded: u128) -> PositionExecutor {
-    set(router(), CREATION);
-    let e = PositionExecutor::new(router(), owner_hash());
-    set(router(), CREATION + funded);
+    set(controller(), CREATION);
+    let e = PositionExecutor::new(controller(), owner_hash());
+    set(controller(), CREATION + funded);
     e
 }
 
@@ -85,22 +85,22 @@ fn plan(venue: Venue, buy: bool) -> SwapPlan {
 // ── Creation and access ──────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "Only the router creates executors")]
-fn only_router_creates() {
+#[should_panic(expected = "Only the controller creates executors")]
+fn only_controller_creates() {
     set(owner_addr(), NEAR);
-    PositionExecutor::new(router(), owner_hash());
+    PositionExecutor::new(controller(), owner_hash());
 }
 
 #[test]
 #[should_panic(expected = "owner_hash must be 32 bytes")]
 fn owner_hash_length_checked() {
-    set(router(), NEAR);
-    PositionExecutor::new(router(), vec![1, 2, 3]);
+    set(controller(), NEAR);
+    PositionExecutor::new(controller(), vec![1, 2, 3]);
 }
 
 #[test]
-#[should_panic(expected = "Only the router")]
-fn buy_rejects_non_router() {
+#[should_panic(expected = "Only the controller")]
+fn buy_rejects_non_controller() {
     let mut e = setup();
     set(owner_addr(), 2 * NEAR);
     e.buy(plan(Venue::Dcl, true), 150);
@@ -149,9 +149,9 @@ fn creation_deposit_is_not_the_users() {
 #[test]
 #[should_panic(expected = "Executor reserve too low for registrations")]
 fn registrations_need_enough_reserve() {
-    set(router(), 7_000_000_000_000_000_000_000); // 0.007 NEAR: storage stake + buffer, nothing for registrations
-    let mut e = PositionExecutor::new(router(), owner_hash());
-    set(router(), 7_000_000_000_000_000_000_000 + 2 * NEAR);
+    set(controller(), 7_000_000_000_000_000_000_000); // 0.007 NEAR: storage stake + buffer, nothing for registrations
+    let mut e = PositionExecutor::new(controller(), owner_hash());
+    set(controller(), 7_000_000_000_000_000_000_000 + 2 * NEAR);
     e.buy(plan(Venue::Dcl, true), 150);
 }
 
@@ -181,6 +181,24 @@ fn full_buy_pays_full_fee_and_records_value() {
     e.on_buy("c1".into(), amount, swap, 150, before, ResultKind::FtUsed, 1, false);
     assert_eq!(e.status, Status::Open);
     assert_eq!(e.value_after_buy, before - swap - fee);
+}
+
+#[test]
+fn fee_is_a_plain_transfer_to_the_treasury() {
+    let mut e = setup();
+    e.status = Status::Open;
+    let (amount, swap, fee) = (NEAR, NEAR * 9850 / 10_000, NEAR * 150 / 10_000);
+    callback(CREATION + 2 * NEAR, vec![u128_result(0), u128_result(swap)]);
+    e.on_buy("c1".into(), amount, swap, 150, 2 * NEAR, ResultKind::FtUsed, 1, false);
+    let receipts = near_sdk::test_utils::get_created_receipts();
+    let to_treasury: Vec<_> = receipts.iter().filter(|r| r.receiver_id.as_str() == "racerbottreasury.near").collect();
+    assert_eq!(to_treasury.len(), 1, "one fee receipt to the treasury");
+    match &to_treasury[0].actions[..] {
+        [near_sdk::mock::MockAction::Transfer { deposit, .. }] => assert_eq!(deposit.as_yoctonear(), fee),
+        other => panic!("fee must be a plain transfer, got {other:?}"),
+    }
+    assert!(receipts.iter().all(|r| r.receiver_id.as_str() != "racerbot.near" || r.actions.iter().all(|a| !matches!(a, near_sdk::mock::MockAction::FunctionCallWeight { .. }))),
+        "nothing calls the controller back");
 }
 
 #[test]
@@ -378,7 +396,7 @@ fn exit_to_owner_checks_address() {
 }
 
 #[test]
-#[should_panic(expected = "Router still active")]
+#[should_panic(expected = "Controller still active")]
 fn owner_exit_waits_for_timeout() {
     let mut e = setup();
     e.owner_exit(owner_addr(), SALT.into());
@@ -437,7 +455,7 @@ fn close_proceeds_when_empty() {
 
 #[test]
 fn dcl_sell_keeps_wnear() {
-    set(router(), NEAR);
+    set(controller(), NEAR);
     assert_eq!(
         dcl_msg(&plan(Venue::Dcl, false)),
         r#"{"Swap":{"pool_ids":["meme.near|wrap.near|10000"],"output_token":"wrap.near","min_output_amount":"5","skip_unwrap_near":true}}"#
@@ -446,13 +464,13 @@ fn dcl_sell_keeps_wnear() {
 
 #[test]
 fn dcl_buy_outputs_token() {
-    set(router(), NEAR);
+    set(controller(), NEAR);
     assert!(dcl_msg(&plan(Venue::Dcl, true)).contains(r#""output_token":"meme.near""#));
 }
 
 #[test]
 fn ref_message_spends_first_hop_only() {
-    set(router(), NEAR);
+    set(controller(), NEAR);
     let mut p = plan(Venue::RefAmm, true);
     p.hops.push(Hop { pool_id: Some(9), dcl_pool_id: None, token_in: "meme.near".into(), token_out: "usdc.near".into(), min_amount_out: 7 });
     assert_eq!(
@@ -463,7 +481,7 @@ fn ref_message_spends_first_hop_only() {
 
 #[test]
 fn intear_buy_withdraws_token_to_executor() {
-    set(router(), NEAR);
+    set(controller(), NEAR);
     assert_eq!(
         intear_ops(&plan(Venue::Intear, true), 42, true),
         r#"{"referrer":"dex-aggregator.intear.near","operations":[{"SwapSimple":{"dex_id":"slimedragon.near/xyk","asset_in":"near","asset_out":"nep141:meme.near","amount":{"Amount":{"ExactIn":"42"}},"constraint":"5","message":"EgEAAA=="}},{"Withdraw":{"asset_id":"nep141:meme.near","amount":{"Full":{"at_least":"5"}},"to":null,"rescue_address":null}}]}"#
@@ -472,7 +490,7 @@ fn intear_buy_withdraws_token_to_executor() {
 
 #[test]
 fn intear_sell_withdraws_near() {
-    set(router(), NEAR);
+    set(controller(), NEAR);
     let ops = intear_ops(&plan(Venue::Intear, false), 42, false);
     assert!(ops.contains(r#""asset_in":"nep141:meme.near","asset_out":"near""#));
     assert!(ops.contains(r#"{"Withdraw":{"asset_id":"near","#));
@@ -480,7 +498,7 @@ fn intear_sell_withdraws_near() {
 
 #[test]
 fn intear_two_hop_chains_output() {
-    set(router(), NEAR);
+    set(controller(), NEAR);
     let mut p = plan(Venue::Intear, true);
     p.hops = vec![
         Hop { pool_id: Some(274), dcl_pool_id: None, token_in: "near".into(), token_out: "token.intear.near".into(), min_amount_out: 0 },
@@ -500,7 +518,7 @@ fn ft_call_args_escape_message() {
 #[test]
 #[should_panic(expected = "Bad identifier")]
 fn injected_pool_id_rejected() {
-    set(router(), NEAR);
+    set(controller(), NEAR);
     let mut p = plan(Venue::Dcl, true);
     p.hops[0].dcl_pool_id = Some(r#"x"],"output_token":"evil"#.into());
     dcl_msg(&p);
@@ -561,7 +579,7 @@ fn clean_strips_unsafe_characters() {
 #[test]
 fn rolled_back_buy_unsets_wnear_registration() {
     let mut e = setup();
-    set(router(), CREATION + 2 * NEAR);
+    set(controller(), CREATION + 2 * NEAR);
     e.buy(plan(Venue::Dcl, true), 150);
     assert!(e.wnear_registered);
     let reserve_after_buy = e.reserve;
@@ -602,7 +620,7 @@ fn long_success_result_still_counts_as_bought() {
 fn token_list_is_capped() {
     let mut e = setup();
     e.tokens = (0..MAX_TOKENS).map(|i| format!("t{}.near", i).parse().unwrap()).collect();
-    set(router(), CREATION + 2 * NEAR);
+    set(controller(), CREATION + 2 * NEAR);
     e.buy(plan(Venue::Dcl, true), 150);
 }
 
@@ -612,7 +630,7 @@ fn rolled_back_intents_exit_restores_registrations() {
     e.status = Status::Exiting;
     e.exit_amount = NEAR;
     let reserve = e.reserve;
-    set(router(), CREATION + 2 * NEAR);
+    set(controller(), CREATION + 2 * NEAR);
     e.exit_to_intents("b2db50c1c15177555af28113fabc56a1be33a21adbea71b635b7a45e8b02e2d7".parse().unwrap(), NEAR);
     assert!(e.wnear_registered);
     assert_eq!(e.reserve, reserve - 2 * STORAGE_DEPOSIT);
@@ -641,4 +659,51 @@ fn close_deletes_when_unregisters_succeed_or_were_not_needed() {
     e.status = Status::Exited;
     callback(CREATION, vec![PromiseResult::Successful(b"true".to_vec()), PromiseResult::Successful(b"false".to_vec())]);
     assert!(matches!(e.on_close_delete(2), PromiseOrValue::Promise(_)));
+}
+
+// Same bytes as the api's executorPool.test.ts (executorInitArgs / exitToIntentsArgs): the bot encodes
+// these by hand, so both sides pin the layout
+#[test]
+fn borsh_args_match_the_bot() {
+    let mut init = hex_bytes(&("0d000000".to_string() + &hex_of(b"racerbot.near") + "20000000" + &"ab".repeat(32)));
+    let (controller, owner_hash): (AccountId, Vec<u8>) = near_sdk::borsh::from_slice(&init).unwrap();
+    assert_eq!(controller.as_str(), "racerbot.near");
+    assert_eq!(owner_hash, vec![0xab; 32]);
+    init.clear();
+    let exit = hex_bytes(&("06000000".to_string() + &hex_of(b"a.near") + "0500000000000000" + "0100000000000000"));
+    let (to, amount): (AccountId, u128) = near_sdk::borsh::from_slice(&exit).unwrap();
+    assert_eq!(to.as_str(), "a.near");
+    assert_eq!(amount, (1u128 << 64) + 5);
+}
+
+fn hex_of(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
+fn hex_bytes(s: &str) -> Vec<u8> { (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect() }
+
+/// The bot (packages/api executorPlan.ts) must produce exactly these bytes for this plan; executorPlan.test.ts
+/// holds the same vector. `buy` takes the plan followed by fee_bps (u32 LE).
+#[test]
+fn plan_borsh_vector() {
+    let p = SwapPlan {
+        venue: Venue::Intear,
+        token: "meme.near".parse().unwrap(),
+        hops: vec![Hop {
+            pool_id: Some(274),
+            dcl_pool_id: Some("meme.near|wrap.near|10000".into()),
+            token_in: "near".into(),
+            token_out: "meme.near".into(),
+            min_amount_out: 5,
+        }],
+        amount_in: 1_000,
+        min_amount_out: 5,
+        receiver: Some("gaypad.j1-racing.near".parse().unwrap()),
+        deadline_sec: 1_800_000_000,
+        correlation_id: "intent_1".into(),
+    };
+    let bytes = near_sdk::borsh::to_vec(&p).unwrap();
+    assert_eq!(hex_of(&bytes), "02090000006d656d652e6e6561720100000001120100000000000001190000006d656d652e6e6561727c777261702e6e6561727c3130303030040000006e656172090000006d656d652e6e65617205000000000000000000000000000000e80300000000000000000000000000000500000000000000000000000000000001150000006761797061642e6a312d726163696e672e6e65617200d2496b0000000008000000696e74656e745f31");
+    let mut buy_args = bytes.clone();
+    buy_args.extend_from_slice(&150u32.to_le_bytes());
+    let (decoded, fee): (SwapPlan, u32) = near_sdk::borsh::from_slice(&buy_args).unwrap();
+    assert_eq!(decoded.correlation_id, "intent_1");
+    assert_eq!(fee, 150);
 }

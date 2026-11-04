@@ -18,7 +18,7 @@ RUN apk add --no-cache python3 make g++ pkgconfig pixman-dev cairo-dev pango-dev
 # Copy root and all workspace manifests so npm ci can resolve all workspace dependencies
 COPY package.json package-lock.json* ./
 COPY packages/api/package.json ./packages/api/
-COPY packages/contract/package.json ./packages/contract/
+COPY packages/position-executor/package.json ./packages/position-executor/
 COPY packages/db/package.json ./packages/db/
 COPY packages/detector/package.json ./packages/detector/
 COPY packages/executor/package.json ./packages/executor/
@@ -34,7 +34,7 @@ RUN apk add --no-cache python3 make g++ pkgconfig pixman-dev cairo-dev pango-dev
 # Copy full source tree
 COPY . .
 
-# Build all TypeScript packages (contract is excluded via package.json build script)
+# Build all TypeScript packages (the Rust executor contract is excluded via package.json build script)
 RUN npm run build
 
 FROM node:20-alpine AS runner

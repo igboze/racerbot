@@ -3,14 +3,15 @@
  *
  * Money lives in three places: the user's NEAR Intents private balance, ready executors (funded
  * before the click), and open positions (one executor each). A buy takes a ready executor and swaps
- * in one relayer transaction; the replacement is created and funded in the background. After the
+ * in one controller transaction; the replacement is created and funded in the background. After the
  * final sell the executor pays the fee, returns all NEAR to the private balance, then deletes itself.
  *
- * The relayer signs every executor transaction, so the user's wallet never appears in a trade.
+ * The controller (racerbot.near) signs every executor transaction, so the user's wallet never appears in a trade.
  * Off until CONFIDENTIAL_EXECUTORS_ENABLED=true (the contracts must be deployed first).
  */
 import crypto from 'crypto';
 import { KeyPair, transactions } from 'near-api-js';
+import { Account, JsonRpcProvider, actions } from 'near-api-js-v7';
 import { createLogger, decrypt, encrypt, getNear, getNearUsdPrice } from '@racerbot/shared';
 import {
   claimReadyExecutors,
@@ -46,17 +47,21 @@ import {
   type MoveQuote,
   type PrivateAccountKeys,
 } from './intentsPrivate.js';
-import { planVaultHops, quoteMinimumOut, RACER_VAULT_CONTRACT_ID } from './racerVault.js';
-import { extractRouterEvents } from './routerEvents.js';
+import { planVaultHops, quoteMinimumOut } from './racerVault.js';
 import { encodeExecPlan, type ExecPlan, type ExecVenue } from './executorPlan.js';
 import { hasManagedWallet } from './webWallet.js';
 
 const logger = createLogger('executor-pool');
 
 export const EXECUTORS_ENABLED = process.env.CONFIDENTIAL_EXECUTORS_ENABLED === 'true';
-const ROUTER = RACER_VAULT_CONTRACT_ID;
-const RELAYER_ACCOUNT = process.env.EXECUTOR_RELAYER_ACCOUNT_ID || process.env.RELAYER_ACCOUNT_ID || 'racerbot.near';
-const RELAYER_KEY = (process.env.EXECUTOR_RELAYER_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '').trim();
+/**
+ * The account that creates and drives every executor (each executor is `<name>.<controller>` and only
+ * accepts calls from it). There is no router contract: this account signs every executor transaction.
+ */
+export const EXECUTOR_CONTROLLER = process.env.EXECUTOR_CONTROLLER_ACCOUNT_ID || process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
+/** Hex sha256 of the deployed executor global contract (scripts/deploy-confidential.mjs prints it) */
+const EXECUTOR_CODE_HASH = (process.env.EXECUTOR_CODE_HASH || '').trim().toLowerCase();
+const RPC_URL = process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com';
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '';
 
 /** RacerBot's deposit per executor: storage stake, registrations, buffer (mostly returned at deletion) */
@@ -87,59 +92,64 @@ export interface ConfidentialTradeResult {
   reason?: string;
 }
 
-// ── Relayer ───────────────────────────────────────────────────────────────────
+// ── Controller ────────────────────────────────────────────────────────────────
 
-interface RelayerLane {
-  account: string;
+interface SignerLane {
   key: string;
+  account: Account | null;
   queue: Promise<unknown>;
   pending: number;
-  keyLoaded: boolean;
 }
 
 /**
- * Relayer accounts from EXECUTOR_RELAYERS (`acct1.near=ed25519:...,acct2.near=ed25519:...`), else
- * the single EXECUTOR_RELAYER_ACCOUNT_ID / _PRIVATE_KEY. Each must be allowed with router.set_relayer.
- */
-export function parseRelayers(spec: string | undefined, fallbackAccount: string, fallbackKey: string): { account: string; key: string }[] {
-  const lanes = (spec || '')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .map(item => {
-      const eq = item.indexOf('=');
-      return eq > 0 ? { account: item.slice(0, eq).trim(), key: item.slice(eq + 1).trim() } : null;
-    })
-    .filter((l): l is { account: string; key: string } => !!l && !!l.account && l.key.startsWith('ed25519:'));
-  if (lanes.length > 0) return lanes;
-  return fallbackKey ? [{ account: fallbackAccount, key: fallbackKey }] : [];
-}
-
-const relayerLanes: RelayerLane[] = parseRelayers(process.env.EXECUTOR_RELAYERS, RELAYER_ACCOUNT, RELAYER_KEY)
-  .map(l => ({ ...l, queue: Promise.resolve(), pending: 0, keyLoaded: false }));
-
-/**
- * Sign with the least busy relayer. Each relayer account sends one transaction at a time (one
- * access key cannot sign two nonces at once safely); several accounts let split and fleet buys
+ * The controller's signing keys: EXECUTOR_CONTROLLER_KEYS (`ed25519:...,ed25519:...`), else the single
+ * EXECUTOR_CONTROLLER_PRIVATE_KEY / RELAYER_PRIVATE_KEY. Every key belongs to the controller account, so
+ * any of them can drive any executor; several keys (each with its own nonce) let split and fleet buys
  * go out together.
  */
-async function relayerCall(receiver: string, method: string, args: object, gasTgas: number, deposit = 0n): Promise<any> {
-  if (relayerLanes.length === 0) throw new Error('Executor relayer key is not configured');
-  const lane = relayerLanes.reduce((best, l) => (l.pending < best.pending ? l : best));
+export function parseControllerKeys(spec: string | undefined, fallbackKey: string): string[] {
+  const keys = (spec || '').split(',').map(k => k.trim()).filter(k => k.startsWith('ed25519:'));
+  if (keys.length > 0) return keys;
+  return fallbackKey.trim().startsWith('ed25519:') ? [fallbackKey.trim()] : [];
+}
+
+const signerLanes: SignerLane[] = parseControllerKeys(
+  process.env.EXECUTOR_CONTROLLER_KEYS,
+  process.env.EXECUTOR_CONTROLLER_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '',
+).map(key => ({ key, account: null, queue: Promise.resolve(), pending: 0 }));
+
+/** Sign one transaction to `receiver` as the controller, with the least busy key (one nonce at a time per key) */
+async function controllerTx(receiver: string, txActions: any[]): Promise<any> {
+  if (signerLanes.length === 0) throw new Error('Executor controller key is not configured');
+  const lane = signerLanes.reduce((best, l) => (l.pending < best.pending ? l : best));
   lane.pending++;
   const run = async () => {
-    const near = getNear();
-    if (!lane.keyLoaded) {
-      await near.addKey(lane.account, KeyPair.fromString(lane.key as any));
-      lane.keyLoaded = true;
-    }
-    return near.signAndSendTransactionAll(lane.account, receiver, [
-      transactions.functionCall(method, args, BigInt(gasTgas) * TGAS, deposit),
-    ]);
+    lane.account ??= new Account(EXECUTOR_CONTROLLER, new JsonRpcProvider({ url: RPC_URL }), lane.key as any);
+    return lane.account.signAndSendTransaction({ receiverId: receiver, actions: txActions, throwOnFailure: false });
   };
   const next = lane.queue.then(run, run).finally(() => { lane.pending--; });
   lane.queue = next.catch(() => undefined);
   return next;
+}
+
+/** Call an executor method with borsh-encoded arguments */
+function callExecutor(executor: string, method: string, args: Uint8Array, gasTgas: number): Promise<any> {
+  return controllerTx(executor, [actions.functionCall(method, args, BigInt(gasTgas) * TGAS, 0n)]);
+}
+
+const u32le = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+const u128le = (n: bigint) => { const b = Buffer.alloc(16); b.writeBigUInt64LE(n & ((1n << 64n) - 1n)); b.writeBigUInt64LE(n >> 64n, 8); return b; };
+const borshStr = (v: string) => { const b = Buffer.from(v, 'utf8'); return Buffer.concat([u32le(b.length), b]); };
+const borshBytes = (v: Buffer) => Buffer.concat([u32le(v.length), v]);
+
+/** Borsh arguments of the executor's `new(controller, owner_hash)` */
+export function executorInitArgs(controller: string, ownerHashHex: string): Uint8Array {
+  return new Uint8Array(Buffer.concat([borshStr(controller), borshBytes(Buffer.from(ownerHashHex, 'hex'))]));
+}
+
+/** Borsh arguments of `exit_to_intents(deposit_address, amount)` */
+export function exitToIntentsArgs(depositAddress: string, amount: bigint): Uint8Array {
+  return new Uint8Array(Buffer.concat([borshStr(depositAddress), u128le(amount)]));
 }
 
 interface ExecutorEvent {
@@ -216,18 +226,19 @@ export async function privateBalance(acct: ConfidentialAccountRecord): Promise<b
 /** Create an executor and fund it from the private balance (~15 s; runs in the background) */
 async function spawnExecutor(acct: ConfidentialAccountRecord, size: bigint): Promise<void> {
   const name = crypto.randomBytes(8).toString('hex');
-  const executor = `${name}.${ROUTER}`;
+  const executor = `${name}.${EXECUTOR_CONTROLLER}`;
   await insertExecutor({ account_id: executor, user_id: acct.user_id, size_yocto: size.toString() });
   try {
-    const created = await relayerCall(ROUTER, 'create_executor', {
-      name,
-      owner_hash: ownerHash(acct.owner_salt, acct.payout_address),
-    }, 100, CREATION_DEPOSIT);
-    // The router's callback reports whether the account was created and initialised
-    const routerEvents = extractRouterEvents(created).map(ev => ev.event);
-    if (!routerEvents.includes('executor_created')) {
-      throw new Error(`create_executor: ${failureOf(created) || routerEvents.join(',') || 'not created'}`);
-    }
+    if (!/^[0-9a-f]{64}$/.test(EXECUTOR_CODE_HASH)) throw new Error('EXECUTOR_CODE_HASH is not set to the deployed executor code hash');
+    // One transaction, all or nothing: the subaccount, its deposit, the shared executor code, and its owner
+    const created = await controllerTx(executor, [
+      actions.createAccount(),
+      actions.transfer(CREATION_DEPOSIT),
+      actions.useGlobalContract({ codeHash: EXECUTOR_CODE_HASH }),
+      actions.functionCall('new', executorInitArgs(EXECUTOR_CONTROLLER, ownerHash(acct.owner_salt, acct.payout_address)), 10n * TGAS, 0n),
+    ]);
+    const createErr = failureOf(created);
+    if (createErr) throw new Error(`create executor: ${createErr}`);
     await updateExecutor(executor, { status: 'funding', tx_hash: created?.transaction?.hash });
 
     const move = await unshield(keysOf(acct), size, executor);
@@ -267,7 +278,7 @@ export async function refillPool(acct: ConfidentialAccountRecord): Promise<numbe
       committed += size;
       available -= size;
     }
-    // Each spawn waits on the relayer queue for its create, then funds in parallel
+    // Each spawn waits on the controller queue for its create, then funds in parallel
     await Promise.all(toCreate.map(size => spawnExecutor(acct, size)));
     return toCreate.length;
   } finally {
@@ -427,9 +438,7 @@ export async function confidentialBuy(p: {
         tokenAddress: p.tokenAddress, venue: p.venue, isBuy: true, amountIn, swapAmount,
         slippagePct: p.slippagePct ?? 2, poolId: p.poolId, dclPoolId: p.dclPoolId, correlationId: group,
       });
-      const outcome = await relayerCall(ROUTER, 'exec_buy', {
-        executor: e.account_id, plan: encodeExecPlan(plan).toString('base64'), fee_bps: BUY_FEE_BPS,
-      }, 300);
+      const outcome = await callExecutor(e.account_id, 'buy', new Uint8Array(Buffer.concat([encodeExecPlan(plan), u32le(BUY_FEE_BPS)])), 300);
       const events = extractExecutorEvents(outcome);
       const bought = events.find(ev => ev.event === 'bought');
       const err = failureOf(outcome);
@@ -489,7 +498,7 @@ export async function confidentialSell(p: {
         tokenAddress: p.tokenAddress, venue: p.venue, isBuy: false, amountIn, swapAmount: amountIn,
         slippagePct: p.slippagePct ?? 2, poolId: p.poolId, dclPoolId: p.dclPoolId, correlationId: e.position_group || e.account_id,
       });
-      const outcome = await relayerCall(ROUTER, 'exec_sell', { executor: e.account_id, plan: encodeExecPlan(plan).toString('base64') }, 300);
+      const outcome = await callExecutor(e.account_id, 'sell', new Uint8Array(encodeExecPlan(plan)), 300);
       const sold = extractExecutorEvents(outcome).find(ev => ev.event === 'sold');
       await updateExecutor(e.account_id, { event: sold ?? { event: 'sell_failed' }, tx_hash: outcome?.transaction?.hash });
       if (!sold) return { ok: false, executor: e.account_id, hash: outcome?.transaction?.hash, reason: failureOf(outcome) || 'The exchange rejected the sell' };
@@ -678,7 +687,7 @@ export async function closeExecutor(executor: string): Promise<void> {
   await updateExecutor(executor, { status: 'exiting' });
 
   const fee = await exitFeeBps(executor, state);
-  const prepared = await relayerCall(ROUTER, 'exec_prepare_exit', { executor, fee_bps: fee }, 150);
+  const prepared = await callExecutor(executor, 'prepare_exit', new Uint8Array(u32le(fee)), 150);
   const ready = extractExecutorEvents(prepared).find(ev => ev.event === 'exit_ready');
   if (!ready) throw new Error(`prepare_exit: ${failureOf(prepared) || 'no exit amount'}`);
   const amount = BigInt(ready.data.amount || 0);
@@ -692,7 +701,7 @@ export async function closeExecutor(executor: string): Promise<void> {
   const send = acct.round_returns ? roundedReturn(amount) : amount;
   // Refunds of the return go back to the executor, which can exit again
   const quote = await quoteShield(acct.private_account_id, send, executor);
-  const sent = await relayerCall(ROUTER, 'exec_exit_to_intents', { executor, deposit_address: quote.depositAddress, amount: send.toString() }, 150);
+  const sent = await callExecutor(executor, 'exit_to_intents', exitToIntentsArgs(quote.depositAddress, send), 150);
   const events = extractExecutorEvents(sent);
   const exited = events.find(ev => ev.event === 'exited');
   const partial = events.find(ev => ev.event === 'exit_partial');
@@ -725,7 +734,7 @@ export function roundedReturn(amount: bigint): bigint {
 
 /** Delete an exited executor once its close delay has passed (anyone may call finish_close) */
 async function finishClose(e: ConfidentialExecutorRecord): Promise<void> {
-  const outcome = await relayerCall(e.account_id, 'finish_close', {}, 150);
+  const outcome = await callExecutor(e.account_id, 'finish_close', new Uint8Array(0), 150);
   const closed = extractExecutorEvents(outcome).find(ev => ev.event === 'closed');
   await updateExecutor(e.account_id, closed
     ? { status: 'closed', event: closed, tx_hash: outcome?.transaction?.hash, last_error: null }

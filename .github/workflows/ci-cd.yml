@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/contract
+        working-directory: packages/position-executor
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/contract
+        working-directory: packages/position-executor
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -63,5 +63,5 @@ jobs:
       - run: cargo build --release
       - uses: actions/upload-artifact@v4
         with:
-          name: router-contract
-          path: target/wasm32-unknown-unknown/release/racerbot_router.wasm
+          name: position-executor
+          path: target/wasm32-unknown-unknown/release/racerbot_position_executor.wasm

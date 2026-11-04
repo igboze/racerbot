@@ -1,4 +1,0 @@
-# Use NEAR host functions (hashing etc.) instead of in-contract fallbacks: smaller code, less gas.
-# cargo-near sets this flag; plain `cargo build` needs it here. Applies to wasm builds only.
-[target.wasm32-unknown-unknown]
-rustflags = ["--cfg", "near"]

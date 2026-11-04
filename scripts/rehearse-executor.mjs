@@ -1,6 +1,6 @@
 // Mainnet rehearsal of the position executor BEFORE its global deploy (which cannot be patched in
 // place). The same optimized wasm runs as a normal contract on <name>.<owner>, with the owner
-// account standing in for the router, and trades tiny amounts on the real venues.
+// account as its controller (as racerbot.near is in production), and trades tiny amounts on the real venues.
 // Cost: ~0.95 NEAR locked for the code's storage, returned when `close` deletes the account,
 // plus the test trade (sold back) and gas (~0.01 NEAR). No fee is charged (fee_bps 0).
 //
@@ -123,7 +123,7 @@ async function call(method, args, gasT, deposit = 0n) {
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
 const before = await state();
-console.log(`Executor ${execId} (router and owner stand-in: ${ownerId})`);
+console.log(`Executor ${execId} (controller: ${ownerId})`);
 console.log(before ? `  state ${JSON.stringify(before)}` : '  not created yet');
 
 if (step === 'state') {
