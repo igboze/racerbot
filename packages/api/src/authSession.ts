@@ -23,7 +23,8 @@ export type WalletAuthChain = 'evm' | 'solana' | 'near';
 
 export interface AuthSessionData {
   sessionId: string;
-  status: 'pending' | 'linked' | 'expired';
+  /** 'claimed': the page has collected the login token, which is no longer stored here */
+  status: 'pending' | 'linked' | 'expired' | 'claimed';
   createdAt: number;
   userId?: string;
   telegramId?: number;
@@ -179,7 +180,7 @@ export async function linkAuthSession(
     return { success: false, reason: 'Session not found or expired' };
   }
 
-  if (sessionData.status === 'linked') {
+  if (sessionData.status === 'linked' || sessionData.status === 'claimed') {
     return { success: true, session: sessionData };
   }
 
@@ -265,6 +266,28 @@ export async function rejectAuthSession(sessionId: string): Promise<boolean> {
     inMemorySessions.set(sessionId, session);
   }
   return true;
+}
+
+/**
+ * A login session for the page polling it. The login token is handed out once: whoever holds the
+ * session id afterwards (from a log, a proxy, a shared screen) only sees 'claimed'.
+ */
+export async function claimAuthSession(sessionId: string): Promise<AuthSessionData | null> {
+  if (!AUTH_SESSION_ID_RE.test(sessionId)) return null;
+  const session = await getAuthSession(sessionId);
+  if (!session) return null;
+  if (session.status !== 'linked' || !session.authToken) {
+    const { authToken: _hidden, ...rest } = session;
+    return rest;
+  }
+  const claimed: AuthSessionData = { ...session, status: 'claimed', authToken: undefined };
+  const redis = getAuthRedis();
+  if (redis) {
+    await redis.set(`auth:session:${sessionId}`, JSON.stringify(claimed), SESSION_TTL_SECONDS);
+  } else {
+    inMemorySessions.set(sessionId, claimed);
+  }
+  return session;
 }
 
 /**
@@ -949,6 +972,20 @@ export async function denyTelegramVerification(requestId: string, telegramId: nu
   }
   inMemoryVerifications.set(requestId, vreq);
   return true;
+}
+
+/**
+ * The approved verification for the page polling it, handing out its login token once (later reads
+ * keep the status but carry no token).
+ */
+export async function claimTelegramVerification(requestId: string): Promise<TelegramVerificationRequest | null> {
+  const vreq = await getTelegramVerification(requestId);
+  if (!vreq || vreq.status !== 'approved' || !vreq.authToken) {
+    if (vreq) delete vreq.authToken;
+    return vreq;
+  }
+  await saveTelegramVerification({ ...vreq, authToken: undefined });
+  return vreq;
 }
 
 /**

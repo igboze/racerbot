@@ -23,7 +23,7 @@ vi.mock('@racerbot/db', () => ({
 vi.mock('./wallet.js', () => ({ createSubaccount: vi.fn() }));
 vi.mock('./notify.js', () => ({ getBotInstance: () => null }));
 
-const { createAuthSession, getAuthSession, verifyAuthToken } = await import('./authSession.js');
+const { createAuthSession, getAuthSession, verifyAuthToken, claimAuthSession } = await import('./authSession.js');
 const { askWebLoginApproval, registerWebLoginApproval } = await import('./webLoginApproval.js');
 
 function fakeBot() {
@@ -79,6 +79,17 @@ describe('web login through the bot needs approval', () => {
     expect(session).toMatchObject({ status: 'linked', userId: 'u-owner', telegramId: 111 });
     expect(await verifyAuthToken(session!.authToken!)).toEqual({ userId: 'u-owner', telegramId: 111 });
     expect((ctx.editMessageText.mock.calls[0] as any)[0]).toContain('WebApp Connected');
+  });
+
+  it('hands the login token to the polling page once', async () => {
+    await fakeBot()(`webauth_ok:${sessionId}`, fakeCtx(111));
+    const first = await claimAuthSession(sessionId);
+    expect(first).toMatchObject({ status: 'linked', userId: 'u-owner' });
+    expect(first?.authToken).toBeTruthy();
+    const again = await claimAuthSession(sessionId);
+    expect(again?.status).toBe('claimed');
+    expect(again?.authToken).toBeUndefined();
+    expect(await verifyAuthToken(first!.authToken!)).toEqual({ userId: 'u-owner', telegramId: 111 });
   });
 
   it('Deny ends the session: the web page stops waiting and a later Approve does nothing', async () => {

@@ -1,7 +1,29 @@
+import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { metrics, MetricNames, createLogger } from '@racerbot/shared';
 
 const logger = createLogger('api-monitoring');
+
+/**
+ * The route pattern a request matched (`/auth/session/:sessionId`), never its concrete path: paths carry
+ * session and login IDs, accounts and share codes, and every distinct label is kept in memory.
+ */
+function routeLabel(req: Request): string {
+  const route = (req as any).route?.path;
+  if (typeof route === 'string') return `${req.baseUrl || ''}${route}`;
+  if (Array.isArray(route)) return `${req.baseUrl || ''}${route[0]}`;
+  return req.path.startsWith('/assets/') ? '/assets/*' : '(unmatched)';
+}
+
+/** Metrics are for operators: only with `Authorization: Bearer $METRICS_TOKEN`, and hidden when it is unset */
+function metricsAllowed(req: Request): boolean {
+  const token = (process.env.METRICS_TOKEN || '').trim();
+  if (!token) return false;
+  const given = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const startTime = Date.now();
@@ -14,14 +36,14 @@ export function metricsMiddleware(req: Request, res: Response, next: NextFunctio
     // Record request duration
     metrics.timing(MetricNames.HTTP_REQUEST_DURATION, duration, {
       method: req.method,
-      path: req.path,
+      path: routeLabel(req),
       status: statusCode.toString(),
     });
 
     // Record request count
     metrics.increment(MetricNames.HTTP_REQUESTS_TOTAL, 1, {
       method: req.method,
-      path: req.path,
+      path: routeLabel(req),
       status: statusCode.toString(),
     });
 
@@ -29,7 +51,7 @@ export function metricsMiddleware(req: Request, res: Response, next: NextFunctio
     if (statusCode >= 400) {
       metrics.increment(MetricNames.HTTP_ERRORS_TOTAL, 1, {
         method: req.method,
-        path: req.path,
+        path: routeLabel(req),
         status: statusCode.toString(),
       });
     }
@@ -43,6 +65,10 @@ export function metricsMiddleware(req: Request, res: Response, next: NextFunctio
 export function monitoringRoutes(app: any): void {
   // Metrics endpoint
   app.get('/metrics', (req: Request, res: Response) => {
+    if (!metricsAllowed(req)) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     try {
       const allMetrics = metrics.getMetrics();
       res.json({
@@ -57,6 +83,10 @@ export function monitoringRoutes(app: any): void {
 
   // Health check with metrics
   app.get('/health-detailed', (req: Request, res: Response) => {
+    if (!metricsAllowed(req)) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
     try {
       const allMetrics = metrics.getMetrics();
       const httpErrors = allMetrics[MetricNames.HTTP_ERRORS_TOTAL]?.values.reduce((sum, v) => sum + v.value, 0) || 0;

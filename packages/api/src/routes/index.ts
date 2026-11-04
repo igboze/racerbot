@@ -61,8 +61,8 @@ router.post('/auth/session/create', async (_req, res) => {
 // 2. Poll session status
 router.get('/auth/session/:sessionId', async (req, res) => {
   try {
-    const { getAuthSession } = await import('../authSession.js');
-    const session = await getAuthSession(req.params.sessionId);
+    const { claimAuthSession } = await import('../authSession.js');
+    const session = await claimAuthSession(req.params.sessionId);
     if (!session) {
       res.status(404).json({ error: 'Session not found or expired' });
       return;
@@ -115,8 +115,8 @@ router.post('/auth/telegram/verify-code', codeLoginLimit, async (req, res) => {
 // 2d. Poll verification status (WebApp polls while user checks Telegram DM)
 router.get('/auth/telegram/status/:requestId', async (req, res) => {
   try {
-    const { getTelegramVerification } = await import('../authSession.js');
-    const vreq = await getTelegramVerification(req.params.requestId);
+    const { claimTelegramVerification } = await import('../authSession.js');
+    const vreq = await claimTelegramVerification(req.params.requestId);
     if (!vreq) {
       res.status(404).json({ error: 'Verification request not found' });
       return;
@@ -498,12 +498,22 @@ router.get(['/alpha', '/raceralpha', '/terminal', '/console', '/trade'], (_req, 
   serveRacerAlphaHtml(res);
 });
 
+/**
+ * A trader as anyone may see it. Their Telegram id, internal user id and payout wallet would tie a
+ * caller's Telegram identity to their on-chain wallet, so only the trader themself gets those back.
+ */
+function publicTrader<T extends { userId?: string; telegramId?: number; payoutWalletAddress?: string }>(t: T, viewerId?: string): T {
+  if (viewerId && t.userId === viewerId) return t;
+  const { userId: _u, telegramId: _t, payoutWalletAddress: _p, ...rest } = t;
+  return rest as T;
+}
+
 router.get('/alpha/traders', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
     const { getAlphaTraders } = await import('../racerAlpha.js');
     const traders = await getAlphaTraders(user?.id);
-    res.json({ success: true, traders });
+    res.json({ success: true, traders: traders.map(t => publicTrader(t, user?.id)) });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch traders' });
   }
@@ -529,7 +539,7 @@ router.get('/alpha/traders/:id', async (req, res) => {
       res.status(404).json({ error: 'Trader not found' });
       return;
     }
-    res.json({ success: true, trader });
+    res.json({ success: true, trader: publicTrader(trader, user?.id) });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch trader' });
   }
