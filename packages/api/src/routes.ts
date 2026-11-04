@@ -3070,8 +3070,11 @@ async function buyLaunchpadDclPath(
   knownNativeYocto?: string | null,
 ) {
   onProgress?.('submitting');
-  const { buyViaDclPath } = await import('./intentsRoute.js');
-  const res = await buyViaDclPath(user, tokenAddress, info.dcl_path!, amountNear, slippagePct, info.decimals, knownNativeYocto);
+  const { buyViaDclPath, buyViaDclPathWithUsdc } = await import('./intentsRoute.js');
+  // USDC-only mode pays in USDC (the amount is its NEAR worth), entering the path at USDC
+  const res = user.near_trade_currency === 'usdc'
+    ? await buyViaDclPathWithUsdc(user, tokenAddress, info.dcl_path!, amountNear, await getNearUsdPrice().catch(() => 0), slippagePct, info.decimals)
+    : await buyViaDclPath(user, tokenAddress, info.dcl_path!, amountNear, slippagePct, info.decimals, knownNativeYocto);
   if (!res.success) throw new Error(res.reason || 'Buy failed.');
   const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
   const sym = info.symbol || 'TOKEN';
@@ -3090,7 +3093,7 @@ async function buyLaunchpadDclPath(
       `✅ *Buy Confirmed!* (Rhea, via ${sanitizeMd(info.paired_symbol || 'quote token')})\n\n` +
       `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})\n` +
       `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`\n` +
-      `💸 Spent: \`${amountNear} NEAR\`\n` +
+      `💸 Spent: \`${res.paidIn === 'USDC' ? `${amountNear} NEAR worth of USDC` : `${amountNear} NEAR`}\`\n` +
       `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
   };
 }

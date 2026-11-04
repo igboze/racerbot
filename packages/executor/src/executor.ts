@@ -1924,6 +1924,16 @@ export class SwapExecutor {
           }
         }
 
+        // A launchpad pool paired with another token (PRL, USDC...) holds no wNEAR: reach it along the best
+        // DCL path from wNEAR, never through a single pool that cannot take wNEAR or a thin side pool
+        if (dclPoolId && !(event as any).intermediate_token) {
+          const expanded = await near.expandDclPoolFromNear(dclPoolId, targetTokenQ).catch(() => dclPoolId!);
+          if (expanded !== dclPoolId) {
+            console.log(`[EXECUTOR] DCL pool ${dclPoolId} holds no wNEAR: routing ${expanded}`);
+            dclPoolId = expanded;
+          }
+        }
+
         // Cross-pool guard: a DCL pool chosen upstream (or hunted above) can
         // sit far off the market price with near-zero depth — slippage settings
         // only protect WITHIN a pool, never against trading the WRONG pool.

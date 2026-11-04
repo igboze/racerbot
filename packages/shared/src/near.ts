@@ -322,6 +322,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, errMsg: string): 
  * so hedging never produces duplicate or conflicting transactions.
  */
 const dclPathCache = new Map<string, { at: number; path: string[] | null }>();
+const bestHopCache = new Map<string, { at: number; hop: { kind: 'dcl'; path: string[] } | { kind: 'v2'; poolId: number } | null }>();
 const INTENTS_TOKENS_URL = 'https://1click.chaindefuser.com/v0/tokens';
 const INTENTS_TOKENS_TTL_MS = 5 * 60_000;
 let intentsTokens: { at: number; byContract: Map<string, { price: number; decimals: number }> } | null = null;
@@ -2076,6 +2077,49 @@ export class MultiRpcNear {
     return path;
   }
 
+  /**
+   * The best way from wNEAR to a quote token, compared by what 1 NEAR buys: a Rhea DCL path (direct or through
+   * USDC) or a Ref classic pool. Neither kind always wins (RHEA and KAT are deeper in classic pools, PRL and
+   * NEARLY in DCL), and the thinner one has filled buys 25-50% worse. Cached for 10 minutes.
+   */
+  async bestNearHop(quote: string): Promise<{ kind: 'dcl'; path: string[] } | { kind: 'v2'; poolId: number } | null> {
+    const cached = bestHopCache.get(quote);
+    if (cached && Date.now() - cached.at < 600_000) return cached.hop;
+    const probe = '1000000000000000000000000'; // 1 NEAR
+    const [path, poolId] = await Promise.all([
+      this.findDclPathFromNear(quote).catch(() => null),
+      this.findRheaPoolId('wrap.near', quote).catch(() => null),
+    ]);
+    const [dclOut, v2Out] = await Promise.all([
+      path ? this.view<any>('dclv2.ref-labs.near', 'quote', { pool_ids: path, input_token: 'wrap.near', output_token: quote, input_amount: probe, tag: null })
+        .then(q => BigInt(q?.amount || '0')).catch(() => 0n) : Promise.resolve(0n),
+      typeof poolId === 'number' ? this.view<any>('v2.ref-finance.near', 'get_return', { pool_id: poolId, token_in: 'wrap.near', amount_in: probe, token_out: quote })
+        .then(r => BigInt(r || '0')).catch(() => 0n) : Promise.resolve(0n),
+    ]);
+    let hop: { kind: 'dcl'; path: string[] } | { kind: 'v2'; poolId: number } | null = null;
+    if (path && dclOut > 0n && dclOut >= v2Out) hop = { kind: 'dcl', path };
+    else if (typeof poolId === 'number' && v2Out > 0n) hop = { kind: 'v2', poolId };
+    bestHopCache.set(quote, { at: Date.now(), hop });
+    return hop;
+  }
+
+  /**
+   * A single DCL pool that does not hold wNEAR (a launchpad pool paired with PRL, USDC, ...) as the whole
+   * route from wNEAR: `best NEAR path > that pool`, in the multi-pool form the executor and quotes accept.
+   * Anything else (a wNEAR pool, a path already, no route to the quote) comes back unchanged.
+   */
+  async expandDclPoolFromNear(poolId: string, coin: string): Promise<string> {
+    if (!poolId || poolId.includes('>') || poolId.includes(',')) return poolId;
+    const parts = poolId.split('|');
+    if (parts.length < 3) return poolId;
+    const pair = parts.slice(0, 2);
+    if (pair.includes('wrap.near') || pair.includes('near')) return poolId;
+    const quote = pair[0] === coin ? pair[1] : pair[1] === coin ? pair[0] : null;
+    if (!quote) return poolId;
+    const hop = await this.bestNearHop(quote).catch(() => null);
+    return hop?.kind === 'dcl' ? [...hop.path, poolId].join('>') : poolId;
+  }
+
   async findDclPoolId(tokenA: string, tokenB: string): Promise<string | null> {
     const key = `${tokenA}:${tokenB}`;
     const cached = dclPoolIdCache.get(key);
@@ -2561,10 +2605,12 @@ export class MultiRpcNear {
 
     const quote = st.quote;
 
-    // 0. Best DCL path from wNEAR to the quote, compared by output (direct or through USDC)
-    const bestPath = await this.findDclPathFromNear(quote).catch(() => null);
-    if (bestPath?.length) {
-      return { kind: 'multihop', quote, launchPoolId, hop1: { type: 'dcl', poolId: bestPath[bestPath.length - 1] }, hop1Path: bestPath };
+    // 0. The best hop from wNEAR to the quote by output: a DCL path or a Ref classic pool
+    const best = await this.bestNearHop(quote).catch(() => null);
+    if (best) {
+      return best.kind === 'dcl'
+        ? { kind: 'multihop', quote, launchPoolId, hop1: { type: 'dcl', poolId: best.path[best.path.length - 1] }, hop1Path: best.path }
+        : { kind: 'multihop', quote, launchPoolId, hop1: { type: 'v2', poolId: String(best.poolId) } };
     }
 
     // 1. Prioritize Ref DCL pool! Both ShoreMarkets launch pool and hop1 pool
@@ -3169,17 +3215,13 @@ export class MultiRpcNear {
 
     const quote = st.quote;
 
-    // 0. Best DCL path from wNEAR to the quote (direct or through USDC, compared by output): a thin direct
-    // NEAR/PRL pool filled buys 43% worse than NEAR -> USDC -> PRL, the route nearly.trade itself uses
-    const bestPath = await this.findDclPathFromNear(quote).catch(() => null);
-    if (bestPath?.length) {
-      const res = {
-        kind: 'multihop' as const,
-        quote,
-        launchPoolId,
-        hop1: { type: 'dcl' as const, poolId: bestPath[bestPath.length - 1] },
-        hop1Path: bestPath,
-      };
+    // 0. The best hop from wNEAR to the quote by output: a DCL path (a thin direct NEAR/PRL pool filled buys
+    // 43% worse than NEAR -> USDC -> PRL) or a Ref classic pool (RHEA and KAT are deeper there)
+    const best = await this.bestNearHop(quote).catch(() => null);
+    if (best) {
+      const res = best.kind === 'dcl'
+        ? { kind: 'multihop' as const, quote, launchPoolId, hop1: { type: 'dcl' as const, poolId: best.path[best.path.length - 1] }, hop1Path: best.path }
+        : { kind: 'multihop' as const, quote, launchPoolId, hop1: { type: 'v2' as const, poolId: String(best.poolId) } };
       ntRouteCache.set(tokenAddress, { at: Date.now(), route: res });
       return res;
     }
@@ -3900,6 +3942,10 @@ export class MultiRpcNear {
     } else if (venue === 'rhea' || venue === 'ref' || venue === 'qlyphs') {
       const inToken = tokenIn === 'near' ? 'wrap.near' : tokenIn;
       const outToken = tokenOut === 'near' ? 'wrap.near' : tokenOut;
+      // A launchpad pool paired with another token (PRL...) is quoted along the full path from wNEAR
+      if (dclPoolId) {
+        dclPoolId = await this.expandDclPoolFromNear(dclPoolId, inToken === 'wrap.near' ? outToken : inToken).catch(() => dclPoolId!);
+      }
 
       if (dclPoolId) {
         const isMultiDcl = dclPoolId.includes('>') || dclPoolId.includes(',');

@@ -503,3 +503,60 @@ export async function prewarmDclRoute(user: UserRecord, token: string): Promise<
     storageActions('wrap.near', [user.subaccount_id, TREASURY_ACCOUNT_ID]),
   ]).catch(() => undefined);
 }
+
+const USDC = '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+
+/**
+ * USDC-mode buy of a launchpad coin on a Rhea DCL path: pays in USDC, `amountNear` worth at the NEAR price.
+ * A path that starts NEAR -> USDC (PRL coins: NEAR -> USDC -> PRL -> coin) starts at USDC instead, one hop
+ * shorter; any other path gets USDC -> NEAR in front. Fee 1.5% in USDC, swap and fee in one transaction.
+ */
+export async function buyViaDclPathWithUsdc(user: UserRecord, token: string, path: string[], amountNear: number, nearUsd: number, slippagePct: number, decimals?: number): Promise<IntentsTradeResult> {
+  const account = user.subaccount_id;
+  const slippage = Math.max(0.5, Math.min(50, slippagePct));
+  try {
+    if (!(nearUsd > 0)) return { success: false, reason: 'The NEAR price is unavailable right now; try again in a moment.' };
+    const near = await signer(user);
+    const first = path[0]?.split('|') ?? [];
+    const usdcPath = first.includes(USDC) && first.includes('wrap.near') ? path.slice(1) : [`${USDC}|wrap.near|100`, ...path];
+    const amount = BigInt(Math.round(amountNear * nearUsd * 1e6)); // USDC has 6 decimals
+    const fee = (amount * BigInt(FEE_BPS)) / 10_000n;
+    const swapIn = amount - fee;
+    const [usdcBal, nativeRaw, q, registerCoin, registerTreasury] = await Promise.all([
+      balanceOf(USDC, account),
+      near.getNearBalance(account, 0).catch(() => '0'),
+      getNear().view<any>(DCL, 'quote', { pool_ids: usdcPath, input_token: USDC, output_token: token, input_amount: swapIn.toString(), tag: null }),
+      storageActions(token, [account]),
+      storageActions(USDC, [TREASURY_ACCOUNT_ID]),
+    ]);
+    const usd = (v: bigint) => (Number(v) / 1e6).toFixed(2);
+    if (usdcBal < amount) return { success: false, reason: `Not enough USDC (USDC mode): this buy needs ${usd(amount)} USDC and your wallet has ${usd(usdcBal)}.` };
+    if (BigInt(nativeRaw || '0') < 25_000_000_000_000_000_000_000n) return { success: false, reason: 'USDC mode still needs about 0.025 NEAR in your wallet for network gas.' };
+    const expected = BigInt(q?.amount || '0');
+    if (expected <= 0n) return { success: false, reason: 'The Rhea pools quoted nothing for this buy. Nothing was spent.' };
+    const min = (expected * BigInt(Math.round((100 - slippage) * 100))) / 10_000n;
+
+    if (registerCoin.length) {
+      await send(near, account, token, registerCoin);
+      registeredOn.add(`${token}|${account}`);
+    }
+    const outcome = await sendForOutcome(near, account, USDC, [
+      ...registerTreasury,
+      transactions.functionCall('ft_transfer', { receiver_id: TREASURY_ACCOUNT_ID, amount: fee.toString() }, 15n * TGAS, 1n),
+      transactions.functionCall('ft_transfer_call', {
+        receiver_id: DCL,
+        amount: swapIn.toString(),
+        msg: JSON.stringify({ Swap: { pool_ids: usdcPath, output_token: token, min_output_amount: min.toString() } }),
+      }, 200n * TGAS, 1n),
+    ]);
+    const txHash = outcome.transaction.hash;
+    let got = receivedFromLogs(outcome, token, account);
+    if (got === null) got = (await balanceOf(token, account)) > 0n ? expected : 0n;
+    if (got <= 0n) return { success: false, txHash, reason: 'The price moved past your slippage limit, so the swap did not fill. Your USDC was refunded.' };
+    const rec = await recordFill(user, token, 'buy', got, amountNear, amountNear * FEE_BPS / 10_000, txHash, undefined, decimals);
+    return { success: true, txHash, positionId: rec.positionId, tokensRaw: got.toString(), nearSpent: amountNear, priceNear: rec.priceNear, paidIn: 'USDC' };
+  } catch (err: any) {
+    logger.warn(`USDC DCL path buy of ${token} for ${user.id} failed: ${err?.message}`);
+    return { success: false, reason: err?.message || 'Buy failed' };
+  }
+}
