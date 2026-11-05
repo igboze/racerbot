@@ -1471,61 +1471,83 @@
       color: inherit;
     }
 
-    /* Quickstart Onboarding Banner */
+    /* Ultra-Compact Quickstart Strip */
     .alpha-quickstart-banner {
-      background: linear-gradient(135deg, rgba(106, 204, 220, 0.08) 0%, rgba(22, 27, 44, 0.95) 100%);
-      border: 1px solid rgba(106, 204, 220, 0.25);
-      border-radius: var(--radius-lg);
-      padding: 16px 20px;
-      margin-bottom: 20px;
+      background: linear-gradient(90deg, rgba(106, 204, 220, 0.08) 0%, rgba(22, 27, 44, 0.85) 100%);
+      border: 1px solid rgba(106, 204, 220, 0.22);
+      border-radius: 8px;
+      padding: 6px 12px;
+      margin-bottom: 8px;
       position: relative;
     }
     .quickstart-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
+      gap: 10px;
+      flex-wrap: wrap;
     }
-    .quickstart-steps-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 14px;
+    .quickstart-steps-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 11.5px;
     }
-    @media (max-width: 768px) {
-      .quickstart-steps-grid { grid-template-columns: 1fr; gap: 10px; }
+    .qs-step-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--color-text);
+      font-weight: 500;
     }
-    .quickstart-step {
-      background: var(--color-surface);
-      border: 1px solid var(--color-border);
-      border-radius: 8px;
-      padding: 12px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .quickstart-step-num {
+    .qs-step-num {
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: rgba(106, 204, 220, 0.18);
+      color: var(--color-primary);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      background: rgba(106, 204, 220, 0.15);
-      color: var(--color-primary);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      font-weight: 700;
-      margin-bottom: 4px;
     }
-    .quickstart-step-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--color-text);
+    .qs-arrow {
+      color: var(--color-text-subtle);
+      font-size: 10px;
     }
-    .quickstart-step-desc {
-      font-size: 12px;
+    .qs-toggle-btn {
+      background: transparent;
+      border: 1px solid var(--color-border);
       color: var(--color-text-muted);
-      line-height: 1.4;
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      transition: all 0.15s ease;
+    }
+    .qs-toggle-btn:hover {
+      color: var(--color-text);
+      border-color: var(--color-primary);
+    }
+    .quickstart-drawer {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    @media (max-width: 768px) {
+      .quickstart-drawer { grid-template-columns: 1fr; gap: 6px; }
+      .quickstart-steps-inline { gap: 6px; font-size: 11px; }
+    }
+    .qs-drawer-item {
+      font-size: 11px;
+      color: var(--color-text-muted);
+      line-height: 1.35;
     }
 
     /* Center Stage Elements */
@@ -2397,8 +2419,8 @@
     .console-conf-summary::-webkit-details-marker { display: none; }
     /* Account strip: where a new user stands (connect, fund, trade) and the one action that moves them on */
     .alpha-account-strip {
-      display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px 20px;
-      padding: 14px 16px; margin-bottom: 16px; border: 1px solid var(--color-border); border-radius: 12px;
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px 16px;
+      padding: 8px 14px; margin-bottom: 8px; border: 1px solid var(--color-border); border-radius: 10px;
       background: var(--color-surface);
     }
     .aas-steps { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
@@ -3830,40 +3852,68 @@
         flex-shrink: 0;
       }
 
-      /* Control visibility of terminal sections based on data-mobile-tab (phones, where the tab bar shows) */
+      /* Seamless Mobile Experience: Responsive terminal tabs (< 768px) */
       @media (max-width: 767px) {
-      .terminal-view-container[data-mobile-tab="trade"] .alpha-trade-col {
-        display: flex !important;
-        width: 100% !important;
-      }
-      .terminal-view-container[data-mobile-tab="trade"] .alpha-screener-col {
-        display: none !important;
-      }
-      .terminal-view-container[data-mobile-tab="trade"] .alpha-bottom-row {
-        display: none !important;
-      }
+        .alpha-main-layout {
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 12px !important;
+        }
 
-      .terminal-view-container[data-mobile-tab="screener"] .alpha-screener-col {
-        display: flex !important;
-        width: 100% !important;
-      }
-      .terminal-view-container[data-mobile-tab="screener"] .alpha-trade-col {
-        display: none !important;
-      }
-      .terminal-view-container[data-mobile-tab="screener"] .alpha-bottom-row {
-        display: none !important;
-      }
+        /* TAB 1: CHART & TRADE (Mobile View) */
+        .terminal-view-container[data-mobile-tab="trade"] .alpha-screener-col {
+          display: flex !important;
+          width: 100% !important;
+        }
+        .terminal-view-container[data-mobile-tab="trade"] #alpha-token-center-stage {
+          display: block !important;
+        }
+        .terminal-view-container[data-mobile-tab="trade"] #alpha-screener-view {
+          display: none !important;
+        }
+        .terminal-view-container[data-mobile-tab="trade"] .alpha-chart-viewport {
+          height: 230px !important;
+        }
+        .terminal-view-container[data-mobile-tab="trade"] .alpha-view-switch-strip {
+          display: none !important;
+        }
+        .terminal-view-container[data-mobile-tab="trade"] .alpha-trade-col {
+          display: flex !important;
+          width: 100% !important;
+        }
+        .terminal-view-container[data-mobile-tab="trade"] .alpha-bottom-row {
+          display: none !important;
+        }
 
-      .terminal-view-container[data-mobile-tab="positions"] .alpha-bottom-row {
-        display: block !important;
-        width: 100% !important;
-      }
-      .terminal-view-container[data-mobile-tab="positions"] .alpha-screener-col {
-        display: none !important;
-      }
-      .terminal-view-container[data-mobile-tab="positions"] .alpha-trade-col {
-        display: none !important;
-      }
+        /* TAB 2: TOKEN SCREENER (Mobile View) */
+        .terminal-view-container[data-mobile-tab="screener"] .alpha-screener-col {
+          display: flex !important;
+          width: 100% !important;
+        }
+        .terminal-view-container[data-mobile-tab="screener"] #alpha-token-center-stage {
+          display: none !important;
+        }
+        .terminal-view-container[data-mobile-tab="screener"] #alpha-screener-view {
+          display: block !important;
+        }
+        .terminal-view-container[data-mobile-tab="screener"] .alpha-trade-col {
+          display: none !important;
+        }
+        .terminal-view-container[data-mobile-tab="screener"] .alpha-bottom-row {
+          display: none !important;
+        }
+
+        /* TAB 3: POSITIONS (Mobile View) */
+        .terminal-view-container[data-mobile-tab="positions"] .alpha-bottom-row {
+          display: block !important;
+          width: 100% !important;
+        }
+        .terminal-view-container[data-mobile-tab="positions"] .alpha-screener-col {
+          display: none !important;
+        }
+        .terminal-view-container[data-mobile-tab="positions"] .alpha-trade-col {
+          display: none !important;
+        }
       }
 
       /* Top strip metrics wrapping on mobile in FeedLoop style */
@@ -4484,31 +4534,29 @@
           </button>
         </div>
 
-        <!-- Racer Alpha Quick Start Guide for New Users -->
+        <!-- Racer Alpha Ultra-Compact Quick Start Helper Bar -->
         <div class="alpha-quickstart-banner" id="alpha-quickstart-banner">
           <div class="quickstart-header">
             <div style="display:flex; align-items:center; gap:8px;">
-              <span class="live-dot" style="background:var(--color-primary);"></span>
-              <span style="font-weight:700; font-size:13px; color:var(--color-text); letter-spacing:0.3px;">⚡ QUICK START: TRADING ON RACER ALPHA</span>
+              <span class="live-dot" style="background:var(--color-primary); width:6px; height:6px;"></span>
+              <span style="font-weight:700; font-size:11.5px; color:var(--color-primary); letter-spacing:0.3px;">QUICK START:</span>
+              <div class="quickstart-steps-inline">
+                <span class="qs-step-pill"><span class="qs-step-num">1</span> Select Token</span>
+                <span class="qs-arrow">➔</span>
+                <span class="qs-step-pill"><span class="qs-step-num">2</span> Track Real-Time Swaps</span>
+                <span class="qs-arrow">➔</span>
+                <span class="qs-step-pill"><span class="qs-step-num">3</span> 1-Click Stealth Trade</span>
+              </div>
             </div>
-            <button type="button" onclick="toggleAlphaQuickstart()" style="background:transparent; border:none; color:var(--color-text-subtle); font-size:12px; cursor:pointer; padding:4px 8px; border-radius:4px;">Dismiss ✕</button>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <button type="button" class="qs-toggle-btn" onclick="toggleAlphaQuickstartDrawer()" id="qs-drawer-toggle">Guide ▾</button>
+              <button type="button" onclick="dismissAlphaQuickstart()" style="background:transparent; border:none; color:var(--color-text-subtle); font-size:12px; cursor:pointer; padding:2px 6px;" title="Dismiss">✕</button>
+            </div>
           </div>
-          <div class="quickstart-steps-grid">
-            <div class="quickstart-step">
-              <span class="quickstart-step-num">1</span>
-              <span class="quickstart-step-title">Select Any Token</span>
-              <span class="quickstart-step-desc">Click any token row in the screener or search by name. The center page instantly displays real-time candles and on-chain swap activities.</span>
-            </div>
-            <div class="quickstart-step">
-              <span class="quickstart-step-num">2</span>
-              <span class="quickstart-step-title">Track Real-Time Activity</span>
-              <span class="quickstart-step-desc">Watch incoming whale buys, sells, and volume flow directly on the token you're trading to gauge momentum before entering.</span>
-            </div>
-            <div class="quickstart-step">
-              <span class="quickstart-step-num">3</span>
-              <span class="quickstart-step-title">Trade Confidentially</span>
-              <span class="quickstart-step-desc">Execute in 1 click using disposable stealth subaccounts. Your main wallet never appears on-chain, preventing MEV front-running.</span>
-            </div>
+          <div class="quickstart-drawer" id="alpha-quickstart-drawer" style="display:none;">
+            <div class="qs-drawer-item"><b>1. Select Token:</b> Click any row in the screener or search by name. The center displays live candles and DEX trades.</div>
+            <div class="qs-drawer-item"><b>2. Track Activity:</b> Watch incoming whale buys, sells, and volume flow before entering a position.</div>
+            <div class="qs-drawer-item"><b>3. Stealth Trade:</b> Buy in 1 click with disposable executors. Your wallet never appears on-chain.</div>
           </div>
         </div>
 
@@ -7857,6 +7905,9 @@
       renderCenterChart(tok);
       renderTokenActivityFeed(tok.address);
       switchAlphaMainView('chart');
+      if (window.innerWidth <= 767 && typeof switchMobileTerminalTab === 'function') {
+        switchMobileTerminalTab('trade');
+      }
 
       // Restart real-time polling for the newly selected token
       startRealTimeTokenUpdater();
@@ -7866,10 +7917,19 @@
     let currentAlphaMainView = 'chart';
     let currentCenterChartMode = 'dex';
 
-    window.toggleAlphaQuickstart = function() {
+    window.dismissAlphaQuickstart = function() {
       const banner = document.getElementById('alpha-quickstart-banner');
       if (banner) banner.style.display = 'none';
       try { localStorage.setItem('racer_alpha_hide_quickstart', 'true'); } catch (e) {}
+    };
+
+    window.toggleAlphaQuickstartDrawer = function() {
+      const drawer = document.getElementById('alpha-quickstart-drawer');
+      const btn = document.getElementById('qs-drawer-toggle');
+      if (!drawer) return;
+      const isOpen = drawer.style.display !== 'none';
+      drawer.style.display = isOpen ? 'none' : 'grid';
+      if (btn) btn.textContent = isOpen ? 'Guide ▾' : 'Close ▴';
     };
 
     if (typeof localStorage !== 'undefined' && localStorage.getItem('racer_alpha_hide_quickstart') === 'true') {
