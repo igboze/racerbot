@@ -335,6 +335,21 @@ export async function refillPool(acct: ConfidentialAccountRecord): Promise<numbe
   if (!EXECUTORS_ENABLED || !acct.enabled || !acct.auto_refill || refilling.has(acct.user_id)) return 0;
   refilling.add(acct.user_id);
   try {
+    // Circuit breaker: do not refill if this user experienced any failure in the last 30 minutes
+    const recentFailed = await listUserExecutors(acct.user_id, ['failed']);
+    const now = Date.now();
+    const hasRecentFailure = recentFailed.some(e => e.updated_at && (now - new Date(e.updated_at).getTime()) < 30 * 60_000);
+    if (hasRecentFailure) {
+      return 0;
+    }
+
+    // Circuit breaker: do not spawn executors if controller balance is low (< 2.0 NEAR)
+    const ctrlBal = await getNear().getNearBalance(EXECUTOR_CONTROLLER).catch(() => null);
+    if (ctrlBal && BigInt(ctrlBal) < 2_000_000_000_000_000_000_000_000n) {
+      logger.warn('Controller ' + EXECUTOR_CONTROLLER + ' balance is low; pausing executor pool refills');
+      return 0;
+    }
+
     const live = await listUserExecutors(acct.user_id, ['creating', 'funding', 'ready', 'claimed']);
     const missing = [...acct.pool_sizes];
     for (const e of live) {
