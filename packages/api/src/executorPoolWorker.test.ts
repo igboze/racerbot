@@ -26,6 +26,7 @@ vi.mock('@racerbot/db', () => ({
   getExecutor: vi.fn(async (id: string) => ({ account_id: id, user_id: 'u1' })),
   claimReadyExecutors: vi.fn(), createConfidentialAccount: vi.fn(), getUserConfidentialMove: vi.fn(),
   insertConfidentialMove: vi.fn(), insertExecutor: vi.fn(), listUserConfidentialMoves: vi.fn(), listUserExecutors: vi.fn(async () => []),
+  listActiveConfidentialAccounts: vi.fn(async () => []),
 }));
 const balances: Record<string, string | Error> = {};
 const view = vi.fn(async () => { throw new Error('UNKNOWN_ACCOUNT'); });

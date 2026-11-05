@@ -63,7 +63,19 @@ export const EXECUTORS_ENABLED = process.env.CONFIDENTIAL_EXECUTORS_ENABLED !== 
 export const EXECUTOR_CONTROLLER = process.env.EXECUTOR_CONTROLLER_ACCOUNT_ID || process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
 /** Hex sha256 of the deployed executor global contract (scripts/deploy-confidential.mjs prints it) */
 export const EXECUTOR_CODE_HASH = (process.env.EXECUTOR_CODE_HASH || '812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e').trim().toLowerCase();
-const RPC_URL = process.env.NEAR_RPC_URL || 'https://rpc.mainnet.fastnear.com';
+const RPC_CANDIDATES = [
+  process.env.NEAR_RPC_URL,
+  ...(process.env.RPC_PROVIDERS || '').split(',').map(s => s.trim()),
+  'https://free.rpc.fastnear.com',
+  'https://rpc.mainnet.near.org',
+  'https://near.drpc.org',
+  'https://rpc.intea.rs',
+].filter((u): u is string => Boolean(u));
+let activeRpcIndex = 0;
+function getNextRpcUrl(): string {
+  return RPC_CANDIDATES[activeRpcIndex % RPC_CANDIDATES.length] || 'https://free.rpc.fastnear.com';
+}
+const RPC_URL = getNextRpcUrl();
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '';
 
 /** RacerBot's deposit per executor: storage stake, registrations, buffer (mostly returned at deletion) */
@@ -126,8 +138,29 @@ async function controllerTx(receiver: string, txActions: any[]): Promise<any> {
   const lane = signerLanes.reduce((best, l) => (l.pending < best.pending ? l : best));
   lane.pending++;
   const run = async () => {
-    lane.account ??= new Account(EXECUTOR_CONTROLLER, new JsonRpcProvider({ url: RPC_URL }), lane.key as any);
-    return lane.account.signAndSendTransaction({ receiverId: receiver, actions: txActions, throwOnFailure: false });
+    let lastErr: any = null;
+    const maxAttempts = Math.min(RPC_CANDIDATES.length, 3);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const currentRpc = getNextRpcUrl();
+      try {
+        lane.account = new Account(EXECUTOR_CONTROLLER, new JsonRpcProvider({ url: currentRpc }), lane.key as any);
+        const result = await lane.account.signAndSendTransaction({ receiverId: receiver, actions: txActions, throwOnFailure: false });
+        const outcomeErr = failureOf(result);
+        const errStr = JSON.stringify(result || '');
+        if (errStr.includes('-429') || errStr.includes('Rate limits') || errStr.includes('timed out')) {
+          logger.warn(`Controller RPC ${currentRpc} rate limited or timed out; rotating to next RPC candidate`);
+          activeRpcIndex++;
+          lastErr = outcomeErr || 'RPC rate limit';
+          continue;
+        }
+        return result;
+      } catch (err: any) {
+        logger.warn(`Controller transaction on ${currentRpc} failed (${err?.message}); rotating RPC`);
+        activeRpcIndex++;
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error('All RPC candidates failed for controller transaction');
   };
   const next = lane.queue.then(run, run).finally(() => { lane.pending--; });
   lane.queue = next.catch(() => undefined);
@@ -162,6 +195,11 @@ export function executorInitArgs(controller: string, ownerHashHex: string): Uint
 /** Borsh arguments of `exit_to_intents(deposit_address, amount)` */
 export function exitToIntentsArgs(depositAddress: string, amount: bigint): Uint8Array {
   return new Uint8Array(Buffer.concat([borshStr(depositAddress), u128le(amount)]));
+}
+
+/** Borsh arguments of `exit_to_owner(to, salt)` */
+export function exitToOwnerArgs(to: string, salt: string): Uint8Array {
+  return new Uint8Array(Buffer.concat([borshStr(to), borshStr(salt)]));
 }
 
 interface ExecutorEvent {
@@ -213,14 +251,36 @@ export async function ensureConfidentialAccount(user: UserRecord): Promise<Confi
     return existing;
   }
   if (!MASTER_KEY) throw new Error('Encryption master key is not configured');
-  if (!isNearPayoutAccount(user.subaccount_id)) throw new Error('Private trading needs a NEAR account to pay out to');
+  let payout = isNearPayoutAccount(user.subaccount_id) ? user.subaccount_id : null;
+  if (!payout) {
+    const db = await import('@racerbot/db').then(m => m.getDb()).catch(() => null);
+    if (db) {
+      const nearWallet = await db.query(
+        "SELECT address FROM user_wallets WHERE user_id = $1 AND chain = 'near' AND is_active = TRUE ORDER BY created_at DESC LIMIT 1",
+        [user.id]
+      ).catch(() => ({ rows: [] }));
+      if (nearWallet.rows[0]?.address && isNearPayoutAccount(nearWallet.rows[0].address)) {
+        payout = nearWallet.rows[0].address;
+      }
+    }
+  }
+  if (!payout) {
+    try {
+      const { createWebManagedWallet } = await import('./webWallet.js');
+      const managed = await createWebManagedWallet(user.id);
+      if (managed?.address && isNearPayoutAccount(managed.address)) {
+        payout = managed.address;
+      }
+    } catch {}
+  }
+  if (!payout) throw new Error('Private trading needs a NEAR account to pay out to');
   const keys = generatePrivateAccount();
   return createConfidentialAccount({
     user_id: user.id,
     private_account_id: keys.accountId,
     public_key: keys.publicKey,
     secret_key_encrypted: encrypt(keys.secretKey, MASTER_KEY),
-    payout_address: user.subaccount_id,
+    payout_address: payout,
     owner_salt: crypto.randomBytes(16).toString('hex'),
   });
 }
@@ -797,24 +857,46 @@ export async function closeExecutor(executor: string): Promise<void> {
 
   // Rounded returns send a round amount now; the remainder follows on the worker's next pass
   const send = acct.round_returns ? roundedReturn(amount) : amount;
-  // Refunds of the return go back to the executor, which can exit again
-  const quote = await quoteShield(acct.private_account_id, send, executor);
-  const sent = await callExecutor(executor, 'exit_to_intents', exitToIntentsArgs(quote.depositAddress, send), 150);
+  let sent: any = null;
+  let quote: MoveQuote | null = null;
+  let usedOwnerExit = false;
+
+  try {
+    quote = await quoteShield(acct.private_account_id, send, executor);
+    sent = await callExecutor(executor, 'exit_to_intents', exitToIntentsArgs(quote.depositAddress, send), 150);
+  } catch (intentErr: any) {
+    logger.warn(`exit_to_intents or 1Click quote unavailable for ${executor} (${intentErr?.message}); falling back to exit_to_owner`);
+    sent = await callExecutor(executor, 'exit_to_owner', exitToOwnerArgs(acct.payout_address, acct.owner_salt), 150);
+    usedOwnerExit = true;
+  }
+
   const events = extractExecutorEvents(sent);
   const exited = events.find(ev => ev.event === 'exited');
   const partial = events.find(ev => ev.event === 'exit_partial');
   const txHash = sent?.transaction?.hash;
-  await insertConfidentialMove({
-    user_id: userId, kind: 'return', executor_account_id: executor, deposit_address: quote.depositAddress,
-    amount: send.toString(), destination: acct.private_account_id, tx_hash: txHash,
-  });
-  if (txHash) void notifyDeposit(quote.depositAddress, txHash);
+
+  if (quote && !usedOwnerExit) {
+    await insertConfidentialMove({
+      user_id: userId, kind: 'return', executor_account_id: executor, deposit_address: quote.depositAddress,
+      amount: send.toString(), destination: acct.private_account_id, tx_hash: txHash,
+    });
+    if (txHash) void notifyDeposit(quote.depositAddress, txHash);
+  } else if (usedOwnerExit) {
+    await insertConfidentialMove({
+      user_id: userId, kind: 'return', executor_account_id: executor, deposit_address: acct.payout_address,
+      amount: amount.toString(), destination: acct.payout_address, tx_hash: txHash,
+    });
+  }
+
   await updateExecutor(executor, {
-    status: exited ? 'exited' : 'exiting', returned_amount: send.toString(), event: exited ?? partial ?? { event: 'exit_failed' },
-    tx_hash: txHash, last_error: exited || partial ? null : failureOf(sent) || 'exit failed',
+    status: exited ? 'exited' : (usedOwnerExit ? 'exited' : 'exiting'),
+    returned_amount: usedOwnerExit ? amount.toString() : send.toString(),
+    event: exited ?? partial ?? { event: usedOwnerExit ? 'exited' : 'exit_failed' },
+    tx_hash: txHash,
+    last_error: exited || partial || usedOwnerExit ? null : failureOf(sent) || 'exit failed',
   });
   // The sell's NEAR is known once the executor exits
-  if (exited) racerRankCheck(userId);
+  if (exited || usedOwnerExit) racerRankCheck(userId);
 }
 
 /** NEAR Racer Card: confidential trades count toward the lifetime rank too. */

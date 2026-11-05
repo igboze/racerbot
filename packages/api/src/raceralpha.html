@@ -6636,6 +6636,14 @@
       const prev = btn ? btn.textContent : '';
       if (btn) { btn.disabled = true; btn.textContent = 'Selling & closing...'; }
       try {
+        if (!getAuthHeaders().Authorization) {
+          showToast('Please sign in to verify your session before closing the position.', 'info');
+          const ok = await verifyConnectedWalletSession(btn);
+          if (!ok) {
+            if (typeof openConnectModal === 'function') openConnectModal();
+            return;
+          }
+        }
         const res = await fetch('/alpha/trade/execute', {
           method: 'POST',
           headers: getAuthHeaders(),

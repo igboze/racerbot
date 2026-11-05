@@ -479,11 +479,34 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
       lastRpcErr = err;
     }
   }
-  if (lastRpcErr) {
+  // Fallback: If not full-access, check if the key is a valid FunctionCall or access key on the account
+  if (!ownsAccountKey) {
+    for (const nodeUrl of rpcCandidates) {
+      try {
+        const { providers } = await import('near-api-js');
+        const p = new providers.JsonRpcProvider({ url: nodeUrl });
+        const keyInfo = await p.query<any>({
+          request_type: 'view_access_key',
+          finality: 'final',
+          account_id: accountId,
+          public_key: proof.publicKey,
+        });
+        if (keyInfo && !keyInfo.error) {
+          ownsAccountKey = true;
+          lastRpcErr = null;
+          break;
+        }
+      } catch (keyErr: any) {
+        lastRpcErr = keyErr;
+      }
+    }
+  }
+
+  if (lastRpcErr && !ownsAccountKey) {
     throw new Error('Could not verify your NEAR account key on RPC. Please try again.');
   }
   if (!ownsAccountKey) {
-    throw new Error('The signing key is not a full-access key for this NEAR account.');
+    throw new Error('The signing key is not a recognized access key for this NEAR account.');
   }
 
   return { chain, accountId };

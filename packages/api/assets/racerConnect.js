@@ -604,9 +604,19 @@
      */
     async ensureWalletSession() {
       if (this.token || this.isTelegramMiniApp()) return true;
-      if (!this.activeNearWallet) return false;
-      await this.connectSelectorAccount(this.activeNearWallet, "NEAR Connect", true);
-      return Boolean(this.token);
+      if (this.activeNearWallet) {
+        await this.connectSelectorAccount(this.activeNearWallet, "NEAR Connect", true);
+        return Boolean(this.token);
+      }
+      if (this.activeSolanaWallet) {
+        await this.connectSolanaWallet();
+        return Boolean(this.token);
+      }
+      if (this.activeEvmWallet) {
+        await this.connectEvmWallet();
+        return Boolean(this.token);
+      }
+      return false;
     }
 
     /**
