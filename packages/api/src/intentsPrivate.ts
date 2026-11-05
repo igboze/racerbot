@@ -47,8 +47,8 @@ export function generatePrivateAccount(): PrivateAccountKeys {
 
 async function api<T>(method: 'GET' | 'POST', path: string, body?: unknown, bearer?: string): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (bearer) headers.Authorization = `Bearer ${bearer}`;
-  else if (API_KEY) headers['X-API-Key'] = API_KEY;
+  if (API_KEY) headers['X-API-Key'] = API_KEY;
+  if (bearer && bearer !== 'none') headers.Authorization = `Bearer ${bearer}`;
   const res = await fetch(`${API_URL}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   if (!res.ok) throw new Error(`1Click ${path} ${res.status}: ${text.slice(0, 300)}`);
@@ -168,6 +168,7 @@ export async function quoteShieldFromAsset(privateAccountId: string, originAsset
  * implicit or named account is created/credited). Refunds stay in the private account.
  */
 export async function unshield(keys: PrivateAccountKeys, amount: bigint, recipient: string): Promise<MoveQuote & { intentHash: string }> {
+  const token = await session(keys);
   const quote = moveQuote(await api('POST', '/v0/quote', {
     dry: false,
     swapType: 'EXACT_INPUT',
@@ -182,19 +183,19 @@ export async function unshield(keys: PrivateAccountKeys, amount: bigint, recipie
     refundType: 'CONFIDENTIAL_INTENTS',
     confidentiality: 'basic',
     deadline: new Date(Date.now() + QUOTE_DEADLINE_MS).toISOString(),
-  }));
+  }, token));
   const generated = await api<{ intent: { standard: string; payload: unknown } }>('POST', '/v0/generate-intent', {
     type: 'swap_transfer',
     standard: 'raw_ed25519',
     signerId: keys.accountId,
     depositAddress: quote.depositAddress,
-  });
+  }, token);
   // Sign exactly what was generated: raw_ed25519 signs the payload string's UTF-8 bytes
   const payload = typeof generated.intent.payload === 'string' ? generated.intent.payload : JSON.stringify(generated.intent.payload);
   const submitted = await api<{ intentHash: string }>('POST', '/v0/submit-intent', {
     type: 'swap_transfer',
     signedData: { ...generated.intent, public_key: keys.publicKey, signature: signRaw(keys, payload) },
-  });
+  }, token);
   return { ...quote, intentHash: submitted.intentHash };
 }
 

@@ -1006,6 +1006,21 @@ async function workerTick(): Promise<void> {
   }
   // Moves that did not change go to the back of the queue
   await markConfidentialMovesChecked(moves.map(m => m.id)).catch(() => undefined);
+
+  // 1b. Check if any funding executors already have on-chain balance delivered
+  const fundingExecutors = await listExecutorsByStatus(['funding'], 0, 20).catch(() => []);
+  for (const fe of fundingExecutors) {
+    try {
+      const state = await getNear().view<any>(fe.account_id, 'get_state', {});
+      const avail = BigInt(state?.native_available || '0');
+      if (avail >= (BigInt(fe.size_yocto || '0') * 95n) / 100n) {
+        logger.info(`Executor ${fe.account_id} funded on-chain (${avail} yocto); setting ready`);
+        await updateExecutor(fe.account_id, { status: 'ready' });
+      }
+    } catch {
+      // not funded yet or transient RPC error
+    }
+  }
   if (!EXECUTORS_ENABLED) return;
   // 2. Delete executors whose close delay has passed
   for (const e of await listExecutorsByStatus(['exited'], CLOSE_DELAY_MS / 1000, 20)) {

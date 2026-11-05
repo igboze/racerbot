@@ -11,6 +11,7 @@ import {
   getCompetitionByToken,
   upsertCompetition,
   getCompetitionLeaderboard,
+  getDb,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
 import { createLogger, formatTokenUnits } from '@racerbot/shared';
@@ -624,6 +625,109 @@ router.get('/alpha/token/:address', async (req, res) => {
     res.json({ success: true, token });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || 'Failed to fetch token detail' });
+  }
+});
+
+const tokenActivityCache = new Map<string, { trades: any[]; expires: number }>();
+
+router.get('/alpha/token/:address/activity', async (req, res) => {
+  try {
+    const address = req.params.address?.toLowerCase().trim();
+    if (!address) {
+      res.status(400).json({ success: false, error: 'Address required' });
+      return;
+    }
+
+    const now = Date.now();
+    const cached = tokenActivityCache.get(address);
+    if (cached && cached.expires > now) {
+      res.json({ success: true, trades: cached.trades });
+      return;
+    }
+
+    const trades: any[] = [];
+
+    // 1. Check local database for recent signals/trades on this token
+    try {
+      const db = await getDb().catch(() => null);
+      if (db) {
+        const sigs = await db.query(
+          `SELECT id, side, price_near AS "priceNear", market_cap_usd AS "marketCapUsd",
+                  amount_near AS "amountNear", venue, tx_hash AS "txHash", created_at AS "createdAt"
+           FROM racer_alpha_signals
+           WHERE LOWER(token_address) = $1
+           ORDER BY created_at DESC LIMIT 20`,
+          [address]
+        );
+        for (const r of sigs.rows) {
+          const tMs = new Date(r.createdAt).getTime();
+          const diffM = Math.max(0, Math.round((now - tMs) / 60000));
+          trades.push({
+            type: String(r.side || 'buy').toLowerCase(),
+            amount: `${parseFloat(r.amountNear || '1').toFixed(2)} NEAR`,
+            amountNear: parseFloat(r.amountNear || '1').toFixed(2),
+            priceUsd: 0,
+            volumeUsd: r.marketCapUsd ? parseFloat(r.marketCapUsd) : 0,
+            maker: 'Racer Signal',
+            txHash: r.txHash || '',
+            timestamp: tMs,
+            timeAgo: diffM === 0 ? 'Just now' : `${diffM}m ago`,
+          });
+        }
+      }
+    } catch {}
+
+    // 2. Fetch live on-chain swaps from GeckoTerminal with bounded timeout
+    try {
+      const poolsRes = await fetch(
+        `https://api.geckoterminal.com/api/v2/networks/near/tokens/${encodeURIComponent(address)}/pools`,
+        { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(3000) }
+      );
+      if (poolsRes.ok) {
+        const pj = (await poolsRes.json()) as any;
+        const poolAddr = pj?.data?.[0]?.attributes?.address;
+        if (poolAddr) {
+          const trRes = await fetch(
+            `https://api.geckoterminal.com/api/v2/networks/near/pools/${encodeURIComponent(poolAddr)}/trades`,
+            { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(3000) }
+          );
+          if (trRes.ok) {
+            const trj = (await trRes.json()) as any;
+            for (const item of (trj?.data || []).slice(0, 25)) {
+              const a = item.attributes || {};
+              const tMs = a.block_timestamp ? new Date(a.block_timestamp).getTime() : now;
+              const diffM = Math.max(0, Math.round((now - tMs) / 60000));
+              const timeAgo = diffM < 1 ? 'Just now' : diffM < 60 ? `${diffM}m ago` : `${Math.floor(diffM / 60)}h ago`;
+              const volUsd = parseFloat(a.volume_in_usd || '0');
+              const fromAmt = parseFloat(a.from_token_amount || '0');
+              const toAmt = parseFloat(a.to_token_amount || '0');
+              const isSell = a.kind === 'sell';
+              const amtNum = isSell ? fromAmt : toAmt;
+              const nearAmt = (isSell ? toAmt : fromAmt).toFixed(2);
+
+              trades.push({
+                type: isSell ? 'sell' : 'buy',
+                amount: amtNum > 0 ? amtNum.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '1.0',
+                amountNear: nearAmt,
+                priceUsd: parseFloat(a.price_from_in_usd || '0'),
+                volumeUsd: volUsd,
+                maker: a.tx_from_address || 'trader.near',
+                txHash: a.tx_hash || '',
+                timestamp: tMs,
+                timeAgo,
+              });
+            }
+          }
+        }
+      }
+    } catch {}
+
+    trades.sort((a, b) => b.timestamp - a.timestamp);
+    const finalTrades = trades.slice(0, 25);
+    tokenActivityCache.set(address, { trades: finalTrades, expires: now + 10_000 });
+    res.json({ success: true, trades: finalTrades });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || 'Failed to fetch activity', trades: [] });
   }
 });
 

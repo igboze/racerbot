@@ -579,6 +579,48 @@
     </div>
   </section>
 
+  <!-- RacerFleet Quick-Start Guide for New Users -->
+  <div class="terminal-container" style="padding-top:16px;">
+    <div style="background:linear-gradient(135deg, rgba(106, 204, 220, 0.08) 0%, rgba(22, 27, 44, 0.95) 100%); border:1px solid rgba(106, 204, 220, 0.25); border-radius:var(--radius-lg); padding:16px 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="live-dot" style="background:var(--color-primary);"></span>
+          <span style="font-weight:700; font-size:13px; color:var(--color-text); letter-spacing:0.3px;">⚡ HOW RACERFLEET MULTI-WALLET SWARMS WORK</span>
+        </div>
+        <button type="button" onclick="this.closest('.terminal-container').style.display='none'" style="background:transparent; border:none; color:var(--color-text-subtle); font-size:12px; cursor:pointer; padding:4px 8px;">Dismiss ✕</button>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:12px 14px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+            <span style="background:rgba(106,204,220,0.15); color:var(--color-primary); font-family:var(--font-mono); font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">1</span>
+            <span style="font-size:13px; font-weight:700; color:var(--color-text);">Deploy Child Subaccounts</span>
+          </div>
+          <p style="font-size:12px; color:var(--color-text-muted); margin:0; line-height:1.4;">
+            Create 3 to 10 disposable child accounts under <code>racerbot.near</code> with 1 click. Each wallet has independent keys, zero linked history, and trades autonomously.
+          </p>
+        </div>
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:12px 14px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+            <span style="background:rgba(106,204,220,0.15); color:var(--color-primary); font-family:var(--font-mono); font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">2</span>
+            <span style="font-size:13px; font-weight:700; color:var(--color-text);">Anti-MEV Jitter Swarm</span>
+          </div>
+          <p style="font-size:12px; color:var(--color-text-muted); margin:0; line-height:1.4;">
+            Bundle buys distribute size across multiple subaccounts with randomized millisecond delays. Sniper bots and sandwich MEV extractors cannot front-run your orders.
+          </p>
+        </div>
+        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:12px 14px;">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+            <span style="background:rgba(106,204,220,0.15); color:var(--color-primary); font-family:var(--font-mono); font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">3</span>
+            <span style="font-size:13px; font-weight:700; color:var(--color-text);">1-Click Capital Sweep</span>
+          </div>
+          <p style="font-size:12px; color:var(--color-text-muted); margin:0; line-height:1.4;">
+            When trading is complete, sweep all remaining NEAR and token balances back to your primary wallet in a single atomic transaction. No funds left behind.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Fleet HUD Dashboard -->
   <div class="terminal-container" style="padding-top:24px;">
     <div class="hud-grid">
@@ -609,6 +651,20 @@
 
   <!-- Main Terminal Body -->
   <main class="terminal-container" style="padding-top:20px; padding-bottom:64px;">
+    <!-- Empty State Onboarding Callout when 0 subaccounts deployed -->
+    <div id="fleet-empty-state-banner" style="display:none; background:var(--color-surface-card); border:1px solid rgba(106, 204, 220, 0.3); border-radius:var(--radius-lg); padding:24px; margin-bottom:20px; text-align:center;">
+      <div style="width:48px; height:48px; border-radius:50%; background:rgba(106, 204, 220, 0.15); display:inline-flex; align-items:center; justify-content:center; margin-bottom:12px;">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6ACCDC" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+      </div>
+      <h3 style="font-size:18px; font-weight:700; color:var(--color-text); margin:0 0 6px;">No Subaccount Fleet Deployed Yet</h3>
+      <p style="font-size:13px; color:var(--color-text-2); max-width:540px; margin:0 auto 16px;">
+        Deploy your first fleet of disposable child accounts from <code>racerbot.near</code> to start multi-wallet coordinated trading, anti-MEV jitter execution, and stealth distribution.
+      </p>
+      <button class="btn btn-primary" onclick="openDeployModal()" style="min-height:44px; padding:0 24px; font-weight:700;">
+        ⚡ Deploy 5-Wallet Fleet (1-Click)
+      </button>
+    </div>
+
     <div class="terminal-split">
       <!-- Left Column: Coordinated Multi-Wallet Terminal -->
       <div>
