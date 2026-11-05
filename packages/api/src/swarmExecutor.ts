@@ -172,10 +172,15 @@ async function runBuy(userId: string, session: AiSwarmSessionRecord, tranche: an
       user, tokenAddress: session.token_address, venue: tranche.venue, amountYocto: nearToYocto(Number(tranche.amountNear) || 0),
       slippagePct: tranche.maxSlippagePct,
     });
-    return {
-      ok: res.success, txHash: res.txHashes[0] || null, error: res.success ? null : (res.reason || 'Confidential buy failed'),
-      nearAmount: res.success ? Number(tranche.amountNear) || 0 : 0, tokenQty: '0', positionId: null,
-    };
+    if (res.success) {
+      return {
+        ok: true, txHash: res.txHashes[0] || null, error: null,
+        nearAmount: Number(tranche.amountNear) || 0, tokenQty: '0', positionId: null,
+      };
+    }
+    // If confidential buy fails (e.g. pool refilling, no ready executor, or low private balance),
+    // gracefully fall back to standard wallet execution so user's trade succeeds reliably
+    logger.warn(`Confidential buy failed (${res.reason}); falling back to standard wallet execution`);
   }
   const res = await executeBuyHelper(userId, session.token_address, tranche.amountNear);
   return {
@@ -207,7 +212,10 @@ async function runSell(userId: string, session: AiSwarmSessionRecord, tranche: a
     if (!EXECUTORS_ENABLED || !user) return { ok: false, error: 'Confidential trading is switched off', ...empty };
     if (!(pct > 0)) return { ok: false, error: 'Nothing left to sell for this tranche', ...empty };
     const res = await confidentialSell({ user, tokenAddress: session.token_address, venue: tranche.venue, percent: pct, slippagePct: tranche.maxSlippagePct });
-    return { ok: res.success, error: res.success ? null : (res.reason || 'Confidential sell failed'), ...empty, txHash: res.txHashes[0] || null };
+    if (res.success) {
+      return { ok: true, error: null, ...empty, txHash: res.txHashes[0] || null };
+    }
+    logger.warn(`Confidential sell failed (${res.reason}); falling back to standard wallet execution`);
   }
   const position = (await getOpenPositions(userId))
     .find(p => p.token_address === session.token_address && (p.chain || 'near') === 'near');

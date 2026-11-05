@@ -48,7 +48,7 @@ export function createSwarmRouter(): Router {
       const stealthMode = req.body?.stealthMode !== false;
       const totalNear = Number(req.body?.totalNear);
 
-      const balances = await getUserBalances(user.telegram_id).catch(() => null);
+      const balances = await getUserBalances(user.telegram_id, false, user).catch(() => null);
       const plan = await planSwarmSession({
         prompt,
         userBalances: balances,

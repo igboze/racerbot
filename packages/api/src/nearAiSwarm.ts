@@ -127,10 +127,17 @@ export function extractTokenCandidateFromPrompt(prompt: string): string | null {
   if (dollarSymbol) return dollarSymbol[1].toLowerCase();
 
   // 3. Look for "of <token>" (e.g. "accumulate 10 NEAR of LONK", "buy 5 NEAR of SWEAT", "10 SOL of BONK")
-  const ofToken = prompt.match(/\b(?:of|in|for)\s+([A-Za-z0-9_\-\.]{2,40})\b/i);
+  const ofToken = prompt.match(/\b(?:of|in|for)\s+([A-Za-z0-9_\-\..]{2,40})\b/i);
   if (ofToken) {
     const cand = ofToken[1].toLowerCase();
-    if (!['near', 'sol', 'sui', 'strk', 'eth', 'usdc', 'usdt', 'usd'].includes(cand)) {
+    const ignored = [
+      'near', 'sol', 'sui', 'strk', 'eth', 'usdc', 'usdt', 'usd',
+      'tranches', 'drones', 'wallets', 'workers', 'executors', 'subaccounts',
+      'minutes', 'mins', 'seconds', 'secs', 'hours', 'hrs',
+      'staggered', 'total', 'capital', 'amount', 'ratio', 'slippage',
+      'all', 'the', 'some', 'my', 'any'
+    ];
+    if (!ignored.includes(cand) && isNaN(Number(cand))) {
       return cand;
     }
   }
@@ -276,7 +283,18 @@ export async function resolveTokenAddressAsync(query: string): Promise<string | 
     } catch { }
   }
 
-  return candidate || null;
+  // Only return candidate if it is a verified format, alias, or known contract
+  if (candidate && (
+    candidate.endsWith('.near') ||
+    candidate.endsWith('.tg') ||
+    candidate.startsWith('0x') ||
+    TOKEN_ALIASES[candidate.toLowerCase()] ||
+    (candidate.length >= 32 && !candidate.includes(' '))
+  )) {
+    return resolveNearTokenQuery(candidate) || candidate;
+  }
+
+  return null;
 }
 
 /**
@@ -547,8 +565,22 @@ export async function planSwarmSession(params: {
   const userHasBalances = Boolean(userBalances && userBalances.nativeNearFormatted !== undefined);
   const availableNear = userHasBalances ? parseFloat(userBalances!.nativeNearFormatted || '0') : 0;
 
-  // 1. Target token: the prompt, else the token the user picked
-  const tokenAddress = (prompt ? await resolveTokenAddressAsync(prompt) : null) || params.defaultTokenAddress || null;
+  // 1. Target token: check explicit default first if valid, then prompt, then fallback
+  let tokenAddress: string | null = null;
+  if (params.defaultTokenAddress && (
+    params.defaultTokenAddress.endsWith('.near') ||
+    params.defaultTokenAddress.endsWith('.tg') ||
+    params.defaultTokenAddress.startsWith('0x') ||
+    TOKEN_ALIASES[params.defaultTokenAddress.toLowerCase()]
+  )) {
+    tokenAddress = resolveNearTokenQuery(params.defaultTokenAddress) || params.defaultTokenAddress;
+  }
+  if (!tokenAddress && prompt) {
+    tokenAddress = await resolveTokenAddressAsync(prompt);
+  }
+  if (!tokenAddress && params.defaultTokenAddress) {
+    tokenAddress = params.defaultTokenAddress;
+  }
   if (!tokenAddress) {
     throw new Error(prompt
       ? `Target token not recognized in prompt: "${prompt}". Please provide a token contract or valid symbol.`

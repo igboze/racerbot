@@ -876,16 +876,16 @@
               <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
                 <div>
                   <div class="form-label"><span>TARGET TOKEN CONTRACT / SYMBOL</span></div>
-                  <input type="text" id="swarm-token-input" class="terminal-input" placeholder="Any token address, symbol, or launchpad contract" value="" />
+                  <input type="text" id="swarm-token-input" class="terminal-input" placeholder="Any token address, symbol, or launchpad contract" value="" oninput="renderFleetTokenTelemetry(this.value)" />
                   <div class="chips-row" style="margin-top:6px; flex-wrap:wrap; gap:4px;">
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='hoot-8ecf65.launchpad.justhoot.near'">HOOT</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='blackdragon.tkn.near'">BLACKDRAGON</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='token.lonk.near'">LONK</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='token.sweat'">SWEAT</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='token.v2.ref-finance.near'">REF</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='batman-4.nearlytrade.near'">BATMAN</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='shore-4lzt.launch.shoremarkets.near'">SHORE</button>
-                    <button type="button" class="token-chip" onclick="document.getElementById('swarm-token-input').value='neat.nrc-20.near'">NEAT</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('hoot-8ecf65.launchpad.justhoot.near')">HOOT</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('blackdragon.tkn.near')">BLACKDRAGON</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('token.lonk.near')">LONK</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('token.sweat')">SWEAT</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('token.v2.ref-finance.near')">REF</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('batman-4.nearlytrade.near')">BATMAN</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('shore-4lzt.launch.shoremarkets.near')">SHORE</button>
+                    <button type="button" class="token-chip" onclick="setSwarmToken('neat.nrc-20.near')">NEAT</button>
                   </div>
                 </div>
 
@@ -2135,6 +2135,17 @@
     let currentSwarmPlan = null;
     let swarmPollTimer = null;
 
+    function setSwarmToken(token) {
+      const input = document.getElementById('swarm-token-input');
+      if (input) input.value = token;
+      const promptInput = document.getElementById('swarm-prompt-input');
+      if (promptInput && !promptInput.value.trim()) {
+        const totalNear = document.getElementById('swarm-total-near').value || '10.0';
+        promptInput.value = `Accumulate ${totalNear} NEAR of ${token} in 5 tranches staggered over 15 minutes`;
+      }
+      renderFleetTokenTelemetry(token);
+    }
+
     function setSwarmPreset(presetType) {
       const promptInput = document.getElementById('swarm-prompt-input');
       const tokenInput = document.getElementById('swarm-token-input');
@@ -2147,30 +2158,48 @@
       } else if (presetType === 'momentum_snipe') {
         promptInput.value = 'Rapid breakout snipe of 5 NEAR on BATMAN in 3 tranches';
         tokenInput.value = 'batman-4.nearlytrade.near';
-        amtInput.value = '15.0';
+        amtInput.value = '5.0';
       } else if (presetType === 'anti_mev_dispersion') {
         promptInput.value = 'Accumulate 20 NEAR of SHORE in 6 randomized tranches to avoid sandwich MEV';
         tokenInput.value = 'shore-4lzt.launch.shoremarkets.near';
         amtInput.value = '20.0';
       } else if (presetType === 'liquidity_probe') {
-        promptInput.value = 'Buy 3 NEAR of BLACKDRAGON in 4 small tranches to probe liquidity depth';
+        promptInput.value = 'Buy 5 NEAR of BLACKDRAGON in 4 small tranches to probe liquidity depth';
         tokenInput.value = 'blackdragon.tkn.near';
         amtInput.value = '5.0';
       }
+      renderFleetTokenTelemetry(tokenInput.value);
     }
 
     async function generateSwarmPlan() {
-      const prompt = document.getElementById('swarm-prompt-input').value.trim();
+      const hasSession = await ensureFleetSession();
+      if (!hasSession && !fleetAuthHeader().Authorization) {
+        showToast('Please connect your wallet first to plan an AI Swarm', 'info');
+        openConnectModal();
+        return;
+      }
+
+      let prompt = document.getElementById('swarm-prompt-input').value.trim();
       const tokenAddress = document.getElementById('swarm-token-input').value.trim() || undefined;
       const totalNear = parseFloat(document.getElementById('swarm-total-near').value) || 10.0;
       const stealthMode = document.getElementById('swarm-stealth-mode').checked;
       const btn = document.getElementById('btn-swarm-plan');
 
+      if (!prompt && tokenAddress) {
+        prompt = `Accumulate ${totalNear} NEAR of ${tokenAddress} in 5 tranches staggered over 15 minutes`;
+        document.getElementById('swarm-prompt-input').value = prompt;
+      }
+
+      if (!prompt && !tokenAddress) {
+        showToast('Please select a token or describe your trade intent', 'error');
+        document.getElementById('swarm-prompt-input').focus();
+        return;
+      }
+
       btn.disabled = true;
       btn.innerHTML = '<span>Planning with NEAR AI…</span>';
 
       try {
-        const nearWallet = localStorage.getItem('racer_connected_near_wallet') || '';
         const headers = { 'Content-Type': 'application/json' };
         Object.assign(headers, fleetAuthHeader());
 
@@ -2182,7 +2211,6 @@
             tokenAddress,
             totalNear,
             stealthMode,
-            username: nearWallet,
           }),
         });
 
@@ -2194,6 +2222,9 @@
         activeSwarmSessionId = data.sessionId;
         currentSwarmPlan = data.plan;
         renderSwarmPlan(data.plan);
+        if (data.plan?.tokenAddress) {
+          renderFleetTokenTelemetry(data.plan.tokenAddress);
+        }
         showToast('Swarm plan ready. Review it before launching', 'success');
       } catch (err) {
         showToast(err.message || 'Error generating swarm plan', 'error');
@@ -2249,6 +2280,14 @@
         showToast('No active swarm session to launch', 'error');
         return;
       }
+
+      const hasSession = await ensureFleetSession();
+      if (!hasSession && !fleetAuthHeader().Authorization) {
+        showToast('Please sign in or connect your wallet to launch the swarm', 'info');
+        openConnectModal();
+        return;
+      }
+
 
       const btn = document.getElementById('btn-swarm-launch');
       btn.disabled = true;
@@ -2397,7 +2436,9 @@
 
     /** After a reload: show the latest swarm that is running or paused, and follow it. */
     async function restoreActiveSwarm() {
-      if (activeSwarmSessionId || !fleetAuthHeader().Authorization) return;
+      if (activeSwarmSessionId) return;
+      await ensureFleetSession();
+      if (!fleetAuthHeader().Authorization) return;
       try {
         const res = await fetch('/api/swarm/sessions', { headers: swarmAuthHeaders() });
         if (!res.ok) return;
