@@ -202,19 +202,30 @@ async function pollWallet(wallet: string, state: WalletState): Promise<void> {
     state.cursor = newest;
     return;
   }
-  state.cursor = newest;
 
   // Oldest first so buys are copied before a later sell of the same token.
   for (const s of [...sigs].reverse()) {
-    if (s.err) continue;
+    if (s.err) {
+      state.cursor = s.signature;
+      continue;
+    }
     const ageMs = s.blockTime ? Date.now() - s.blockTime * 1000 : 0;
-    if (ageMs > MAX_ALERT_AGE_MS) continue;
+    if (ageMs > MAX_ALERT_AGE_MS) {
+      state.cursor = s.signature;
+      continue;
+    }
     try {
       const tx = await getParsedTransaction(s.signature);
+      if (!tx) {
+        logger.warn('Solana copy transaction is not available yet; will retry', { wallet, sig: s.signature });
+        break;
+      }
       const swap = parseSolanaSwap(tx, wallet);
       if (swap) await dispatchSwap(wallet, swap, s.signature, ageMs);
+      state.cursor = s.signature;
     } catch (err) {
       logger.warn('Solana copy tx read failed', { wallet, sig: s.signature, error: (err as Error).message });
+      break;
     }
   }
 }

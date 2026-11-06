@@ -17,6 +17,35 @@ export function copyModeData(mode: 'copy' | 'track', wallet: string, referrerId?
   return Buffer.byteLength(withRef) <= TELEGRAM_CALLBACK_LIMIT ? withRef : base;
 }
 
+export interface TrackerAlertMarkup {
+  inline_keyboard: Array<Array<{
+    text: string;
+    callback_data?: string;
+    url?: string;
+  }>>;
+}
+
+/** Re-encode detector callbacks in the API process so long addresses fit Telegram's limit. */
+export function shortenTrackerAlertMarkup(markup: TrackerAlertMarkup, tokenAddress: string): TrackerAlertMarkup {
+  const tokenKey = getShortTokenKey(tokenAddress);
+  if (!tokenKey || tokenKey === tokenAddress) return markup;
+
+  return {
+    ...markup,
+    inline_keyboard: markup.inline_keyboard.map((row) =>
+      row.map((button) => {
+        if (!button.callback_data) return button;
+        return {
+          ...button,
+          callback_data: button.callback_data
+            .replace(`buy_fixed:${tokenAddress}:`, `buy_fixed:${tokenKey}:`)
+            .replace(`token_refresh:${tokenAddress}`, `token_refresh:${tokenKey}`),
+        };
+      }),
+    ),
+  };
+}
+
 /** /start parameter for sharing a copy target: cp_ + its id without dashes (35 chars) */
 export function copyShareParam(targetId: string): string {
   return `cp_${targetId.replace(/-/g, '').toLowerCase()}`;

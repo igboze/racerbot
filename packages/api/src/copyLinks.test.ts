@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTokenAddressFromKey } from '@racerbot/shared';
-import { copyModeData, copyShareParam, parseCopyShareParam } from './copyLinks.js';
+import { copyModeData, copyShareParam, parseCopyShareParam, shortenTrackerAlertMarkup } from './copyLinks.js';
 
 const IMPLICIT = 'f8bc60638f0a6e7036657a995927e7e3ccb3be8c302a89708b1b0002e155af41';
 const LONG_NAMED = 'a-very-long-trader-name-that-goes-on.some-subaccount.racerbot.near';
@@ -24,6 +24,34 @@ describe('copyModeData', () => {
 
   it('omits the referrer when there is none', () => {
     expect(copyModeData('copy', 'trader.near')).toBe('copy_mode:copy:trader.near');
+  });
+});
+
+describe('shortenTrackerAlertMarkup', () => {
+  it('keeps tracker buttons within Telegram limits and preserves the address mapping', () => {
+    const token = 'a'.repeat(64);
+    const markup = shortenTrackerAlertMarkup({
+      inline_keyboard: [[
+        { text: 'Buy', callback_data: `buy_fixed:${token}:0.5` },
+        { text: 'View', callback_data: `token_refresh:${token}` },
+      ]],
+    }, token);
+    const callbacks = markup.inline_keyboard[0].map((button) => button.callback_data!);
+    expect(callbacks.every((callback) => Buffer.byteLength(callback) <= 64)).toBe(true);
+    expect(callbacks[0]).toMatch(/^buy_fixed:t_[0-9a-f]{8}[a-z]{4}:0\.5$/);
+    expect(callbacks[1]).toMatch(/^token_refresh:t_[0-9a-f]{8}[a-z]{4}$/);
+    expect(resolveTokenAddressFromKey(callbacks[0].split(':')[1])).toBe(token);
+    expect(resolveTokenAddressFromKey(callbacks[1].slice('token_refresh:'.length))).toBe(token);
+  });
+
+  it('leaves chart URLs and short-address callbacks unchanged', () => {
+    const markup = {
+      inline_keyboard: [[
+        { text: 'Buy', callback_data: 'buy_fixed:token.near:0.5' },
+        { text: 'Chart', url: 'https://dexscreener.com/near/token.near' },
+      ]],
+    };
+    expect(shortenTrackerAlertMarkup(markup, 'token.near')).toEqual(markup);
   });
 });
 

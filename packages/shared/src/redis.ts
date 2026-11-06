@@ -143,6 +143,8 @@ export interface NotifyUserEvent {
     | 'trade_failed'
     | 'trade_confirmed'
     | 'solana_trade_confirmed'
+    | 'copy_trade_filled'
+    | 'wallet_tracker_alert'
     | 'deposit_received'
     | 'limit_order_fill'
     | 'limit_order_failed';
