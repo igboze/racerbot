@@ -3192,6 +3192,11 @@ export async function publishSwap(swapEvent: {
   slippage_pct?: number;
   quoted_at?: number;
   trade_currency?: 'near' | 'usdc';
+  known_balances?: {
+    native_yocto?: string | null;
+    wnear_yocto?: string;
+    usdc_raw?: string;
+  };
 }, onProgress?: (stage: string) => void, options: { suppressAlphaSignal?: boolean } = {}): Promise<{ txHash?: string; success?: boolean; positionId?: string; reason?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; usdcSpent?: number; nearReceived?: number; usdcReceived?: number; sellPercent?: number }> {
   // Put depositWatcher in cooldown immediately before swap execution so intermediate wNEAR is not misinterpreted as an external deposit
   recordUserTrade(swapEvent.user_id, 'near', 1.0);

@@ -105,6 +105,7 @@ export {
   // Multi-Wallet Management (Option A)
   getUserWallets,
   getActiveWallet,
+  invalidateActiveWalletCache,
   getUserWalletById,
   createUserWallet,
   setActiveWallet,

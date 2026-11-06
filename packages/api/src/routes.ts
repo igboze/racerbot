@@ -3120,9 +3120,11 @@ async function executeBuyHelperAsTrade(
   // Fast lane: a launchpad coin reached through Rhea DCL pools has its route cached from its card, so only
   // the honeypot check runs before the trade (no balance or price reads for other chains)
   if (tokenAddress.endsWith('.near') && isLaunchpadToken(tokenAddress)) {
-    const fastInfo = await getFastTokenRoute(tokenAddress).catch(() => null);
+    const [fastInfo, safety] = await Promise.all([
+      getFastTokenRoute(tokenAddress).catch(() => null),
+      checkTokenSafety(tokenAddress).catch(() => null),
+    ]);
     if (fastInfo?.dcl_path?.length && fastInfo.tradeable) {
-      const safety = await checkTokenSafety(tokenAddress).catch(() => null);
       if (safety?.isHoneypot) {
         throw new Error(`🚨 ORDER BLOCKED FOR YOUR PROTECTION:\n\nThis token (\`${tokenAddress}\`) was identified as a MALICIOUS HONEYPOT.\n• ${safety.reasons[0] || 'Backdoor methods detected'}\n\n🛡️ RacerBot has blocked this transaction to prevent loss of funds.`);
       }
@@ -3131,29 +3133,45 @@ async function executeBuyHelperAsTrade(
     }
   }
 
-  const isSuiHint = isSuiToken(tokenAddress) || rawTokenAddress.includes('::');
   const isSolanaHint = isSolanaToken(tokenAddress);
   const isStarknetHint = !isSolanaHint && isStarknetToken(tokenAddress);
+  const isSuiHint = !isSolanaHint && !isStarknetHint && (isSuiToken(tokenAddress) || rawTokenAddress.includes('::'));
+  const isEvmHint = !isSolanaHint && !isStarknetHint && !isSuiHint && (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'));
+  const isNearHint = !isSolanaHint && !isStarknetHint && !isSuiHint && !isEvmHint;
 
-  const activeNearWallet = !isSuiHint && !isStarknetHint && !isSolanaHint ? await getActiveWallet(user.id, 'near').catch(() => null) : null;
-  const nearAccountToUse = activeNearWallet?.address || user.subaccount_id;
-  const activeSuiWallet = isSuiHint || user.sui_address ? await getActiveWallet(user.id, 'sui').catch(() => null) : null;
-  const suiAddrToUse = activeSuiWallet?.address || user.sui_address || '';
+  let nearAccountToUse = user.subaccount_id;
+  const resolveNearAccount = async (): Promise<string> => {
+    if (!isNearHint) return '';
+    const activeWallet = await getActiveWallet(user.id, 'near').catch(() => null);
+    nearAccountToUse = activeWallet?.address || user.subaccount_id;
+    return nearAccountToUse;
+  };
+
+  const fetchNearBalances = async (): Promise<[string | null, string, string]> => {
+    if (!isNearHint) return [null, '0', '0'];
+    const acct = await resolveNearAccount();
+    if (!acct) return [null, '0', '0'];
+    return Promise.all([
+      near.getNearBalance(acct).catch(() => null),
+      near.getTokenBalance('wrap.near', acct).catch(() => '0'),
+      near.getTokenBalance(NEAR_USDC_CONTRACT, acct).catch(() => '0'),
+    ]);
+  };
+
+  const fetchSuiBalance = async (): Promise<{ mist: bigint; formatted: string }> => {
+    if (!isSuiHint) return { mist: 0n, formatted: '0' };
+    const activeWallet = await getActiveWallet(user.id, 'sui').catch(() => null);
+    const suiAddr = activeWallet?.address || user.sui_address;
+    if (!suiAddr) return { mist: 0n, formatted: '0' };
+    return getSuiBalance(suiAddr).catch(() => ({ mist: 0n, formatted: '0' }));
+  };
 
   // Parallel pre-flight: resolve fast route, wallet balances, USD prices, and honeypot safety audit all in one parallel round-trip!
   const [info, nearBalRes, suiBalRes, nearUsdVal, suiUsdVal, safetyRes] = await Promise.all([
     getFastTokenRoute(tokenAddress).catch(() => null),
-    !isSuiHint && !isStarknetHint && !isSolanaHint && nearAccountToUse
-      ? Promise.all([
-        near.getNearBalance(nearAccountToUse).catch(() => null),
-        near.getTokenBalance('wrap.near', nearAccountToUse).catch(() => '0'),
-        near.getTokenBalance(NEAR_USDC_CONTRACT, nearAccountToUse).catch(() => '0'),
-      ])
-      : Promise.resolve([null, '0', '0'] as [string | null, string, string]),
-    suiAddrToUse
-      ? getSuiBalance(suiAddrToUse).catch(() => ({ mist: 0n, formatted: '0' }))
-      : Promise.resolve({ mist: 0n, formatted: '0' }),
-    !isSuiHint && !isStarknetHint && !isSolanaHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
+    fetchNearBalances(),
+    fetchSuiBalance(),
+    isNearHint ? getNearUsdPrice().catch(() => 0) : Promise.resolve(0),
     isSuiHint ? getSuiUsdPrice().catch(() => 0) : Promise.resolve(0),
     checkTokenSafety(tokenAddress).catch(() => null),
   ]);
@@ -3672,6 +3690,11 @@ async function executeBuyHelperAsTrade(
     slippage_pct: slippagePct,
     quoted_at: quoteCompletedAt,
     trade_currency: user.near_trade_currency,
+    known_balances: {
+      native_yocto: nativeBalYoctoStr,
+      wnear_yocto: wNearBalStr,
+      usdc_raw: usdcBalStr,
+    },
   }, onProgress);
 
   if (swapResult.success === false) {
@@ -3734,8 +3757,12 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
-  const info = await getTokenInfo(tokenAddress, false).catch(() => null);
-  if (info?.chain === 'solana' || isSolanaToken(tokenAddress)) {
+  const isSol = isSolanaToken(tokenAddress);
+  const isStk = !isSol && isStarknetToken(tokenAddress);
+  const isSui = !isSol && !isStk && (isSuiToken(tokenAddress) || rawTokenAddress.includes('::'));
+  const isEvmToken = !isSol && !isStk && !isSui && (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'));
+
+  if (isSol) {
     const solUser = await ensureUserSolanaWallet(user);
     const bal = await getSolanaBalance(solUser.solana_address!, true);
     // Keep 0.005 SOL for network fees and the token account rent.
@@ -3746,7 +3773,7 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
     }
     return executeBuyHelper(telegramId, tokenAddress, Number(amountSol.toFixed(6)), onProgress);
   }
-  if (info?.chain === 'starknet' || isStarknetToken(tokenAddress)) {
+  if (isStk) {
     const balances = await getUserBalances(telegramId);
     const strkBal = parseFloat(balances.strkBalanceFormatted || '0');
     const amountStrk = (strkBal * pct) / 100;
@@ -3756,7 +3783,7 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
     return executeBuyHelper(telegramId, tokenAddress, Number(amountStrk.toFixed(4)), onProgress);
   }
 
-  if (info?.chain === 'sui' || info?.venue === 'suipump' || isSuiToken(tokenAddress)) {
+  if (isSui) {
     const balanceSui = await getTradeSpendableSui(telegramId);
     const amountSui = (balanceSui * pct) / 100;
     if (amountSui < 0.01) {
@@ -3765,7 +3792,8 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
     return executeBuyHelper(telegramId, tokenAddress, Number(amountSui.toFixed(4)), onProgress);
   }
 
-  if (info?.chain === 'hyperevm' || info?.chain === 'elysium' || (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'))) {
+  if (isEvmToken) {
+    const info = await getFastTokenRoute(tokenAddress).catch(() => null);
     const evmUser = user.evm_address ? user : await ensureUserEvmWallet(user);
     if (!evmUser.evm_address) throw new Error('Your EVM wallet is not ready yet. Please send /start and try again.');
     const chain: EvmChain = (info?.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';

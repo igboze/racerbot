@@ -823,14 +823,35 @@ export async function getUserWallets(userId: string, chain: DbChain): Promise<Us
   return res.rows.map(rowToUserWallet);
 }
 
+
+const activeWalletCache = new Map<string, { wallet: UserWalletRecord | null; expiresAt: number }>();
+
+export function invalidateActiveWalletCache(userId: string, chain?: DbChain): void {
+  if (chain) {
+    activeWalletCache.delete(userId + ':' + chain);
+  } else {
+    for (const key of activeWalletCache.keys()) {
+      if (key.startsWith(userId + ':')) activeWalletCache.delete(key);
+    }
+  }
+}
+
 export async function getActiveWallet(userId: string, chain: DbChain): Promise<UserWalletRecord | null> {
+  const cacheKey = userId + ':' + chain;
+  const cached = activeWalletCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.wallet;
+  }
+
   const db = await getDb();
   const res = await db.query(
     'SELECT * FROM user_wallets WHERE user_id = $1 AND chain = $2 AND is_active = TRUE LIMIT 1',
     [userId, chain]
   );
   if (res.rows.length > 0) {
-    return rowToUserWallet(res.rows[0]);
+    const w = rowToUserWallet(res.rows[0]);
+    activeWalletCache.set(cacheKey, { wallet: w, expiresAt: Date.now() + 60_000 });
+    return w;
   }
 
   // Self-heal: If user has an address on this chain in users table, record and activate it in user_wallets
@@ -867,7 +888,9 @@ export async function getActiveWallet(userId: string, chain: DbChain): Promise<U
           [userId, chain, address, encKey]
         );
         if (insertRes.rows.length > 0) {
-          return rowToUserWallet(insertRes.rows[0]);
+          const w = rowToUserWallet(insertRes.rows[0]);
+          activeWalletCache.set(cacheKey, { wallet: w, expiresAt: Date.now() + 60_000 });
+          return w;
         }
       }
     }
@@ -884,6 +907,7 @@ export async function syncUserActiveWallet(
   address: string,
   encryptedPrivateKey: string
 ): Promise<void> {
+  invalidateActiveWalletCache(userId, chain);
   const db = await getDb();
   await db.query(
     'UPDATE user_wallets SET is_active = FALSE WHERE user_id = $1 AND chain = $2',
@@ -1118,6 +1142,7 @@ export async function setActiveEvmWallet(userId: string, walletId: string): Prom
 }
 
 export async function setActiveWallet(userId: string, chain: DbChain, walletId: string): Promise<UserWalletRecord> {
+  invalidateActiveWalletCache(userId, chain);
   const db = await getDb();
   const client = await db.connect();
   try {

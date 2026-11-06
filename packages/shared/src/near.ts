@@ -798,7 +798,7 @@ export class MultiRpcNear {
     const fastnear = this.readProviders.filter(p => !p.isQuickNode && !isCommunityFree(p) && !paidFastnear.includes(p));
     const quicknode = this.readProviders.filter(p => p.isQuickNode);
 
-    const HEDGE_MS = MultiRpcNear.HEDGE_MS;
+    const HEDGE_MS = isTradeRead() ? 50 : MultiRpcNear.HEDGE_MS;
     const VIEW_TIMEOUT_MS = MultiRpcNear.VIEW_TIMEOUT_MS;
 
     const paidFnTargets = eligible(paidFastnear).length > 0 ? eligible(paidFastnear) : paidFastnear;
@@ -1181,7 +1181,11 @@ export class MultiRpcNear {
    * Get ft_balance_of for a specific account.
    */
   async getTokenBalance(tokenAddress: string, accountId: string): Promise<string> {
-    return this.view<string>(tokenAddress, 'ft_balance_of', { account_id: accountId });
+    const res = await this.view<string>(tokenAddress, 'ft_balance_of', { account_id: accountId });
+    if (res && res !== '0') {
+      registeredCache.add(accountId + ':' + tokenAddress);
+    }
+    return res;
   }
 
   /**

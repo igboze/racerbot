@@ -89,6 +89,12 @@ export interface SwapEvent {
   is_snipe?: boolean;
   /** Optional override for NEAR trade currency ('near' | 'usdc') */
   trade_currency?: 'near' | 'usdc';
+  /** Pre-fetched balances from the upstream buy helper to skip redundant RPC view roundtrips */
+  known_balances?: {
+    native_yocto?: string | null;
+    wnear_yocto?: string;
+    usdc_raw?: string;
+  };
   timestamp?: number;
   /** Set for copy trades: the executor settles this fill (status, points, rewards) from the outcome */
   copy?: CopyFillMeta;

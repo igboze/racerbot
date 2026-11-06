@@ -890,11 +890,19 @@ export class SwapExecutor {
     let usdcSpentHuman: number | undefined = undefined;
     let capturedNativeBalStr: string | null = null;
     if (isBuyPath) {
-      // Balance and honeypot safety audit are fetched concurrently
+      // Balance and honeypot safety audit: use pre-fetched balances from buy helper when available to eliminate redundant RPC roundtrips
+      const kb = event.known_balances;
+      const hasKnownBal = Boolean(kb && kb.native_yocto !== undefined);
       const [nativeBalStr, wNearBalStr, usdcBalStr, safety] = await Promise.all([
-        this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null,
-        this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
-        this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, subaccountId).catch(() => '0') ?? '0',
+        hasKnownBal
+          ? Promise.resolve(kb?.native_yocto ?? null)
+          : (this.nearClient.getNearBalance?.(subaccountId).catch(() => null) ?? null),
+        hasKnownBal && kb?.wnear_yocto !== undefined
+          ? Promise.resolve(kb.wnear_yocto)
+          : this.nearClient.getTokenBalance('wrap.near', subaccountId).catch(() => '0'),
+        hasKnownBal && kb?.usdc_raw !== undefined
+          ? Promise.resolve(kb.usdc_raw)
+          : (this.nearClient.getTokenBalance?.(NEAR_USDC_CONTRACT, subaccountId).catch(() => '0') ?? '0'),
         checkTokenSafety(token_out).catch(() => null),
       ]);
       capturedNativeBalStr = nativeBalStr;
