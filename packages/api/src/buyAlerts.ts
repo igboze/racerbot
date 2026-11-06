@@ -127,6 +127,75 @@ export async function startBuyAlertListener(redisUrl: string, bot: Telegraf): Pr
 
 const seenBuyAlerts = new Map<string, number>();
 
+/** Public channel for whale buys (shared with the Starknet alerts) */
+const NEAR_WHALE_CHANNEL = process.env.NEAR_WHALE_ALERTS_CHANNEL || process.env.STARKNET_ALERTS_CHANNEL || '@racerbotalert';
+/** Only NEAR buys at or above this USD value reach the channel */
+const NEAR_WHALE_CHANNEL_MIN_USD = Number(process.env.NEAR_WHALE_CHANNEL_MIN_USD) || 500;
+/** Telegram allows ~20 posts a minute in a channel; keep a gap between whale posts */
+const NEAR_WHALE_CHANNEL_GAP_MS = 3000;
+let lastNearWhaleChannelPost = 0;
+
+/**
+ * Posts a NEAR whale buy to the public alerts channel.
+ */
+async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
+  if (!_bot) return;
+  const now = Date.now();
+  if (now - lastNearWhaleChannelPost < NEAR_WHALE_CHANNEL_GAP_MS) {
+    await new Promise(r => setTimeout(r, NEAR_WHALE_CHANNEL_GAP_MS - (now - lastNearWhaleChannelPost)));
+  }
+  lastNearWhaleChannelPost = Date.now();
+
+  const botUsername = _bot.botInfo?.username || 'racertradingbot';
+  const symbol = (event.token_symbol || 'TOKEN').toUpperCase();
+  const name = event.token_name && !event.token_name.includes('.') ? event.token_name : symbol;
+  const whaleBar = '🐋'.repeat(Math.min(25, Math.max(3, Math.round(event.spent_usd / 250))));
+
+  let mcapUsd = event.market_cap_usd;
+  if (!mcapUsd || mcapUsd <= 0) {
+    try {
+      const info = await getTokenInfo(event.token_address);
+      if (info?.market_cap_usd && info.market_cap_usd > 0) mcapUsd = info.market_cap_usd;
+    } catch { /* non-fatal */ }
+  }
+  const priceFormatted = event.price_usd && event.price_usd > 0 ? formatPriceUsd(event.price_usd) : '';
+
+  const header = event.spent_usd >= 5000
+    ? '🚨 <b>NEAR MEGA WHALE BUY! ($5,000+)</b> 🚨'
+    : `🚨 <b>NEAR WHALE BUY DETECTED! ($${NEAR_WHALE_CHANNEL_MIN_USD.toLocaleString('en-US')}+)</b> 🚨`;
+
+  const text =
+    `${header}\n` +
+    `${whaleBar}\n\n` +
+    `🪙 <b>Token:</b> ${escapeHtml(name)} (<code>$${escapeHtml(symbol)}</code>)\n` +
+    `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>\n` +
+    `💰 <b>Spent:</b> <b>${escapeHtml(event.spent_amount_native)}</b> ($${event.spent_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD)\n` +
+    `📦 <b>Got:</b> ${escapeHtml(event.tokens_received)}\n` +
+    `👤 <b>Buyer:</b> <code>${escapeHtml(maskAddress(event.buyer_address))}</code>` +
+    (priceFormatted ? `\n💵 <b>Price:</b> $${priceFormatted}` : '') +
+    (mcapUsd && mcapUsd > 0 ? `\n📊 <b>Market Cap:</b> $${mcapUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '');
+
+  const explorerUrl = event.tx_hash
+    ? `https://nearblocks.io/txns/${event.tx_hash}`
+    : `https://nearblocks.io/token/${event.token_address}`;
+  const buyDeepLink = `https://t.me/${botUsername}?start=${getShortTokenKey(event.token_address)}`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.url(`🏎️ Buy $${symbol} on RacerBot`, buyDeepLink)],
+    [
+      Markup.button.url('🔍 NearBlocks Tx', explorerUrl),
+      Markup.button.url('📈 DexScreener', `https://dexscreener.com/near/${event.token_address}`),
+    ],
+  ]);
+
+  await _bot.telegram.sendMessage(NEAR_WHALE_CHANNEL, text, {
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
+    ...keyboard,
+  });
+  console.log(`[BUY_ALERTS] NEAR whale buy posted to ${NEAR_WHALE_CHANNEL}: $${event.spent_usd.toFixed(2)} on ${symbol}`);
+}
+
 /**
  * Dispatches a buy alert to all Telegram groups tracking the token.
  */
@@ -172,6 +241,13 @@ export async function dispatchBuyAlert(event: BuyAlertEvent): Promise<void> {
     } catch (e: any) {
       console.warn('[BUY_ALERTS] Starknet whale channel broadcast failed:', e?.message);
     }
+  }
+
+  // Forward NEAR whale buys ($500+) to the public alerts channel
+  if (event.chain === 'near' && event.spent_usd >= NEAR_WHALE_CHANNEL_MIN_USD) {
+    await sendNearWhaleChannelAlert(event).catch((e: any) =>
+      console.warn('[BUY_ALERTS] NEAR whale channel broadcast failed:', e?.message)
+    );
   }
 
   const alerts = await getGroupBuyAlertsByToken(event.token_address).catch(() => []);

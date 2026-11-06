@@ -45,6 +45,9 @@ const tokenNameCache = new Map<string, TokenDetectedEvent>();
 /** Set of lowercase token addresses currently tracked by any Telegram group */
 let activeBuyAlertTokens = new Set<string>();
 
+/** NEAR buys at or above this USD value are published for the public whale alerts channel */
+const NEAR_WHALE_CHANNEL_MIN_USD = Number(process.env.NEAR_WHALE_CHANNEL_MIN_USD) || 500;
+
 /**
  * Snipe watchdog negative result cache (15s TTL).
  * When a poll cycle finds no pool for a snipe target, we skip it on the next
@@ -1157,8 +1160,11 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
 
       if (spentUsd > 0 && !isNaN(spentUsd)) {
         const isTracked = activeBuyAlertTokens.size > 0 && activeBuyAlertTokens.has(tokenAddress.toLowerCase());
+        // Whale buys go to the public alerts channel even when no group tracks the token. Only counted
+        // with a live NEAR price, so a fallback price can never push a small buy over the line.
+        const isChannelWhale = nearPriceUsd > 0 && spentUsd >= NEAR_WHALE_CHANNEL_MIN_USD;
 
-        if (isTracked) {
+        if (isTracked || isChannelWhale) {
           const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
           const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
           const tokensReceivedNum = parseFloat(data?.amount_out || '0') / Math.pow(10, decimals ?? 18);
