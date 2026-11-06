@@ -122,10 +122,27 @@ export async function startBuyAlertListener(redisUrl: string, bot: Telegraf): Pr
     }
   });
 
+  // Also broadcast newly launched NEAR meme tokens to @racerbotalert
+  try {
+    const tokenRedis = createRedis(redisUrl);
+    await tokenRedis.subscribe(CHANNELS.NEW_TOKENS, async (message: string) => {
+      try {
+        const event = JSON.parse(message);
+        if (!event?.token_address) return;
+        await sendNearTokenLaunchChannelAlert(event);
+      } catch (err: any) {
+        console.warn('[BUY_ALERTS] Error processing new token launch alert:', err?.message);
+      }
+    });
+  } catch (err: any) {
+    console.warn('[BUY_ALERTS] Failed to subscribe to NEW_TOKENS channel:', err?.message);
+  }
+
   console.log('[BUY_ALERTS] Listener subscribed to channel:', CHANNELS.BUY_ALERT);
 }
 
 const seenBuyAlerts = new Map<string, number>();
+const seenTokenLaunches = new Set<string>();
 
 /** Public channel for whale buys (shared with the Starknet alerts) */
 const NEAR_WHALE_CHANNEL = process.env.NEAR_WHALE_ALERTS_CHANNEL || process.env.STARKNET_ALERTS_CHANNEL || '@racerbotalert';
@@ -454,6 +471,77 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     ...keyboard,
   });
   console.log(`[BUY_ALERTS] NEAR meme whale buy posted to ${NEAR_WHALE_CHANNEL}: $${event.spent_usd.toFixed(2)} on ${cleanName} (${symbol})`);
+}
+
+/**
+ * Posts a newly launched NEAR meme token alert to the public @racerbotalert channel.
+ */
+async function sendNearTokenLaunchChannelAlert(event: {
+  token_address: string;
+  name?: string;
+  symbol?: string;
+  venue?: string;
+  creator?: string;
+}): Promise<void> {
+  if (!_bot) return;
+  const addr = (event.token_address || '').trim().toLowerCase();
+  if (!addr || seenTokenLaunches.has(addr)) return;
+  if (!isNearMemeToken(addr, event.symbol, event.name)) return;
+  seenTokenLaunches.add(addr);
+  if (seenTokenLaunches.size > 5000) {
+    const first = seenTokenLaunches.values().next().value;
+    if (first) seenTokenLaunches.delete(first);
+  }
+
+  const now = Date.now();
+  if (now - lastNearWhaleChannelPost < NEAR_WHALE_CHANNEL_GAP_MS) {
+    await new Promise(r => setTimeout(r, NEAR_WHALE_CHANNEL_GAP_MS - (now - lastNearWhaleChannelPost)));
+  }
+  lastNearWhaleChannelPost = Date.now();
+
+  const botUsername = _bot.botInfo?.username || 'racertradingbot';
+  const symbol = (event.symbol || addr.split('.')[0] || 'TOKEN').toUpperCase().replace(/^\$/, '');
+  const cleanName = event.name && !event.name.includes('.near')
+    ? event.name.trim()
+    : symbol;
+
+  const headingTitle = cleanName.toUpperCase() !== symbol
+    ? `${escapeHtml(cleanName.toUpperCase())} ($${escapeHtml(symbol)}) LAUNCHED!`
+    : `${escapeHtml(cleanName.toUpperCase())} LAUNCHED!`;
+
+  const venueLabel = resolveNearVenueLabel(addr, event.venue);
+  const creatorLine = event.creator && event.creator !== 'Unknown'
+    ? `👤 <b>Deployer:</b> <a href="https://nearblocks.io/address/${encodeURIComponent(event.creator)}">${escapeHtml(maskAddress(event.creator))}</a>\n`
+    : '';
+
+  const text =
+    `🚀 <b>${headingTitle}</b>\n` +
+    `✨ <b>NEW NEAR MEME TOKEN</b>\n\n` +
+    `🪙 <b>Token:</b> <b>${escapeHtml(cleanName)}</b> (<code>$${escapeHtml(symbol)}</code>)\n` +
+    `🏛️ <b>Venue:</b> ${venueLabel}\n` +
+    creatorLine +
+    `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>`;
+
+  const buyDeepLink = `https://t.me/${botUsername}?start=${getShortTokenKey(event.token_address)}`;
+  const chartUrl = addr.endsWith('.nearlytrade.near')
+    ? `https://nearlytrade.com/token/${event.token_address}`
+    : `https://dexscreener.com/near/${event.token_address}`;
+  const explorerUrl = `https://nearblocks.io/token/${event.token_address}`;
+
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.url(`⚡ Snipe / Buy $${symbol} on RacerBot`, buyDeepLink)],
+    [
+      Markup.button.url('📈 Chart', chartUrl),
+      Markup.button.url('🔍 Contract', explorerUrl),
+    ],
+  ]);
+
+  await _bot.telegram.sendMessage(NEAR_WHALE_CHANNEL, text, {
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
+    ...keyboard,
+  });
+  console.log(`[BUY_ALERTS] New NEAR meme token launch posted to ${NEAR_WHALE_CHANNEL}: ${cleanName} (${symbol})`);
 }
 
 /**

@@ -221,7 +221,7 @@ async function main() {
       // Fall back to standard NEAR JSON-RPC immediately so the detector never stalls behind real-time.
       if (inNeardataCooldown || (res && (res.status === 429 || res.status >= 500))) {
         if (res && (res.status === 429 || res.status >= 500)) {
-          neardataCooldownUntil = Date.now() + 15_000;
+          neardataCooldownUntil = Date.now() + 2_500;
         }
         if (Date.now() - lastTipCheckAt > 3_000 || cachedTipHeight === 0 || nextHeight > cachedTipHeight) {
           const tipHeight = await fetchBlockHeight();
@@ -267,8 +267,8 @@ async function main() {
 
         if (blockData) {
           const shards = blockData?.shards ?? [];
-          // Collect all (log, receiverId, txHash) tuples from all shards/outcomes and process concurrently
-          const eventPairs: Array<{ log: string; receiverId: string; txHash?: string }> = [];
+          // Collect all (log, receiverId, txHash, signerId) tuples from all shards/outcomes and process concurrently
+          const eventPairs: Array<{ log: string; receiverId: string; txHash?: string; signerId?: string }> = [];
           for (const shard of shards) {
             const outcomes = shard?.receipt_execution_outcomes ?? [];
             for (const item of outcomes) {
@@ -278,7 +278,7 @@ async function main() {
               const predecessorId: string = item?.receipt?.predecessor_id ?? '';
               const txHash: string = item?.tx_hash ?? item?.execution_outcome?.id ?? '';
               for (const log of logs) {
-                eventPairs.push({ log, receiverId, txHash });
+                eventPairs.push({ log, receiverId, txHash, signerId: realSigner || predecessorId });
               }
               observeCopyFlow(item);
               // Copy-trade detection: check if signer or predecessor is a tracked wallet
@@ -306,7 +306,7 @@ async function main() {
             }
           }
           await Promise.all(
-            eventPairs.map(({ log, receiverId, txHash }) => parseEventLog(log, receiverId, txHash).catch(() => {}))
+            eventPairs.map(({ log, receiverId, txHash, signerId }) => parseEventLog(log, receiverId, txHash, signerId).catch(() => {}))
           );
         } else {
           await processBlockRpc(nextHeight).catch(err => {
@@ -392,8 +392,8 @@ async function processBlock(height: number): Promise<void> {
     if (neardataRes.ok) {
       const blockData = (await neardataRes.json()) as any;
       const shards = blockData?.shards ?? [];
-      // Collect all (log, receiverId, txHash) tuples from all shards/outcomes and process concurrently
-      const eventPairs: Array<{ log: string; receiverId: string; txHash: string }> = [];
+      // Collect all (log, receiverId, txHash, signerId) tuples from all shards/outcomes and process concurrently
+      const eventPairs: Array<{ log: string; receiverId: string; txHash: string; signerId?: string }> = [];
       for (const shard of shards) {
         const outcomes = shard?.receipt_execution_outcomes ?? [];
         for (const item of outcomes) {
@@ -403,7 +403,7 @@ async function processBlock(height: number): Promise<void> {
           const predecessorId: string = item?.receipt?.predecessor_id ?? '';
           const txHash: string = item?.tx_hash ?? item?.execution_outcome?.id ?? '';
           for (const log of logs) {
-            eventPairs.push({ log, receiverId, txHash });
+            eventPairs.push({ log, receiverId, txHash, signerId: realSigner || predecessorId });
           }
           observeCopyFlow(item);
           if (txHash && (realSigner || predecessorId)) {
@@ -430,7 +430,7 @@ async function processBlock(height: number): Promise<void> {
         }
       }
       await Promise.all(
-        eventPairs.map(({ log, receiverId, txHash }) => parseEventLog(log, receiverId, txHash).catch(() => {}))
+        eventPairs.map(({ log, receiverId, txHash, signerId }) => parseEventLog(log, receiverId, txHash, signerId).catch(() => {}))
       );
       return;
     }
@@ -685,17 +685,37 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
 }
 
 /**
- * Parse NEP-297 standard event logs.
- * Format: EVENT_JSON:{"standard":"...","event":"...","data":[...]}
+ * Parse NEP-297 standard event logs AND plain-text Rhea / Ref Finance v2 swap logs.
  */
-async function parseEventLog(log: string, receiverId: string, txHash?: string): Promise<void> {
-  if (!log.startsWith('EVENT_JSON:')) return;
-
+async function parseEventLog(log: string, receiverId: string, txHash?: string, signerId?: string): Promise<void> {
   // If the event receiver is an armed snipe target, immediately invalidate its
   // negative cache so the watchdog re-probes on the very next 5s tick.
   if (snipeNegativeCache.has(receiverId)) {
     snipeNegativeCache.delete(receiverId);
   }
+
+  // ── Rhea / Ref Finance v2 plain-text swap log ─────────────────────────────
+  // Format: "Swapped 1000000000000000000000000 wrap.near for 543210000000000 token.tkn.near..."
+  if (log.startsWith('Swapped ')) {
+    const refSwapMatch = log.match(/^Swapped\s+(\d+)\s+([^\s,]+)\s+for\s+(\d+)\s+([^\s,]+)/i);
+    if (refSwapMatch) {
+      const [, amountIn, tokenIn, amountOut, tokenOut] = refSwapMatch;
+      await handleSwapEvent(
+        {
+          token_in: tokenIn.replace(/,$/, ''),
+          amount_in: amountIn,
+          token_out: tokenOut.replace(/,$/, ''),
+          amount_out: amountOut,
+          signer_id: signerId,
+        },
+        receiverId || 'v2.ref-finance.near',
+        txHash
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  if (!log.startsWith('EVENT_JSON:')) return;
 
   let event: any;
   try {
@@ -849,19 +869,77 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string): 
     }
   }
 
+  // ── JustHoot / Rhea Launchpad token creation ────────────────────────────
+  if (
+    (receiverId === 'launchpad.justhoot.near' || receiverId === 'v2-launchpad.justhoot.near') &&
+    (eventName === 'launch' || eventName === 'token_launch' || eventName === 'pool_created' || eventName === 'token_created' || eventName === 'create_token')
+  ) {
+    const tokenAddress: string = data?.token_id ?? data?.token ?? data?.token_address ?? data?.account_id ?? '';
+    if (tokenAddress) {
+      await handlePoolCreated(tokenAddress, 'rhea', data).catch(() => {});
+    }
+  }
+
   // ── Swaps & Buy Alerts from any venue ─────────────────────────────────────
   if (eventName === 'swap') {
     const swapItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
     for (const item of swapItems) {
       if (item && ((item.token_in && item.token_out) || item.pool_id)) {
-        await handleSwapEvent(item, receiverId, txHash).catch(() => {});
+        await handleSwapEvent({ ...item, signer_id: item.signer_id || signerId }, receiverId, txHash).catch(() => {});
       }
     }
-  } else if (receiverId === 'nearlytrade.near' && (eventName === 'buy' || eventName === 'launch_buy')) {
+  } else if (
+    (receiverId === 'nearlytrade.near' ||
+      receiverId === 'launchpad.justhoot.near' ||
+      receiverId === 'v2-launchpad.justhoot.near' ||
+      receiverId === 'launch.intear.near' ||
+      receiverId === 'launch-v2.intear.near' ||
+      receiverId === 'nearpumpfun.near' ||
+      receiverId.endsWith('.nearpumpfun.near')) &&
+    (eventName === 'buy' || eventName === 'launch_buy' || eventName === 'token_bought')
+  ) {
     const buyItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
     for (const item of buyItems) {
       if (item) {
-        await handleSwapEvent(item, receiverId, txHash).catch(() => {});
+        const tokenOut =
+          item.token_out ||
+          item.token_id ||
+          item.token ||
+          item.token_address ||
+          (receiverId.endsWith('.nearpumpfun.near') ? receiverId : '');
+        const amountIn = item.amount_in || item.near_amount || item.deposit || item.amount;
+        const amountOut = item.amount_out || item.token_amount || item.tokens_out || item.received;
+        await handleSwapEvent(
+          {
+            ...item,
+            token_in: item.token_in || 'wrap.near',
+            token_out: tokenOut,
+            amount_in: amountIn,
+            amount_out: amountOut,
+            signer_id: item.signer_id || item.buyer || item.account_id || signerId,
+          },
+          receiverId,
+          txHash
+        ).catch(() => {});
+      }
+    }
+  } else if (receiverId === 'meme-cooking.near' && eventName === 'deposit') {
+    const depItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
+    for (const item of depItems) {
+      const memeId = item?.meme_id ?? item?.id;
+      const amountIn = item?.amount ?? item?.near_amount;
+      if (memeId !== undefined && memeId !== null && amountIn) {
+        await handleSwapEvent(
+          {
+            token_in: 'wrap.near',
+            token_out: `${memeId}.meme-cooking.near`,
+            amount_in: String(amountIn),
+            amount_out: item?.shares || item?.amount_out || '0',
+            signer_id: item?.account_id || signerId,
+          },
+          receiverId,
+          txHash
+        ).catch(() => {});
       }
     }
   }
