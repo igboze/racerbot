@@ -637,7 +637,13 @@ export async function getUserById(id: string): Promise<UserRecord | null> {
 
 export async function getUserBySubaccount(subaccountId: string): Promise<UserRecord | null> {
   const db = await getDb();
-  const result = await db.query('SELECT * FROM users WHERE subaccount_id = $1', [subaccountId]);
+  const result = await db.query(
+    `SELECT u.* FROM users u
+     LEFT JOIN user_wallets w ON u.id = w.user_id AND w.chain = 'near'
+     WHERE LOWER(u.subaccount_id) = LOWER($1) OR LOWER(w.address) = LOWER($1)
+     LIMIT 1`,
+    [subaccountId.trim()]
+  );
   if (result.rows.length === 0) return null;
   return rowToUser(result.rows[0]);
 }
@@ -4810,13 +4816,14 @@ export async function insertConfidentialMove(m: {
   destination?: string | null;
   tx_hash?: string | null;
   intent_hash?: string | null;
+  status?: string | null;
 }): Promise<ConfidentialMoveRecord> {
   const db = await getDb();
   const res = await db.query(
-    `INSERT INTO confidential_moves (id, user_id, kind, executor_account_id, deposit_address, amount, destination, tx_hash, intent_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    `INSERT INTO confidential_moves (id, user_id, kind, executor_account_id, deposit_address, amount, destination, tx_hash, intent_hash, status, settled_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, 'PENDING_DEPOSIT'), CASE WHEN $10 = 'SUCCESS' THEN NOW() ELSE NULL END) RETURNING *`,
     [randomUUID(), m.user_id, m.kind, m.executor_account_id ?? null, m.deposit_address, m.amount,
-     m.destination ?? null, m.tx_hash ?? null, m.intent_hash ?? null]
+     m.destination ?? null, m.tx_hash ?? null, m.intent_hash ?? null, m.status ?? null]
   );
   return mapMove(res.rows[0]);
 }

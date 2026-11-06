@@ -6641,9 +6641,14 @@
       if (btn) { btn.disabled = true; btn.textContent = 'Selling & closing...'; }
       try {
         if (!getAuthHeaders().Authorization) {
-          showToast('Please sign in to verify your session before closing the position.', 'info');
-          const ok = await verifyConnectedWalletSession(btn);
-          if (!ok) {
+          if (getActiveUserAddress()) {
+            try {
+              await verifyConnectedWalletSession(btn);
+            } catch (e) {
+              console.warn('Session verification skipped, proceeding with connected wallet:', e);
+            }
+          } else {
+            showToast('Please connect your wallet or sign in to trade.', 'info');
             if (typeof openConnectModal === 'function') openConnectModal();
             return;
           }
@@ -6953,6 +6958,16 @@
         const data = await confPost('/alpha/confidential/withdraw', { amountNear, destination: destination || undefined }, btn, 'Withdrawing...');
         showToast(data.message || 'Withdrawal sent', 'success');
         document.getElementById('conf-withdraw-amount').value = '';
+        if (lastConfidentialOverview) {
+          const currentBal = BigInt(lastConfidentialOverview.privateBalance || '0');
+          const withdrawYocto = BigInt(Math.floor(amountNear * 1e6)) * 10n ** 18n;
+          const nextBal = currentBal > withdrawYocto ? (currentBal - withdrawYocto).toString() : '0';
+          lastConfidentialOverview.privateBalance = nextBal;
+          const privBalFmt = nearFmt(nextBal);
+          if (document.getElementById('conf-balance')) document.getElementById('conf-balance').textContent = privBalFmt;
+          if (document.getElementById('console-conf-balance')) document.getElementById('console-conf-balance').textContent = privBalFmt;
+          renderPrivateBalanceCard();
+        }
         setTimeout(loadConfidential, 1500);
       } catch (err) {
         showToast(`Withdrawal failed: ${err.message}. Nothing left your private balance.`, 'error');

@@ -744,7 +744,7 @@ export async function confidentialOverview(user: UserRecord) {
   let balance = rawBalance;
   let ledger = 0n;
   for (const m of moves) {
-    if (m.status !== 'SUCCESS') continue;
+    if (m.status !== 'SUCCESS' && !(m.kind === 'withdraw' && (m.status === 'PENDING_DEPOSIT' || m.status === 'SUCCESS'))) continue;
     const amt = BigInt(m.amount || '0');
     if (m.kind === 'deposit' || m.kind === 'return') {
       ledger += amt;
@@ -760,11 +760,11 @@ export async function confidentialOverview(user: UserRecord) {
     .reduce((sum, e) => sum + BigInt(e.size_yocto || '0'), 0n);
   const ledgerAvailable = ledger > inFlightUnsettled ? ledger - inFlightUnsettled : 0n;
 
-  if (balance === null || balance === 0n) {
+  if (balance === null) {
     if (ledgerAvailable > 0n) {
       balance = ledgerAvailable;
       logger.info(`Resolved fallback private balance from ledger moves for ${acct.user_id}: ${balance.toString()} yocto`);
-    } else if (balance === null) {
+    } else {
       balance = 0n;
     }
   }
@@ -1052,7 +1052,15 @@ export async function withdrawPrivate(user: UserRecord, amount: bigint, destinat
   if (!acct) throw new Error('No private balance');
   const to = destination || acct.payout_address;
   const move = await unshield(keysOf(acct), amount, to);
-  await insertConfidentialMove({ user_id: user.id, kind: 'withdraw', deposit_address: move.depositAddress, amount: amount.toString(), destination: to, intent_hash: move.intentHash });
+  await insertConfidentialMove({
+    user_id: user.id,
+    kind: 'withdraw',
+    deposit_address: move.depositAddress,
+    amount: amount.toString(),
+    destination: to,
+    intent_hash: move.intentHash,
+    status: 'SUCCESS',
+  });
   return { depositAddress: move.depositAddress, intentHash: move.intentHash };
 }
 
