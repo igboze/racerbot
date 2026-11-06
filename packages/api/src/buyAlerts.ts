@@ -136,10 +136,240 @@ const NEAR_WHALE_CHANNEL_GAP_MS = 3000;
 let lastNearWhaleChannelPost = 0;
 
 /**
- * Posts a NEAR whale buy to the public alerts channel.
+ * Non-meme NEAR contracts (stablecoins, bridged tokens, LSTs, core DeFi/utility tokens)
+ * that must never be broadcast to the public meme token whale channel.
+ */
+const NON_MEME_NEAR_CONTRACTS = new Set<string>([
+  'wrap.near',
+  'near',
+  'aurora',
+  'usn',
+  'usn.near',
+  '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', // Native USDC
+  'usdt.tether-token.near', // Native USDT
+  'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near', // USDC.e
+  'dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near', // USDT.e
+  '6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near', // DAI
+  '853d955acef822db058eb8505911ed77f175b99e.factory.bridge.near', // FRAX
+  '2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near', // WBTC
+  'c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.factory.bridge.near', // WETH
+  'eth.bridge.near',
+  'meta-pool.near', // stNEAR
+  'linear-protocol.near', // LiNEAR
+  'v2-nearx.stader-labs.near', // NearX
+  'tru.near',
+  'mpdao-token.near',
+  'token.v2.ref-finance.near',
+  'token.rhealab.near',
+  'token.burrow.near',
+  'token.sweat',
+  'token.paras.near',
+  'token.pembrock.near',
+  'skyward.near',
+  'oct.beta.oct-relay.near',
+  'v3.oin_finance.near',
+  'aurorax.near',
+  'token.intear.near',
+]);
+
+const NON_MEME_NEAR_SUFFIXES = [
+  '.factory.bridge.near',
+  '.bridge.near',
+  '.portalbridge.near',
+  '.omft.near',
+  '.tether-token.near',
+  '.desk.prismpad.near',
+  '.stader-labs.near',
+];
+
+const MEME_LAUNCHPAD_SUFFIXES = [
+  '.tkn.near',
+  '.tknx.near',
+  '.meme-cooking.near',
+  '.nearlytrade.near',
+  '.launchpad.justhoot.near',
+  '.v2-launchpad.justhoot.near',
+  '.launchpad-justhoot.near',
+  '.launch.intear.near',
+  '.launch-v2.intear.near',
+  '.nearpumpfun.near',
+  '.factory.shardsmarket.near',
+  '.shardsmarket.near',
+  '.nearpadfamily.near',
+  '.nearpad.near',
+  '.launch.shoremarkets.near',
+  '.shoremarkets.near',
+  '.gaypad.j1-racing.near',
+  '.gaypad.near',
+  '.exchange.kelytradevs.near',
+  '.kelytra.near',
+  '.onetokenhub.near',
+  '.pad.onetokenhub.near',
+  '.nekotoken.near',
+];
+
+const ALWAYS_BLOCKED_SYMBOLS = new Set<string>([
+  'USDC',
+  'USDC.E',
+  'USDT',
+  'USDT.E',
+  'DAI',
+  'USN',
+  'FRAX',
+  'PYUSD',
+  'USDE',
+  'SUSDE',
+  'BUSD',
+  'TUSD',
+  'LUSD',
+  'FDUSD',
+  'EURC',
+  'NEAR',
+  'WNEAR',
+  'STNEAR',
+  'LINEAR',
+  'NEARX',
+]);
+
+const NON_LAUNCHPAD_BLOCKED_SYMBOLS = new Set<string>([
+  ...ALWAYS_BLOCKED_SYMBOLS,
+  'ETH',
+  'WETH',
+  'BTC',
+  'WBTC',
+  'SOL',
+  'WSOL',
+  'AURORA',
+  'REF',
+  'RHEA',
+  'BRRR',
+  'SWEAT',
+  'MPDAO',
+  'OCT',
+  'PARAS',
+  'PEM',
+  'SKYWARD',
+  'YU',
+  'ZEC',
+  'XRP',
+]);
+
+/**
+ * Returns true ONLY if the token is a NEAR meme token (excludes USDC, USDT,
+ * bridged assets, implicit 64-hex contracts, LSTs, and DeFi governance tokens).
+ */
+export function isNearMemeToken(
+  tokenAddress: string,
+  tokenSymbol?: string,
+  tokenName?: string
+): boolean {
+  const addr = (tokenAddress || '').trim().toLowerCase();
+  if (!addr || !addr.endsWith('.near')) return false;
+  if (/^[0-9a-f]{64}$/.test(addr)) return false;
+  if (NON_MEME_NEAR_CONTRACTS.has(addr)) return false;
+  if (addr.startsWith('bridge.')) return false;
+  if (NON_MEME_NEAR_SUFFIXES.some(suffix => addr.endsWith(suffix))) return false;
+
+  const sym = (tokenSymbol || '').trim().toUpperCase().replace(/^\$/, '');
+  if (sym && ALWAYS_BLOCKED_SYMBOLS.has(sym)) return false;
+
+  const isMemeLaunchpad = MEME_LAUNCHPAD_SUFFIXES.some(suffix => addr.endsWith(suffix));
+  if (!isMemeLaunchpad) {
+    if (sym && NON_LAUNCHPAD_BLOCKED_SYMBOLS.has(sym)) return false;
+    const lowerName = (tokenName || '').trim().toLowerCase();
+    if (
+      lowerName.includes('stablecoin') ||
+      lowerName.includes('tether') ||
+      lowerName.includes('usd coin') ||
+      lowerName.includes('staked near') ||
+      lowerName.includes('wrapped ') ||
+      lowerName.includes('governance token') ||
+      lowerName.includes('prism stock')
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function formatCompactUsd(val?: number): string {
+  if (!val || isNaN(val) || val <= 0) return '';
+  if (val >= 1_000_000_000) return `$${(val / 1_000_000_000).toFixed(2)}B`;
+  if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(2)}M`;
+  if (val >= 10_000) return `$${(val / 1_000).toFixed(1)}K`;
+  return `$${val.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+}
+
+function resolveNearVenueLabel(tokenAddress: string, cachedVenue?: string | null): string {
+  const addr = (tokenAddress || '').toLowerCase();
+  const v = (cachedVenue || '').toLowerCase();
+  if (addr.endsWith('.meme-cooking.near') || v.includes('memecooking')) return '🍳 Meme.Cooking';
+  if (addr.endsWith('.nearlytrade.near') || v.includes('nearlytrade')) return '💧 NearlyTrade';
+  if (addr.includes('justhoot.near')) return '🦉 JustHoot / Rhea';
+  if (addr.includes('intear.near') || v.includes('intear')) return '⚡ Intear DEX';
+  if (addr.endsWith('.nearpumpfun.near') || v.includes('nearpumpfun')) return '🚀 NearPumpFun';
+  if (addr.includes('shardsmarket.near') || v.includes('shardsmarket')) return '💎 ShardsMarket';
+  if (addr.includes('gaypad.j1-racing.near') || v.includes('gaypad')) return '🏁 J1 Gaypad';
+  if (addr.includes('shoremarkets.near') || v.includes('shoremarkets')) return '🌊 ShoreMarkets';
+  return '⚡ Rhea Finance';
+}
+
+function formatSpentNativeClean(spentNative: string): string {
+  const m = String(spentNative || '').trim().match(/^([0-9.,]+)\s*(.*)$/);
+  if (!m) return spentNative;
+  const num = parseFloat(m[1].replace(/,/g, ''));
+  const unit = m[2] || 'NEAR';
+  if (isNaN(num)) return spentNative;
+  return `${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
+}
+
+/**
+ * Posts a NEAR meme token whale buy to the public alerts channel.
  */
 async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
   if (!_bot) return;
+  if (!isNearMemeToken(event.token_address, event.token_symbol, event.token_name)) {
+    return;
+  }
+
+  // Enrich token metadata / market cap / price if missing or raw address
+  const tokenCache = await getTokenCache(event.token_address).catch(() => null);
+  let resolvedName = event.token_name;
+  let resolvedSymbol = event.token_symbol;
+  let mcapUsd = event.market_cap_usd;
+  let priceUsd = event.price_usd;
+
+  if (tokenCache) {
+    if ((!resolvedName || resolvedName === event.token_address || resolvedName.includes('.near')) && tokenCache.name) {
+      resolvedName = tokenCache.name;
+    }
+    if ((!resolvedSymbol || resolvedSymbol === 'TOKEN') && tokenCache.symbol) {
+      resolvedSymbol = tokenCache.symbol;
+    }
+  }
+
+  if (!mcapUsd || mcapUsd <= 0 || !resolvedName || resolvedName.includes('.near')) {
+    try {
+      const info = await getTokenInfo(event.token_address);
+      if (info) {
+        if ((!mcapUsd || mcapUsd <= 0) && info.market_cap_usd && info.market_cap_usd > 0) {
+          mcapUsd = info.market_cap_usd;
+        }
+        if ((!resolvedName || resolvedName.includes('.near')) && info.name) {
+          resolvedName = info.name;
+        }
+        if ((!resolvedSymbol || resolvedSymbol === 'TOKEN') && info.symbol) {
+          resolvedSymbol = info.symbol;
+        }
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  if (!isNearMemeToken(event.token_address, resolvedSymbol, resolvedName)) {
+    return;
+  }
+
   const now = Date.now();
   if (now - lastNearWhaleChannelPost < NEAR_WHALE_CHANNEL_GAP_MS) {
     await new Promise(r => setTimeout(r, NEAR_WHALE_CHANNEL_GAP_MS - (now - lastNearWhaleChannelPost)));
@@ -147,45 +377,75 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
   lastNearWhaleChannelPost = Date.now();
 
   const botUsername = _bot.botInfo?.username || 'racertradingbot';
-  const symbol = (event.token_symbol || 'TOKEN').toUpperCase();
-  const name = event.token_name && !event.token_name.includes('.') ? event.token_name : symbol;
-  const whaleBar = '🐋'.repeat(Math.min(25, Math.max(3, Math.round(event.spent_usd / 250))));
+  const symbol = (resolvedSymbol || 'TOKEN').toUpperCase().replace(/^\$/, '');
+  const cleanName = resolvedName && !resolvedName.includes('.near')
+    ? resolvedName.trim()
+    : (event.token_address.split('.')[0] || symbol).toUpperCase();
 
-  let mcapUsd = event.market_cap_usd;
-  if (!mcapUsd || mcapUsd <= 0) {
-    try {
-      const info = await getTokenInfo(event.token_address);
-      if (info?.market_cap_usd && info.market_cap_usd > 0) mcapUsd = info.market_cap_usd;
-    } catch { /* non-fatal */ }
-  }
-  const priceFormatted = event.price_usd && event.price_usd > 0 ? formatPriceUsd(event.price_usd) : '';
+  const headingTitle = cleanName.toUpperCase() !== symbol
+    ? `${escapeHtml(cleanName.toUpperCase())} ($${escapeHtml(symbol)}) BUY!`
+    : `${escapeHtml(cleanName.toUpperCase())} BUY!`;
 
-  const header = event.spent_usd >= 5000
-    ? '🚨 <b>NEAR MEGA WHALE BUY! ($5,000+)</b> 🚨'
-    : `🚨 <b>NEAR WHALE BUY DETECTED! ($${NEAR_WHALE_CHANNEL_MIN_USD.toLocaleString('en-US')}+)</b> 🚨`;
+  const greenDotsCount = Math.min(18, Math.max(3, Math.round(event.spent_usd / 250)));
+  const whaleBar = `${'🟢'.repeat(greenDotsCount)}🐋`;
+
+  const spentUsdStr = event.spent_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const tierBadge = event.spent_usd >= 5000
+    ? `🐳 <b>MEGA WHALE</b> • <b>$${spentUsdStr} USD</b>`
+    : event.spent_usd >= 1500
+    ? `🐋 <b>HEAVY WHALE</b> • <b>$${spentUsdStr} USD</b>`
+    : `🐋 <b>WHALE BUY</b> • <b>$${spentUsdStr} USD</b>`;
+
+  const priceFormatted = priceUsd && priceUsd > 0 ? formatPriceUsd(priceUsd) : '';
+  const venueLabel = resolveNearVenueLabel(event.token_address, tokenCache?.venue);
+  const spentNativeClean = formatSpentNativeClean(event.spent_amount_native);
+
+  const buyerDisplay = maskAddress(event.buyer_address);
+  const buyerUrl = event.buyer_address && event.buyer_address !== 'Unknown'
+    ? `https://nearblocks.io/address/${encodeURIComponent(event.buyer_address)}`
+    : '';
+  const buyerLinkHtml = buyerUrl
+    ? `<a href="${buyerUrl}">${escapeHtml(buyerDisplay)}</a>`
+    : `<code>${escapeHtml(buyerDisplay)}</code>`;
+  const buyerBalSuffix = event.buyer_near_balance != null && event.buyer_near_balance > 0
+    ? ` • <code>${Number(event.buyer_near_balance).toLocaleString('en-US', { maximumFractionDigits: 1 })} NEAR</code>`
+    : '';
+
+  const mcapFormatted = mcapUsd && mcapUsd > 0
+    ? `<b>${formatCompactUsd(mcapUsd)}</b> <code>($${mcapUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })})</code>`
+    : '';
 
   const text =
-    `${header}\n` +
+    `🟢 <b>${headingTitle}</b>\n` +
+    `${tierBadge}\n` +
     `${whaleBar}\n\n` +
-    `🪙 <b>Token:</b> ${escapeHtml(name)} (<code>$${escapeHtml(symbol)}</code>)\n` +
-    `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>\n` +
-    `💰 <b>Spent:</b> <b>${escapeHtml(event.spent_amount_native)}</b> ($${event.spent_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD)\n` +
-    `📦 <b>Got:</b> ${escapeHtml(event.tokens_received)}\n` +
-    `👤 <b>Buyer:</b> <code>${escapeHtml(maskAddress(event.buyer_address))}</code>` +
-    (priceFormatted ? `\n💵 <b>Price:</b> $${priceFormatted}` : '') +
-    (mcapUsd && mcapUsd > 0 ? `\n📊 <b>Market Cap:</b> $${mcapUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '');
+    `💰 <b>Spent:</b> <b>$${spentUsdStr}</b> <code>(${escapeHtml(spentNativeClean)})</code>\n` +
+    `📦 <b>Bought:</b> <b>${escapeHtml(event.tokens_received)}</b>\n` +
+    (priceFormatted ? `💵 <b>Price:</b> <code>$${priceFormatted}</code>\n` : '') +
+    (mcapFormatted ? `📊 <b>Market Cap:</b> ${mcapFormatted}\n` : '') +
+    `🏛️ <b>Venue:</b> ${venueLabel}\n\n` +
+    `👤 <b>Buyer:</b> ${buyerLinkHtml}${buyerBalSuffix}\n` +
+    `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>`;
 
   const explorerUrl = event.tx_hash
     ? `https://nearblocks.io/txns/${event.tx_hash}`
     : `https://nearblocks.io/token/${event.token_address}`;
+  const chartUrl = event.token_address.endsWith('.nearlytrade.near') && tokenCache?.bonding_phase !== 'bonded'
+    ? `https://nearlytrade.com/token/${event.token_address}`
+    : `https://dexscreener.com/near/${event.token_address}`;
   const buyDeepLink = `https://t.me/${botUsername}?start=${getShortTokenKey(event.token_address)}`;
 
+  const row2Buttons = [
+    Markup.button.url('📈 Chart', chartUrl),
+    Markup.button.url('🔍 Tx', explorerUrl),
+  ];
+  if (buyerUrl) {
+    row2Buttons.push(Markup.button.url('👤 Buyer', buyerUrl));
+  }
+
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.url(`🏎️ Buy $${symbol} on RacerBot`, buyDeepLink)],
-    [
-      Markup.button.url('🔍 NearBlocks Tx', explorerUrl),
-      Markup.button.url('📈 DexScreener', `https://dexscreener.com/near/${event.token_address}`),
-    ],
+    [Markup.button.url(`⚡ Buy $${symbol} on RacerBot`, buyDeepLink)],
+    row2Buttons,
   ]);
 
   await _bot.telegram.sendMessage(NEAR_WHALE_CHANNEL, text, {
@@ -193,7 +453,7 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     link_preview_options: { is_disabled: true },
     ...keyboard,
   });
-  console.log(`[BUY_ALERTS] NEAR whale buy posted to ${NEAR_WHALE_CHANNEL}: $${event.spent_usd.toFixed(2)} on ${symbol}`);
+  console.log(`[BUY_ALERTS] NEAR meme whale buy posted to ${NEAR_WHALE_CHANNEL}: $${event.spent_usd.toFixed(2)} on ${cleanName} (${symbol})`);
 }
 
 /**

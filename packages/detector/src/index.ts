@@ -1088,6 +1088,86 @@ async function handlePoolCreated(
   setImmediate(() => checkAutoBuySignals(tokenAddress, venue, initialLiquidity, marketCap, creator));
 }
 
+const NON_MEME_QUOTE_CONTRACTS = new Set<string>([
+  'wrap.near',
+  'near',
+  'aurora',
+  'usn',
+  'usn.near',
+  '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', // Native USDC
+  'usdt.tether-token.near', // Native USDT
+  'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near', // USDC.e
+  'dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near', // USDT.e
+  '6b175474e89094c44da98b954eedeac495271d0f.factory.bridge.near', // DAI
+  '853d955acef822db058eb8505911ed77f175b99e.factory.bridge.near', // FRAX
+  '2260fac5e5542a773aa44fbcfedf7c193bc2c599.factory.bridge.near', // WBTC
+  'c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2.factory.bridge.near', // WETH
+  'eth.bridge.near',
+  'meta-pool.near',
+  'linear-protocol.near',
+  'v2-nearx.stader-labs.near',
+  'tru.near',
+  'mpdao-token.near',
+  'token.v2.ref-finance.near',
+  'token.rhealab.near',
+  'token.burrow.near',
+  'token.sweat',
+  'token.paras.near',
+  'token.pembrock.near',
+  'skyward.near',
+  'oct.beta.oct-relay.near',
+  'v3.oin_finance.near',
+  'aurorax.near',
+  'token.intear.near',
+]);
+
+function isNonMemeOrQuoteToken(tokenAddress: string, symbol?: string, name?: string): boolean {
+  const addr = (tokenAddress || '').trim().toLowerCase();
+  if (!addr || !addr.endsWith('.near')) return true;
+  if (/^[0-9a-f]{64}$/.test(addr)) return true;
+  if (NON_MEME_QUOTE_CONTRACTS.has(addr) || isCoreToken(addr)) return true;
+  if (
+    addr.startsWith('bridge.') ||
+    addr.endsWith('.factory.bridge.near') ||
+    addr.endsWith('.bridge.near') ||
+    addr.endsWith('.portalbridge.near') ||
+    addr.endsWith('.omft.near') ||
+    addr.endsWith('.tether-token.near') ||
+    addr.endsWith('.desk.prismpad.near') ||
+    addr.endsWith('.stader-labs.near')
+  ) {
+    return true;
+  }
+  const sym = (symbol || '').trim().toUpperCase().replace(/^\$/, '');
+  if (
+    sym === 'USDC' ||
+    sym === 'USDC.E' ||
+    sym === 'USDT' ||
+    sym === 'USDT.E' ||
+    sym === 'DAI' ||
+    sym === 'USN' ||
+    sym === 'FRAX' ||
+    sym === 'NEAR' ||
+    sym === 'WNEAR' ||
+    sym === 'STNEAR' ||
+    sym === 'LINEAR' ||
+    sym === 'NEARX'
+  ) {
+    return true;
+  }
+  const lowerName = (name || '').trim().toLowerCase();
+  if (
+    lowerName.includes('stablecoin') ||
+    lowerName.includes('tether') ||
+    lowerName.includes('usd coin') ||
+    lowerName.includes('staked near') ||
+    lowerName.includes('prism stock')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** When a swap is detected, extract the new price and publish a price update / buy alert */
 async function handleSwapEvent(data: any, venue: string, txHash?: string): Promise<void> {
   let targetToken = '';
@@ -1098,22 +1178,24 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
 
   const isNearIn = tokenIn === 'wrap.near' || tokenIn === 'near';
   const isNearOut = tokenOut === 'wrap.near' || tokenOut === 'near';
+  const isQuoteIn = isNearIn || isNonMemeOrQuoteToken(tokenIn);
+  const isQuoteOut = isNearOut || isNonMemeOrQuoteToken(tokenOut);
 
-  if (tokenOut && !isNearOut) {
+  if (tokenOut && !isQuoteOut) {
     targetToken = data.token_out;
     isBuy = true;
-  } else if (tokenIn && !isNearIn) {
+  } else if (tokenIn && !isQuoteIn) {
     targetToken = data.token_in;
     isBuy = false;
   } else if (typeof data?.pool_id === 'string' && data.pool_id.includes('|')) {
     const parts = data.pool_id.split('|');
-    targetToken = parts.find((p: string) => p !== 'wrap.near' && p !== 'near') || '';
-    if (tokenOut === targetToken.toLowerCase()) {
+    targetToken = parts.find((p: string) => !isNonMemeOrQuoteToken(p)) || '';
+    if (targetToken && tokenOut === targetToken.toLowerCase()) {
       isBuy = true;
     }
   }
 
-  if (!targetToken || targetToken === 'near' || targetToken === 'wrap.near') return;
+  if (!targetToken || isNonMemeOrQuoteToken(targetToken)) return;
   const tokenAddress = targetToken;
 
   // 1. Resolve token_cache row for total_supply, decimals, and pool info
@@ -1282,14 +1364,17 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
       const spentUsd = Math.round(spentNear * effectiveNearPrice * 100) / 100;
 
       if (spentUsd > 0 && !isNaN(spentUsd)) {
+        const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
+        const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
         const isTracked = activeBuyAlertTokens.size > 0 && activeBuyAlertTokens.has(tokenAddress.toLowerCase());
-        // Whale buys go to the public alerts channel even when no group tracks the token. Only counted
-        // with a live NEAR price, so a fallback price can never push a small buy over the line.
-        const isChannelWhale = nearPriceUsd > 0 && spentUsd >= NEAR_WHALE_CHANNEL_MIN_USD;
+        // Whale buys go to the public alerts channel only for NEAR meme tokens and only
+        // with a live NEAR price, so a fallback price or stablecoin/bridged token never fires.
+        const isChannelWhale =
+          nearPriceUsd > 0 &&
+          spentUsd >= NEAR_WHALE_CHANNEL_MIN_USD &&
+          !isNonMemeOrQuoteToken(tokenAddress, tokenSymbol, tokenName);
 
         if (isTracked || isChannelWhale) {
-          const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
-          const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
           const tokensReceivedNum = parseFloat(data?.amount_out || '0') / Math.pow(10, decimals ?? 18);
           const tokensReceivedStr = tokensReceivedNum > 0
             ? `${tokensReceivedNum.toLocaleString('en-US', { maximumFractionDigits: tokensReceivedNum >= 100 ? 0 : 2 })} ${tokenSymbol}`

@@ -4,6 +4,7 @@ import {
   dispatchBuyAlert,
   buyAlertPendingActions,
   formatPriceUsd,
+  isNearMemeToken,
 } from './buyAlerts.js';
 import type { GroupBuyAlertRecord } from '@racerbot/db';
 import type { BuyAlertEvent } from '@racerbot/shared';
@@ -392,6 +393,72 @@ describe('Group Buy Alerts Engine', () => {
       expect(text).toContain('👤 <b>Buyer:</b> <code>racer_whale.near</code>');
       expect(text).toContain('💵 <b>Price:</b> $0.0000056');
       expect(text).toContain('📊 <b>MCap:</b> $5,600');
+    });
+
+    it('should block USDC and non-meme tokens from @racerbotalert and broadcast NEAR meme token whale buys with token name heading', async () => {
+      expect(isNearMemeToken('17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', 'USDC', 'USDC')).toBe(false);
+      expect(isNearMemeToken('usdt.tether-token.near', 'USDt', 'Tether USD')).toBe(false);
+      expect(isNearMemeToken('a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near', 'USDC.e', 'USD Coin')).toBe(false);
+      expect(isNearMemeToken('meta-pool.near', 'STNEAR', 'Staked NEAR')).toBe(false);
+      expect(isNearMemeToken('blackdragon.tkn.near', 'BLACKDRAGON', 'Black Dragon')).toBe(true);
+      expect(isNearMemeToken('imeme-2.v2-launchpad.justhoot.near', 'IMEME', 'iMeme')).toBe(true);
+
+      const mockSendMessage = vi.fn().mockResolvedValue({});
+      const mockBot: any = {
+        botInfo: { username: 'racertradingbot' },
+        telegram: {
+          sendMessage: mockSendMessage,
+        },
+      };
+      (await import('./buyAlerts.js')).setBotInstance(mockBot);
+      vi.mocked(db.getGroupBuyAlertsByToken).mockResolvedValue([]);
+
+      // 1. $1,200 USDC swap must NOT broadcast to @racerbotalert
+      await dispatchBuyAlert({
+        type: 'buy_alert',
+        chain: 'near',
+        token_address: '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+        token_name: 'USDC',
+        token_symbol: 'USDC',
+        buyer_address: 'trader.near',
+        spent_amount_native: '240.0000 NEAR',
+        spent_usd: 1200.00,
+        tokens_received: '1,200 USDC',
+        price_usd: 1.0,
+        tx_hash: 'tx-usdc-whale-1',
+        timestamp: Date.now(),
+      });
+      expect(mockSendMessage).not.toHaveBeenCalled();
+
+      // 2. $850 Black Dragon meme token buy MUST broadcast with Token Name heading
+      await dispatchBuyAlert({
+        type: 'buy_alert',
+        chain: 'near',
+        token_address: 'blackdragon.tkn.near',
+        token_name: 'Black Dragon',
+        token_symbol: 'BLACKDRAGON',
+        buyer_address: 'dragonwhale.near',
+        spent_amount_native: '170.0000 NEAR',
+        spent_usd: 850.00,
+        tokens_received: '25,000,000,000 BLACKDRAGON',
+        price_usd: 0.000000034,
+        market_cap_usd: 3400000,
+        buyer_near_balance: 1450.5,
+        tx_hash: 'tx-dragon-whale-1',
+        timestamp: Date.now(),
+      });
+
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+      const [channel, msgText, extra] = mockSendMessage.mock.calls[0];
+      expect(channel).toBe('@racerbotalert');
+      expect(msgText).toContain('🟢 <b>BLACK DRAGON ($BLACKDRAGON) BUY!</b>');
+      expect(msgText).not.toContain('NEAR WHALE BUY DETECTED');
+      expect(msgText).toContain('💰 <b>Spent:</b> <b>$850.00</b> <code>(170.00 NEAR)</code>');
+      expect(msgText).toContain('📦 <b>Bought:</b> <b>25,000,000,000 BLACKDRAGON</b>');
+      expect(msgText).toContain('📊 <b>Market Cap:</b> <b>$3.40M</b>');
+      expect(msgText).toContain('dragonwhale.near');
+      expect(msgText).toContain('1,450.5 NEAR');
+      expect(extra.reply_markup.inline_keyboard[0][0].text).toBe('⚡ Buy $BLACKDRAGON on RacerBot');
     });
   });
 });
