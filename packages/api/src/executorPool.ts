@@ -878,15 +878,23 @@ export async function closeExecutor(executor: string): Promise<void> {
   const send = acct.round_returns ? roundedReturn(amount) : amount;
   let sent: any = null;
   let quote: MoveQuote | null = null;
-  let usedOwnerExit = false;
 
   try {
     quote = await quoteShield(acct.private_account_id, send, executor);
     sent = await callExecutor(executor, 'exit_to_intents', exitToIntentsArgs(quote.depositAddress, send), 150);
   } catch (intentErr: any) {
-    logger.warn(`exit_to_intents or 1Click quote unavailable for ${executor} (${intentErr?.message}); falling back to exit_to_owner`);
-    sent = await callExecutor(executor, 'exit_to_owner', exitToOwnerArgs(acct.payout_address, acct.owner_salt), 150);
-    usedOwnerExit = true;
+    logger.warn(`exit_to_intents quote retry for ${executor} (${intentErr?.message})`);
+    try {
+      await new Promise(r => setTimeout(r, 1000));
+      quote = await quoteShield(acct.private_account_id, send, executor);
+      sent = await callExecutor(executor, 'exit_to_intents', exitToIntentsArgs(quote.depositAddress, send), 150);
+    } catch (retryErr: any) {
+      logger.error(`Shield to inner intent wallet ${acct.private_account_id} failed: ${retryErr?.message}`);
+      // Do NOT fall back to exit_to_owner because that leaks the user's wallet publicly on-chain.
+      // Leave in 'exiting' state so the worker retry loop delivers the wNEAR directly to the inner intent wallet.
+      await updateExecutor(executor, { last_error: `Shield to inner intent failed: ${retryErr?.message}` });
+      return;
+    }
   }
 
   const events = extractExecutorEvents(sent);
@@ -894,28 +902,23 @@ export async function closeExecutor(executor: string): Promise<void> {
   const partial = events.find(ev => ev.event === 'exit_partial');
   const txHash = sent?.transaction?.hash;
 
-  if (quote && !usedOwnerExit) {
+  if (quote) {
     await insertConfidentialMove({
       user_id: userId, kind: 'return', executor_account_id: executor, deposit_address: quote.depositAddress,
       amount: send.toString(), destination: acct.private_account_id, tx_hash: txHash,
     });
     if (txHash) void notifyDeposit(quote.depositAddress, txHash);
-  } else if (usedOwnerExit) {
-    await insertConfidentialMove({
-      user_id: userId, kind: 'return', executor_account_id: executor, deposit_address: acct.payout_address,
-      amount: amount.toString(), destination: acct.payout_address, tx_hash: txHash,
-    });
   }
 
   await updateExecutor(executor, {
-    status: exited ? 'exited' : (usedOwnerExit ? 'exited' : 'exiting'),
-    returned_amount: usedOwnerExit ? amount.toString() : send.toString(),
-    event: exited ?? partial ?? { event: usedOwnerExit ? 'exited' : 'exit_failed' },
+    status: exited ? 'exited' : 'exiting',
+    returned_amount: send.toString(),
+    event: exited ?? partial ?? { event: 'exit_failed' },
     tx_hash: txHash,
-    last_error: exited || partial || usedOwnerExit ? null : failureOf(sent) || 'exit failed',
+    last_error: exited || partial ? null : failureOf(sent) || 'exit failed',
   });
   // The sell's NEAR is known once the executor exits
-  if (exited || usedOwnerExit) racerRankCheck(userId);
+  if (exited) racerRankCheck(userId);
 }
 
 /** NEAR Racer Card: confidential trades count toward the lifetime rank too. */
