@@ -530,32 +530,6 @@ router.get('/alpha/my-keys', async (req, res) => {
   }
 });
 
-router.post('/alpha/copy-settings', async (req, res) => {
-  try {
-    const user = await resolveAlphaUser(req);
-    if (!user) {
-      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram.' });
-      return;
-    }
-    const { traderId, allocationPct, riskMultiplier, stopLossPct, autoCopyEnabled, autoCopyAmountNear } = req.body;
-    if (!traderId) {
-      res.status(400).json({ error: 'traderId is required' });
-      return;
-    }
-    const { updateKeyCopySettings } = await import('../racerAlpha.js');
-    const result = await updateKeyCopySettings(user.id, traderId, {
-      allocationPct,
-      riskMultiplier,
-      stopLossPct,
-      autoCopyEnabled,
-      autoCopyAmountNear,
-    });
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message || 'Failed to update copy settings' });
-  }
-});
-
 router.get('/alpha/creator/eligibility', async (req, res) => {
   try {
     const user = await resolveAlphaUser(req);
@@ -1825,6 +1799,145 @@ router.get('/alpha/copy-settings/:traderId', async (req, res) => {
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to fetch copy settings' });
+  }
+});
+
+// ── Direct Wallet Copy Trading (Any NEAR or Solana Wallet, synced with Telegram /copy) ──
+router.get('/alpha/wallet-copy/targets', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.json({ success: true, targets: [], fills: [] });
+      return;
+    }
+    const { getCopyTradeTargetsByUser, getDb } = await import('@racerbot/db');
+    const targets = await getCopyTradeTargetsByUser(user.id);
+    const db = await getDb();
+    const fillsRes = await db.query(
+      `SELECT f.id, f.copy_target_id, f.source_tx_hash, f.token_address, f.side, f.amount_near,
+              f.tx_hash, f.status, f.skip_reason, f.created_at, t.target_wallet, c.symbol AS token_symbol
+       FROM copy_trade_fills f
+       LEFT JOIN copy_trade_targets t ON t.id = f.copy_target_id
+       LEFT JOIN token_cache c ON LOWER(c.token_address) = LOWER(f.token_address)
+       WHERE f.user_id = $1
+       ORDER BY f.created_at DESC
+       LIMIT 20`,
+      [user.id]
+    ).catch(() => ({ rows: [] }));
+
+    res.json({
+      success: true,
+      targets,
+      fills: fillsRes.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load wallet copy targets' });
+  }
+});
+
+router.post('/alpha/wallet-copy/targets', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram first.' });
+      return;
+    }
+    const rawWallet = String(req.body?.targetWallet || '').trim();
+    if (!rawWallet) {
+      res.status(400).json({ error: 'Target wallet address is required.' });
+      return;
+    }
+    const lowerWallet = rawWallet.toLowerCase();
+    const blockedContracts = new Set([
+      'dclv2.ref-labs.near',
+      'v2.ref-finance.near',
+      'ref-finance-101.near',
+      'aggregatedex.near',
+      'wrap.near',
+      'dex.intear.near',
+      'intents.near',
+      'nearlytrade.near',
+      'meme-cooking.near',
+      'launchpad.justhoot.near',
+      'v2-launchpad.justhoot.near',
+      'racerbot.near',
+      'racerbotrouter.near',
+    ]);
+    if (blockedContracts.has(lowerWallet)) {
+      res.status(400).json({ error: `${rawWallet} is a DEX/Router contract, not a trader wallet.` });
+      return;
+    }
+
+    const isSolana = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(rawWallet) && !rawWallet.includes('.');
+    const targetWallet = isSolana ? rawWallet : lowerWallet;
+    const buyAmountNear = Math.max(0.01, Number(req.body?.buyAmountNear) || (isSolana ? 0.1 : 1.0));
+    const copySells = req.body?.copySells !== undefined ? Boolean(req.body.copySells) : true;
+    const maxSlippagePct = Math.min(50, Math.max(0.5, Number(req.body?.maxSlippagePct) || 5.0));
+    const maxDailyBudgetNear = req.body?.maxDailyBudgetNear ? Number(req.body.maxDailyBudgetNear) : null;
+    const trackOnly = Boolean(req.body?.trackOnly);
+
+    const { createCopyTradeTarget } = await import('@racerbot/db');
+    const target = await createCopyTradeTarget({
+      user_id: user.id,
+      target_wallet: targetWallet,
+      buy_amount_near: buyAmountNear,
+      copy_sells: copySells,
+      max_slippage_pct: maxSlippagePct,
+      max_daily_budget_near: maxDailyBudgetNear && maxDailyBudgetNear > 0 ? maxDailyBudgetNear : null,
+      track_only: trackOnly,
+    });
+
+    try {
+      const { createRedis } = await import('@racerbot/shared');
+      const { REDIS_URL } = await import('../config.js');
+      await createRedis(REDIS_URL).publish('racerbot:refresh_tracked_wallets', '1');
+    } catch {}
+
+    try {
+      const { hasManagedWallet, createWebManagedWallet } = await import('../webWallet.js');
+      if (!hasManagedWallet(user)) {
+        await createWebManagedWallet(user.id);
+      }
+    } catch {}
+
+    res.json({
+      success: true,
+      target,
+      message: `Now copying ${targetWallet} (${buyAmountNear} ${isSolana ? 'SOL' : 'NEAR'} per buy).`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to save wallet copy target' });
+  }
+});
+
+router.post('/alpha/wallet-copy/targets/:id/status', async (req, res) => {
+  try {
+    const user = await resolveAlphaUser(req);
+    if (!user) {
+      res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram first.' });
+      return;
+    }
+    const targetId = req.params.id;
+    const status = req.body?.status as 'active' | 'paused' | 'stopped';
+    if (!['active', 'paused', 'stopped'].includes(status)) {
+      res.status(400).json({ error: 'Invalid status. Expected active, paused, or stopped.' });
+      return;
+    }
+    const { updateCopyTradeTargetStatus, getCopyTradeTargetById } = await import('@racerbot/db');
+    const existing = await getCopyTradeTargetById(targetId);
+    if (!existing || existing.user_id !== user.id) {
+      res.status(404).json({ error: 'Copy target not found.' });
+      return;
+    }
+    await updateCopyTradeTargetStatus(targetId, status);
+    try {
+      const { createRedis } = await import('@racerbot/shared');
+      const { REDIS_URL } = await import('../config.js');
+      await createRedis(REDIS_URL).publish('racerbot:refresh_tracked_wallets', '1');
+    } catch {}
+    res.json({ success: true, status });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update wallet copy status' });
   }
 });
 

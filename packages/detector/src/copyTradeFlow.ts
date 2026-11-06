@@ -75,27 +75,55 @@ export function observeReceipt(item: any, isTracked: (wallet: string) => boolean
   }
 
   // Token movements from NEP-141 events emitted by the token contract (the receipt's receiver)
+  // Also handles wrap.near and legacy NEP-141 plain-text logs ("Transfer X from A to B", "Deposit X NEAR to A", "Withdraw X NEAR from A")
+  const credit = (amount: unknown, sign: 1n | -1n) => {
+    const delta = big(amount) * sign;
+    if (NEAR_LIKE.has(receiver)) flow!.near += delta;
+    else add(flow!.tokens, receiver, delta);
+  };
   for (const log of item?.execution_outcome?.outcome?.logs ?? []) {
-    if (typeof log !== 'string' || !log.startsWith('EVENT_JSON:')) continue;
-    let ev: any;
-    try { ev = JSON.parse(log.slice('EVENT_JSON:'.length)); } catch { continue; }
-    if (ev?.standard !== 'nep141' || !Array.isArray(ev?.data)) continue;
-    const credit = (amount: unknown, sign: 1n | -1n) => {
-      const delta = big(amount) * sign;
-      if (NEAR_LIKE.has(receiver)) flow!.near += delta;
-      else add(flow!.tokens, receiver, delta);
-    };
-    for (const d of ev.data) {
-      const from = String(d?.old_owner_id ?? '').toLowerCase();
-      const to = String(d?.new_owner_id ?? '').toLowerCase();
-      const owner = String(d?.owner_id ?? '').toLowerCase();
-      if (ev.event === 'ft_transfer') {
-        if (to === signer && from !== signer) credit(d.amount, 1n);
-        if (from === signer && to !== signer) credit(d.amount, -1n);
-      } else if (ev.event === 'ft_mint' && owner === signer) {
-        credit(d.amount, 1n);
-      } else if (ev.event === 'ft_burn' && owner === signer) {
-        credit(d.amount, -1n);
+    if (typeof log !== 'string') continue;
+    if (log.startsWith('EVENT_JSON:')) {
+      let ev: any;
+      try { ev = JSON.parse(log.slice('EVENT_JSON:'.length)); } catch { continue; }
+      if (ev?.standard !== 'nep141' || !Array.isArray(ev?.data)) continue;
+      for (const d of ev.data) {
+        const from = String(d?.old_owner_id ?? '').toLowerCase();
+        const to = String(d?.new_owner_id ?? '').toLowerCase();
+        const owner = String(d?.owner_id ?? '').toLowerCase();
+        if (ev.event === 'ft_transfer') {
+          if (to === signer && from !== signer) credit(d.amount, 1n);
+          if (from === signer && to !== signer) credit(d.amount, -1n);
+        } else if (ev.event === 'ft_mint' && owner === signer) {
+          credit(d.amount, 1n);
+        } else if (ev.event === 'ft_burn' && owner === signer) {
+          credit(d.amount, -1n);
+        }
+      }
+      continue;
+    }
+
+    const trimmed = log.trim();
+    const transferMatch = /^Transfer (\d+) from ([^\s]+) to ([^\s]+)$/.exec(trimmed);
+    if (transferMatch) {
+      const [, amt, rawFrom, rawTo] = transferMatch;
+      const from = rawFrom.toLowerCase();
+      const to = rawTo.toLowerCase();
+      if (to === signer && from !== signer) credit(amt, 1n);
+      if (from === signer && to !== signer) credit(amt, -1n);
+      continue;
+    }
+
+    if (NEAR_LIKE.has(receiver)) {
+      const depositMatch = /^Deposit (\d+) NEAR to ([^\s]+)$/.exec(trimmed);
+      if (depositMatch && depositMatch[2].toLowerCase() === signer) {
+        credit(depositMatch[1], 1n);
+        continue;
+      }
+      const withdrawMatch = /^Withdraw (\d+) NEAR from ([^\s]+)$/.exec(trimmed);
+      if (withdrawMatch && withdrawMatch[2].toLowerCase() === signer) {
+        credit(withdrawMatch[1], -1n);
+        continue;
       }
     }
   }

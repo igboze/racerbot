@@ -3268,7 +3268,11 @@ export async function publishSwap(swapEvent: {
       const db = await getDb();
       const creator = await db.query(
         `SELECT id FROM racer_alpha_traders
-         WHERE user_id = $1 AND is_active = TRUE
+         WHERE (
+           user_id = $1
+           OR LOWER(user_id) = LOWER((SELECT subaccount_id FROM users WHERE id::text = $1 LIMIT 1))
+           OR LOWER(payout_wallet_address) = LOWER((SELECT subaccount_id FROM users WHERE id::text = $1 LIMIT 1))
+         ) AND is_active = TRUE
          LIMIT 1`,
         [swapEvent.user_id]
       );
@@ -3277,7 +3281,7 @@ export async function publishSwap(swapEvent: {
       const { recordAlphaSignal } = await import('./racerAlpha.js');
       await recordAlphaSignal({
         traderId: creator.rows[0].id,
-        tokenAddress: swapEvent.token_out,
+        tokenAddress: isBuy ? swapEvent.token_out : swapEvent.token_in,
         tokenSymbol: tokenSymbol.slice(0, 30),
         tokenName: tokenName.slice(0, 100),
         side: isBuy ? 'BUY' : 'SELL',

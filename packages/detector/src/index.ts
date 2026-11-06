@@ -165,7 +165,8 @@ async function main() {
     }
   }
 
-  // Steady-state polling loop: fetch next block directly from neardata without polling block height
+  // Steady-state polling loop: fetch next block from neardata with automatic RPC fallback on 429/5xx
+  let lastTipCheckAt = Date.now();
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -180,14 +181,51 @@ async function main() {
         }
       }
 
+      // Periodically verify we have not drifted behind chain tip
+      if (Date.now() - lastTipCheckAt > 30_000) {
+        lastTipCheckAt = Date.now();
+        const tipHeight = await fetchBlockHeight();
+        if (tipHeight > 0 && tipHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
+          logger.info('Detector lagged behind chain tip; jumping forward', {
+            from: lastBlock,
+            to: tipHeight - 5,
+            lagBlocks: tipHeight - lastBlock,
+          });
+          lastBlock = tipHeight - 5;
+          await redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
+        }
+      }
+
       const nextHeight = lastBlock + 1;
       const res = await fetch(`https://mainnet.neardata.xyz/v0/block/${nextHeight}`, {
+        headers: getNeardataHeaders(),
         signal: AbortSignal.timeout(3000),
       }).catch(() => null);
 
       if (!res || res.status === 404) {
         // Next block hasn't been produced yet: sleep and retry same height
         await sleep(POLL_INTERVAL_MS);
+        continue;
+      }
+
+      // Neardata enforces 30 blocks/min on free tier (HTTP 429) while NEAR produces ~100 blocks/min.
+      // Fall back to standard NEAR JSON-RPC immediately so the detector never stalls behind real-time.
+      if (res.status === 429 || res.status >= 500) {
+        const tipHeight = await fetchBlockHeight();
+        lastTipCheckAt = Date.now();
+        if (tipHeight > 0 && nextHeight > tipHeight) {
+          await sleep(POLL_INTERVAL_MS);
+          continue;
+        }
+        if (tipHeight > 0 && tipHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
+          lastBlock = tipHeight - 5;
+        }
+        const targetHeight = lastBlock + 1;
+        await processBlockRpc(targetHeight).catch(err => {
+          console.error(`[DETECTOR] RPC fallback block ${targetHeight} error:`, (err as Error).message);
+        });
+        lastBlock = targetHeight;
+        redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
         continue;
       }
 
@@ -236,10 +274,10 @@ async function main() {
                 }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
                 if (parsedActions.length > 0) {
                   if (realSigner) {
-                    checkCopyTradeReceipt(realSigner, receiverId, txHash, parsedActions).catch(() => {});
+                    checkCopyTradeReceipt(realSigner, receiverId, txHash, parsedActions, predecessorId).catch(() => {});
                   }
                   if (predecessorId && predecessorId !== realSigner) {
-                    checkCopyTradeReceipt(predecessorId, receiverId, txHash, parsedActions).catch(() => {});
+                    checkCopyTradeReceipt(predecessorId, receiverId, txHash, parsedActions, predecessorId).catch(() => {});
                   }
                 }
               }
@@ -249,7 +287,7 @@ async function main() {
             eventPairs.map(({ log, receiverId, txHash }) => parseEventLog(log, receiverId, txHash).catch(() => {}))
           );
         } else {
-          await processBlock(nextHeight).catch(err => {
+          await processBlockRpc(nextHeight).catch(err => {
             console.error(`[DETECTOR] Block ${nextHeight} error:`, err.message);
           });
         }
@@ -264,6 +302,15 @@ async function main() {
     }
     await sleep(POLL_INTERVAL_MS);
   }
+}
+
+function getNeardataHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
+  if (fastnearKey) {
+    headers['Authorization'] = `Bearer ${fastnearKey}`;
+  }
+  return headers;
 }
 
 function getDetectorRpcHeaders(url: string): Record<string, string> {
@@ -317,6 +364,7 @@ async function processBlock(height: number): Promise<void> {
   // 1. Primary high-speed path: FastNEAR Neardata stream (complete block with all shard outcomes and logs)
   try {
     const neardataRes = await fetch(`https://mainnet.neardata.xyz/v0/block/${height}`, {
+      headers: getNeardataHeaders(),
       signal: AbortSignal.timeout(3000),
     });
     if (neardataRes.ok) {
@@ -350,10 +398,10 @@ async function processBlock(height: number): Promise<void> {
             }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
             if (parsedActions.length > 0) {
               if (realSigner) {
-                checkCopyTradeReceipt(realSigner, receiverId, txHash, parsedActions).catch(() => {});
+                checkCopyTradeReceipt(realSigner, receiverId, txHash, parsedActions, predecessorId).catch(() => {});
               }
               if (predecessorId && predecessorId !== realSigner) {
-                checkCopyTradeReceipt(predecessorId, receiverId, txHash, parsedActions).catch(() => {});
+                checkCopyTradeReceipt(predecessorId, receiverId, txHash, parsedActions, predecessorId).catch(() => {});
               }
             }
           }
@@ -368,7 +416,11 @@ async function processBlock(height: number): Promise<void> {
     // Fall back to standard JSON-RPC chunk inspection
   }
 
-  // 2. Fallback path: standard NEAR JSON-RPC chunk transactions inspection
+  await processBlockRpc(height);
+}
+
+/** Fallback path: standard NEAR JSON-RPC chunk transactions & receipts inspection */
+async function processBlockRpc(height: number): Promise<void> {
   try {
     const isFree = (u: string) => u.includes('shitzu') || u.includes('intea') || u.includes('free.rpc.fastnear.com') || u.includes('near.org');
     const freePool = RPC_URLS.filter(isFree);
@@ -416,6 +468,56 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
 
     const data = (await response.json()) as any;
     const txs = data?.result?.transactions ?? [];
+    const receipts = data?.result?.receipts ?? [];
+
+    // Copy-trade detection on RPC chunk transactions & receipts (when neardata is rate-limited)
+    for (const tx of txs) {
+      const signerId: string = tx?.signer_id ?? '';
+      const receiverId: string = tx?.receiver_id ?? '';
+      const txHash: string = tx?.hash ?? '';
+      if (txHash && signerId) {
+        const parsedActions = ((tx?.actions ?? []) as any[]).map((a: any) => {
+          const fn = a?.FunctionCall;
+          if (!fn) return null;
+          try {
+            return {
+              methodName: fn.method_name as string,
+              args: JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8')),
+            };
+          } catch { return null; }
+        }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
+        if (parsedActions.length > 0) {
+          checkCopyTradeReceipt(signerId, receiverId, txHash, parsedActions, signerId).catch(() => {});
+        }
+      }
+    }
+
+    for (const rcpt of receipts) {
+      const receiverId: string = rcpt?.receiver_id ?? '';
+      const predecessorId: string = rcpt?.predecessor_id ?? '';
+      const realSigner: string = rcpt?.receipt?.Action?.signer_id ?? '';
+      const rcptId: string = rcpt?.receipt_id ?? '';
+      if (rcptId && (realSigner || predecessorId)) {
+        const parsedActions = ((rcpt?.receipt?.Action?.actions ?? []) as any[]).map((a: any) => {
+          const fn = a?.FunctionCall;
+          if (!fn) return null;
+          try {
+            return {
+              methodName: fn.method_name as string,
+              args: JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8')),
+            };
+          } catch { return null; }
+        }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
+        if (parsedActions.length > 0) {
+          if (realSigner) {
+            checkCopyTradeReceipt(realSigner, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
+          }
+          if (predecessorId && predecessorId !== realSigner) {
+            checkCopyTradeReceipt(predecessorId, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
+          }
+        }
+      }
+    }
 
     for (const tx of txs) {
       const receiverId: string = tx?.receiver_id ?? '';

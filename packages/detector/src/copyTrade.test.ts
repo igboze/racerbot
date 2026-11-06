@@ -23,7 +23,7 @@ vi.mock('@racerbot/shared', async (importOriginal: () => Promise<Record<string, 
 
 import * as db from '@racerbot/db';
 import * as shared from '@racerbot/shared';
-import { extractSwapDetails, checkCopyTradeReceipt, initCopyTradeDetector, intearRoute } from './copyTrade.js';
+import { extractSwapDetails, checkCopyTradeReceipt, initCopyTradeDetector, intearRoute, isNonTraderContract } from './copyTrade.js';
 
 describe('Copy Trading & Wallet Tracker', () => {
   beforeEach(() => {
@@ -485,7 +485,7 @@ describe('Copy Trading & Wallet Tracker', () => {
   });
 });
 
-// Real message shapes from each venue (DCL, Intear, NearPumpFun): buys must be recognised,
+// Real message shapes from each venue (DCL, Intear, NearPumpFun, Aggregatedex): buys must be recognised,
 // otherwise copy buys never fire and copy sells are skipped for lack of a position.
 describe('extractSwapDetails on real venue messages', () => {
   const ftCall = (receiver: string, msg: unknown) =>
@@ -513,6 +513,84 @@ describe('extractSwapDetails on real venue messages', () => {
   it('DCL SwapByOutput buy', () => {
     const r = extractSwapDetails('wrap.near', ftCall('dclv2.ref-labs.near', { SwapByOutput: { pool_ids: [DCL_POOL], output_token: THREE, output_amount: '5' } }));
     expect(r).toMatchObject({ side: 'buy', tokenAddress: THREE });
+  });
+
+  it('DCL multi-hop swap through wrap.near into a launchpad token is recognised as a BUY of output_token (not a false sell)', () => {
+    const TOKEN_A = 'wth-0b2227.launchpad.justhoot.near';
+    const TOKEN_B = 'imeme-2.launchpad.justhoot.near';
+    const r = extractSwapDetails(
+      TOKEN_A,
+      ftCall('dclv2.ref-labs.near', {
+        Swap: {
+          pool_ids: [`${TOKEN_A}|wrap.near|2000`, `${TOKEN_B}|wrap.near|2000`],
+          output_token: TOKEN_B,
+          min_output_amount: '1',
+        },
+      }),
+      'leader.near'
+    );
+    expect(r).toMatchObject({ side: 'buy', tokenAddress: TOKEN_B, tokenOut: TOKEN_B });
+  });
+
+  it('aggregatedex.near client_echo payout receipt is ignored (never misclassified as a SELL)', () => {
+    const clientEcho = {
+      user: 'ezmoneygems.near',
+      receive_user: 'ezmoneygems.near',
+      swap_fee: { fee_token: 'wrap.near', fee_bps: 10, fee_receiver: 'fee-astr.near' },
+    };
+    const r1 = extractSwapDetails(THREE, ftCall('aggregatedex.near', clientEcho), 'dclv2.ref-labs.near');
+    expect(r1).toBeNull();
+    const r2 = extractSwapDetails(THREE, ftCall('aggregatedex.near', clientEcho), 'ezmoneygems.near');
+    expect(r2).toBeNull();
+  });
+
+  it('aggregatedex.near callback_swap decodes swap_request for BUY and SELL', () => {
+    const buyRes = extractSwapDetails('aggregatedex.near', [
+      {
+        methodName: 'callback_swap',
+        args: {
+          swap_request: {
+            token_in: 'wrap.near',
+            msgs: [
+              {
+                contract_id: 'dclv2.ref-labs.near',
+                amount: '1000000000000000000000000',
+                msg: JSON.stringify({ Swap: { pool_ids: [DCL_POOL], output_token: THREE, min_output_amount: '0' } }),
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    expect(buyRes).toMatchObject({ side: 'buy', tokenAddress: THREE });
+
+    const sellRes = extractSwapDetails('aggregatedex.near', [
+      {
+        methodName: 'callback_swap',
+        args: {
+          swap_request: {
+            token_in: THREE,
+            msgs: [
+              {
+                contract_id: 'dclv2.ref-labs.near',
+                amount: '5000000',
+                msg: JSON.stringify({ Swap: { pool_ids: [DCL_POOL], output_token: 'wrap.near', min_output_amount: '0' } }),
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    expect(sellRes).toMatchObject({ side: 'sell', tokenAddress: THREE });
+  });
+
+  it('isNonTraderContract filters out DEXes and launchpads while keeping user wallets', () => {
+    expect(isNonTraderContract('dclv2.ref-labs.near')).toBe(true);
+    expect(isNonTraderContract('aggregatedex.near')).toBe(true);
+    expect(isNonTraderContract('kookdog-42db38.launchpad.justhoot.near')).toBe(true);
+    expect(isNonTraderContract('ezmoneygems.near')).toBe(false);
+    expect(isNonTraderContract('ethereal_contraption.user.intear.near')).toBe(false);
+    expect(isNonTraderContract('lunar-nexus-9768.racerbot.near')).toBe(false);
   });
 
   const intearOps = (assetIn: string, assetOut: string, viaIntear = false) => ({

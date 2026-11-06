@@ -46,6 +46,8 @@ export const LAUNCHPAD_CONTRACTS = new Set<string>([
   'launch.intear.near',
   'launch-v2.intear.near',
   'dex.intear.near',
+  'launchpad.justhoot.near',
+  'v2-launchpad.justhoot.near',
   'pad.onetokenhub.near',
   'nearpadfamily.near',
   'nearpumpfun.near',
@@ -56,11 +58,61 @@ export const LAUNCHPAD_CONTRACTS = new Set<string>([
   'qlyphs.near',
 ]);
 
+export const NON_TRADER_CONTRACTS = new Set<string>([
+  'dclv2.ref-labs.near',
+  'v2.ref-finance.near',
+  'ref-finance-101.near',
+  'aggregatedex.near',
+  'wrap.near',
+  'near',
+  'dex.intear.near',
+  'launch.intear.near',
+  'launch-v2.intear.near',
+  'intents.near',
+  'nearlytrade.near',
+  'meme-cooking.near',
+  'launchpad.justhoot.near',
+  'v2-launchpad.justhoot.near',
+  'pad.onetokenhub.near',
+  'nearpadfamily.near',
+  'nearpumpfun.near',
+  'factory.shardsmarket.near',
+  'gaypad.j1-racing.near',
+  'launch.shoremarkets.near',
+  'exchange.kelytradevs.near',
+  'qlyphs.near',
+  'token.rhealab.near',
+  'racerbot.near',
+  'racerbotrouter.near',
+  'system',
+]);
+
+export function isNonTraderContract(accountId: string): boolean {
+  const lower = (accountId || '').trim().toLowerCase();
+  if (!lower) return true;
+  if (NON_TRADER_CONTRACTS.has(lower) || LAUNCHPAD_CONTRACTS.has(lower)) return true;
+  if (
+    lower.endsWith('.launchpad.justhoot.near') ||
+    lower.endsWith('.v2-launchpad.justhoot.near') ||
+    lower.endsWith('.nearlytrade.near') ||
+    lower.endsWith('.meme-cooking.near') ||
+    lower.endsWith('.nearpumpfun.near') ||
+    lower.endsWith('.shardsmarket.near') ||
+    lower.endsWith('.launch.shoremarkets.near') ||
+    lower.endsWith('.tkn.near') ||
+    lower.endsWith('.factory.bridge.near')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function inferVenueFromToken(tokenAddress: string, defaultVenue = 'rhea'): string {
   const lower = tokenAddress.toLowerCase().trim();
   if (lower.endsWith('.nearlytrade.near')) return 'nearlytrade';
   if (lower.endsWith('.meme-cooking.near')) return 'memecooking';
   if (lower.includes('intear.near')) return 'intear';
+  if (lower.includes('justhoot.near')) return 'rhea';
   if (lower.endsWith('.pad.onetokenhub.near')) return 'onetokenhub';
   if (lower.endsWith('.nearpadfamily.near')) return 'nearpad';
   if (lower.endsWith('.nearpumpfun.near')) return 'nearpumpfun';
@@ -101,7 +153,9 @@ const handledTxs = new Map<string, number>();
 const HANDLED_TTL_MS = 5 * 60_000;
 
 export function isTrackedWallet(wallet: string): boolean {
-  return trackedWallets.has(wallet.trim().toLowerCase());
+  const normalized = wallet.trim().toLowerCase();
+  if (isNonTraderContract(normalized)) return false;
+  return trackedWallets.has(normalized);
 }
 
 /**
@@ -117,6 +171,7 @@ function flushCopyFlows(): void {
   for (const [tx, at] of handledTxs) if (now - at > HANDLED_TTL_MS) handledTxs.delete(tx);
   for (const { wallet, txHash, swap } of flushFlows(now)) {
     if (handledTxs.has(txHash)) continue;
+    handledTxs.set(txHash, now);
     logger.info('Copy-trade event detected from balance changes', { signer: wallet, side: swap.side, token: swap.tokenAddress, txHash });
     dispatchCopyTrade(wallet, swap, txHash).catch(err => logger.error('Copy-trade dispatch failed', err as Error, { txHash }));
   }
@@ -140,7 +195,11 @@ export async function initCopyTradeDetector(): Promise<void> {
 async function refreshTrackedWallets(): Promise<void> {
   try {
     const wallets = await getAllActiveCopyTargetWallets();
-    trackedWallets = new Set(wallets.map((w) => w.trim().toLowerCase()));
+    trackedWallets = new Set(
+      wallets
+        .map((w) => w.trim().toLowerCase())
+        .filter((w) => !isNonTraderContract(w))
+    );
   } catch (err) {
     logger.error('Failed to refresh tracked copy-trade wallets', err as Error);
   }
@@ -194,19 +253,24 @@ export async function checkCopyTradeReceipt(
   predecessorId?: string
 ): Promise<void> {
   const normalizedSigner = (signerAccountId || '').trim().toLowerCase();
+  if (isNonTraderContract(normalizedSigner)) return;
   // Fast O(1) check - skip untracked wallets immediately
   if (!trackedWallets.has(normalizedSigner)) return;
+  // Skip if another receipt from the same transaction was already handled
+  if (txHash && handledTxs.has(txHash)) return;
 
   const swap = extractSwapDetails(receiverAccountId, actions, predecessorId);
   if (!swap || !swap.tokenAddress) return;
 
+  if (txHash) {
+    handledTxs.set(txHash, Date.now());
+  }
   logger.info('Copy-trade event detected', {
     signer: normalizedSigner,
     side: swap.side,
     token: swap.tokenAddress,
     txHash,
   });
-  handledTxs.set(txHash, Date.now());
   await dispatchCopyTrade(normalizedSigner, swap, txHash);
 }
 
@@ -380,7 +444,7 @@ async function executeCopyBuy(
     // 5. Build swap
     let swapEvent: any;
     if (tokenCache?.chain === 'sui' || venue === 'suipump' || tokenAddress.includes('::')) {
-      const amountInMist = BigInt(Math.floor(target.buy_amount_near * 1e9)).toString();
+      const amountInMist = BigInt(Math.round(target.buy_amount_near * 1e9)).toString();
       swapEvent = {
         type: 'execute_swap',
         chain: 'sui',
@@ -395,7 +459,7 @@ async function executeCopyBuy(
       };
     } else {
       const near = getNear();
-      const amountInYocto = BigInt(Math.floor(target.buy_amount_near * 1e24)).toString();
+      const amountInYocto = (BigInt(Math.round(target.buy_amount_near * 1e6)) * 10n ** 18n).toString();
       let minAmountOut = '1';
       try {
         const quote = await near.computeMinAmountOut(
@@ -593,9 +657,16 @@ async function executeCopySell(
   }
 }
 
+const DEX_PAYOUT_SOURCES = new Set<string>([
+  'dclv2.ref-labs.near',
+  'v2.ref-finance.near',
+  'ref-finance-101.near',
+  'dex.intear.near',
+]);
+
 /**
  * Heuristic token & side extractor from swap receipt actions.
- * Correctly detects both BUY and SELL transactions on Ref Finance, Rhea, Shards, Jump, and Intear.
+ * Correctly detects both BUY and SELL transactions on Ref Finance, Rhea, Aggregatedex, Shards, Jump, and Intear.
  */
 export function extractSwapDetails(
   receiverId: string,
@@ -607,6 +678,29 @@ export function extractSwapDetails(
 
   for (const action of actions) {
     const args = action.args as any;
+
+    // ── Aggregatedex callback_swap: contains decoded swap_request { token_in, msgs: [{ contract_id, amount, msg }] } ──
+    if (receiverId === 'aggregatedex.near' && action.methodName === 'callback_swap') {
+      const swapReq = args?.swap_request;
+      const reqTokenIn: string = swapReq?.token_in ?? '';
+      const msgs: any[] = Array.isArray(swapReq?.msgs) ? swapReq.msgs : [];
+      if (reqTokenIn && msgs.length > 0) {
+        const firstMsg = msgs[0];
+        const lastMsg = msgs[msgs.length - 1];
+        const syntheticActions = [
+          {
+            methodName: 'ft_transfer_call',
+            args: {
+              receiver_id: lastMsg?.contract_id || firstMsg?.contract_id || 'dclv2.ref-labs.near',
+              amount: firstMsg?.amount,
+              msg: lastMsg?.msg || firstMsg?.msg,
+            },
+          },
+        ];
+        const extracted = extractSwapDetails(reqTokenIn, syntheticActions, predecessorId);
+        if (extracted) return extracted;
+      }
+    }
 
     // ── NearPumpFun: each token contract is its own bonding curve (buy with NEAR, sell for NEAR) ──
     if (receiverId.endsWith(NEARPUMPFUN_SUFFIX) && (action.methodName === 'buy' || action.methodName === 'sell')) {
@@ -628,7 +722,7 @@ export function extractSwapDetails(
       }
     }
 
-    // ── A. Direct Launchpad Contract Actions (NearlyTrade, Meme.Cooking, Intear, OneTokenHub, NEARpad, etc.) ──
+    // ── A. Direct Launchpad Contract Actions (NearlyTrade, Meme.Cooking, Intear, JustHoot, OneTokenHub, NEARpad, etc.) ──
     if (LAUNCHPAD_CONTRACTS.has(receiverId)) {
       const buyMethods = new Set(['buy', 'buy_token', 'launch_buy', 'deposit_and_buy', 'deposit']);
       const sellMethods = new Set(['sell', 'sell_token', 'withdraw', 'claim']);
@@ -672,6 +766,17 @@ export function extractSwapDetails(
       let tokenOut: string | null = null;
       let amountIn = args?.amount as string | undefined;
 
+      // Ignore DEX-to-aggregator payout receipts (e.g. dclv2.ref-labs.near paying bought tokens to aggregatedex.near with client_echo)
+      if (isFtTransferCall && predecessorId && DEX_PAYOUT_SOURCES.has(predecessorId.toLowerCase()) && targetReceiver === 'aggregatedex.near') {
+        continue;
+      }
+      if (isFtOnTransfer && targetReceiver === 'aggregatedex.near') {
+        const senderId = String(args?.sender_id ?? '').toLowerCase();
+        if (DEX_PAYOUT_SOURCES.has(senderId)) {
+          continue;
+        }
+      }
+
       // Intear swaps: the operations name the real input and output (any route)
       if (targetReceiver === INTEAR_DEX) {
         const route = intearRoute(msg);
@@ -686,7 +791,7 @@ export function extractSwapDetails(
         }
       }
 
-      // 1. Target receiver is a Launchpad contract (NearlyTrade, Meme.Cooking, Intear, etc.)
+      // 1. Target receiver is a Launchpad contract (NearlyTrade, Meme.Cooking, Intear, JustHoot, etc.)
       if (LAUNCHPAD_CONTRACTS.has(targetReceiver)) {
         if (isWrapNear(tokenTransferred)) {
           // BUYing unbonded launchpad token with wrap.near
@@ -727,18 +832,42 @@ export function extractSwapDetails(
       }
 
       // 2. Standard AMM / DEX parsed messages (Ref Finance, Rhea DEX, JumpDeFi, DCL)
+      let isParsedJson = false;
+      let isClientEchoPayout = false;
+      let isMultiHopThroughNear = false;
       if (typeof msg === 'string') {
         try {
           const parsed = JSON.parse(msg);
+          isParsedJson = Boolean(parsed && typeof parsed === 'object');
+          // Detect aggregatedex / DCL client_echo payout messages (e.g. {"user":"...","receive_user":"...","swap_fee":{"fee_token":"wrap.near"}})
+          if (
+            isParsedJson &&
+            (parsed.receive_user || parsed.swap_fee) &&
+            !parsed.actions &&
+            !parsed.Swap &&
+            !parsed.SwapByOutput &&
+            !parsed.swap &&
+            !parsed.dcl_actions
+          ) {
+            isClientEchoPayout = true;
+          }
+
           // Standard Ref/Rhea actions array: { actions: [{ token_in, token_out, ... }] }
           const refActions = parsed?.actions ?? parsed?.Swap?.actions ?? parsed?.dcl_actions ?? [];
           if (Array.isArray(refActions) && refActions.length > 0) {
             tokenIn = refActions[0]?.token_in || tokenTransferred;
             tokenOut = refActions[refActions.length - 1]?.token_out || null;
             if (refActions[0]?.amount_in) amountIn = refActions[0].amount_in;
+            if (refActions.length > 1 && refActions.some((a: any) => isWrapNear(a?.token_in) || isWrapNear(a?.token_out))) {
+              isMultiHopThroughNear = true;
+            }
           } else if (parsed?.Swap?.output_token || parsed?.SwapByOutput?.output_token) {
             // Ref DCL (dclv2.ref-labs.near): {"Swap":{"pool_ids":[...],"output_token":"..."}}
             tokenOut = parsed.Swap?.output_token || parsed.SwapByOutput?.output_token;
+            const poolIds: unknown[] = parsed.Swap?.pool_ids ?? parsed.SwapByOutput?.pool_ids ?? [];
+            if (Array.isArray(poolIds) && poolIds.length > 1 && poolIds.some((p) => typeof p === 'string' && p.includes('wrap.near'))) {
+              isMultiHopThroughNear = true;
+            }
           } else if (parsed?.swap?.token_out || parsed?.swap?.output_token) {
             tokenOut = parsed.swap?.token_out || parsed.swap?.output_token;
             if (parsed.swap?.token_in) tokenIn = parsed.swap.token_in;
@@ -753,6 +882,10 @@ export function extractSwapDetails(
             }
           }
         } catch { /* ignore JSON parse error */ }
+      }
+
+      if (isClientEchoPayout) {
+        continue;
       }
 
       // 3. BUY: wrap.near -> Token
@@ -777,8 +910,23 @@ export function extractSwapDetails(
         };
       }
 
+      // 4b. Multi-hop BUY routed through wrap.near (e.g. TokenA -> wrap.near -> TokenB or USDC -> wrap.near -> TokenB)
+      if (isMultiHopThroughNear && tokenOut && !isWrapNear(tokenOut)) {
+        return {
+          side: 'buy',
+          tokenAddress: tokenOut,
+          tokenIn: 'wrap.near',
+          tokenOut,
+          amountIn,
+        };
+      }
+
       // 5. Transferred non-wrap.near token with swap message leading to wrap.near
-      if (!isWrapNear(tokenTransferred) && (isWrapNear(tokenOut) || (typeof msg === 'string' && msg.includes('wrap.near')))) {
+      // Only use raw string msg.includes('wrap.near') fallback when msg is not structured JSON with a non-NEAR tokenOut
+      if (
+        !isWrapNear(tokenTransferred) &&
+        (isWrapNear(tokenOut) || (!isParsedJson && !tokenOut && typeof msg === 'string' && msg.includes('wrap.near')))
+      ) {
         return {
           side: 'sell',
           tokenAddress: tokenTransferred,

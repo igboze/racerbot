@@ -1,10 +1,10 @@
-import { createLogger, getNear, getNearUsdPrice, parseMemeCookingId, type VenueName } from '@racerbot/shared';
+import { createLogger, createRedis, getNear, getNearUsdPrice, parseMemeCookingId, type VenueName } from '@racerbot/shared';
 import { loadTokenFacts, peekTokenFacts, warmTokenFacts } from './tokenFacts.js';
-import { getDb, getOpenPositions, getUserByTelegramId, getUserById, type UserRecord } from '@racerbot/db';
+import { getDb, getOpenPositions, getUserByTelegramId, getUserById, getUserBySubaccount, createCopyTradeTarget, updateCopyTradeTargetStatus, getCopyTradeTargetsByUser, type UserRecord } from '@racerbot/db';
 import crypto from 'crypto';
 import { getBotInstance } from './notify.js';
 import { publishSwap, transferNearFromUser, getTokenInfo } from './wallet.js';
-import { TREASURY_ACCOUNT_ID } from './config.js';
+import { TREASURY_ACCOUNT_ID, REDIS_URL } from './config.js';
 import { splitAlphaKeyPayment } from './alphaPayment.js';
 import { sellAtTarget } from './sellHelper.js';
 import { recordCopyBuy, resolveCopyFeeSettings, settleCopySell, type CopyRoute } from './alphaCopyFee.js';
@@ -453,6 +453,8 @@ export async function buyViewingKey(
       key_token: string;
       payment_status: string;
       price_paid_near: string | number;
+      creator_tx_hash?: string | null;
+      treasury_tx_hash?: string | null;
     } | undefined;
     try {
       await client.query('BEGIN');
@@ -467,7 +469,7 @@ export async function buyViewingKey(
         return { success: false, reason: 'Alpha Trader not found or inactive' };
       }
       trader = rowToTrader(traderResult.rows[0]);
-      if (trader.userId === buyerUser.id) {
+      if (trader.userId === buyerUser.id || (buyerUser.subaccount_id && trader.userId === buyerUser.subaccount_id)) {
         await client.query('ROLLBACK');
         return { success: false, reason: 'You cannot buy a viewing key for your own channel' };
       }
@@ -478,7 +480,7 @@ export async function buyViewingKey(
       else priceToPay = trader.tierCopyPriceNear || trader.keyPriceNear || 3.5;
 
       const existingResult = await client.query(
-        `SELECT id, key_token, payment_status, price_paid_near
+        `SELECT id, key_token, payment_status, price_paid_near, creator_tx_hash, treasury_tx_hash
          FROM racer_alpha_keys
          WHERE trader_id = $1 AND buyer_user_id = $2
          FOR UPDATE`,
@@ -494,7 +496,8 @@ export async function buyViewingKey(
         keyToken = pendingKey.key_token;
         purchaseStatus = pendingKey.payment_status;
       } else {
-        if (pendingKey && !['failed', 'refunded'].includes(pendingKey.payment_status)) {
+        const hasPartialOnChainPayment = Boolean(pendingKey?.creator_tx_hash || pendingKey?.treasury_tx_hash);
+        if (pendingKey && !['failed', 'refunded'].includes(pendingKey.payment_status) && hasPartialOnChainPayment) {
           await client.query('ROLLBACK');
           return {
             success: false,
@@ -502,16 +505,19 @@ export async function buyViewingKey(
           };
         }
 
-        const reserve = await client.query(
-          `UPDATE racer_alpha_traders
-           SET keys_reserved = keys_reserved + 1
-           WHERE id = $1 AND keys_sold + keys_reserved < max_keys
-           RETURNING id`,
-          [trader.id]
-        );
-        if (!reserve.rows[0]) {
-          await client.query('ROLLBACK');
-          return { success: false, reason: 'Key supply cap reached for this trader' };
+        const isReusingUnpaidPending = Boolean(pendingKey && pendingKey.payment_status === 'pending' && !hasPartialOnChainPayment);
+        if (!isReusingUnpaidPending) {
+          const reserve = await client.query(
+            `UPDATE racer_alpha_traders
+             SET keys_reserved = keys_reserved + 1
+             WHERE id = $1 AND keys_sold + keys_reserved < max_keys
+             RETURNING id`,
+            [trader.id]
+          );
+          if (!reserve.rows[0]) {
+            await client.query('ROLLBACK');
+            return { success: false, reason: 'Key supply cap reached for this trader' };
+          }
         }
 
         keyId = pendingKey?.id || 'key_' + crypto.randomBytes(12).toString('hex');
@@ -593,8 +599,13 @@ export async function buyViewingKey(
       return { success: false, reason: 'Viewing-key purchases require the database to be available.' };
     }
     isPlatformPayout = trader.userId === 'system_alpha';
-    const creatorUser = isPlatformPayout ? null : await getUserById(trader.userId);
-    const creatorAccountId = trader.payoutWalletAddress?.trim() || creatorUser?.subaccount_id?.trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trader.userId || '');
+    const creatorUser = isPlatformPayout
+      ? null
+      : isUuid
+        ? await getUserById(trader.userId).catch(() => null)
+        : await getUserBySubaccount(trader.userId).catch(() => null);
+    const creatorAccountId = trader.payoutWalletAddress?.trim() || creatorUser?.subaccount_id?.trim() || (!isUuid && trader.userId?.endsWith('.near') ? trader.userId.trim() : undefined);
     if (!isPlatformPayout && !creatorAccountId) {
       await failAlphaKeyPurchase(db, keyId, trader.id, 'failed', 'Creator payout account is not configured.');
       return { success: false, reason: 'This creator cannot receive payouts yet. Please try again later.' };
@@ -2295,14 +2306,15 @@ export async function updateKeyCopySettings(
   const db = await getDb().catch(() => null);
   if (!db) return { success: false, reason: 'Database unavailable' };
 
-  await db.query(
+  const updateRes = await db.query(
     `UPDATE racer_alpha_keys
      SET allocation_pct = COALESCE($1, allocation_pct),
          risk_multiplier = COALESCE($2, risk_multiplier),
          stop_loss_pct = COALESCE($3, stop_loss_pct),
          auto_copy_enabled = COALESCE($4, auto_copy_enabled),
          auto_copy_amount_near = COALESCE($5, auto_copy_amount_near)
-     WHERE buyer_user_id = $6 AND (trader_id = $7 OR id = $7) AND payment_status = 'completed'`,
+     WHERE buyer_user_id = $6 AND (trader_id = $7 OR id = $7) AND payment_status = 'completed'
+     RETURNING trader_id, auto_copy_enabled, auto_copy_amount_near`,
     [
       settings.allocationPct,
       settings.riskMultiplier,
@@ -2313,6 +2325,55 @@ export async function updateKeyCopySettings(
       traderId,
     ]
   );
+
+  if (!updateRes.rows[0]) {
+    return { success: false, reason: 'No active viewing key found for this Alpha Caller.' };
+  }
+
+  // Also sync on-chain wallet copy target (copy_trade_targets) if the Alpha Caller has a NEAR wallet
+  try {
+    const resolvedTraderId = updateRes.rows[0].trader_id;
+    const traderRow = await db.query(
+      `SELECT user_id, payout_wallet_address FROM racer_alpha_traders WHERE id = $1 LIMIT 1`,
+      [resolvedTraderId]
+    );
+    const tRow = traderRow.rows[0];
+    if (tRow && tRow.user_id !== 'system_alpha') {
+      let targetWallet = (tRow.payout_wallet_address || '').trim();
+      if (!targetWallet && tRow.user_id) {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tRow.user_id);
+        if (isUuid) {
+          const u = await getUserById(tRow.user_id).catch(() => null);
+          targetWallet = (u?.subaccount_id || '').trim();
+        } else if (tRow.user_id.endsWith('.near')) {
+          targetWallet = tRow.user_id.trim();
+        }
+      }
+      if (targetWallet && targetWallet.endsWith('.near')) {
+        const enabled = Boolean(updateRes.rows[0].auto_copy_enabled);
+        const buyAmt = Number(updateRes.rows[0].auto_copy_amount_near) || 1.0;
+        if (enabled) {
+          await createCopyTradeTarget({
+            user_id: userId,
+            target_wallet: targetWallet.toLowerCase(),
+            buy_amount_near: buyAmt,
+            copy_sells: true,
+            max_slippage_pct: 5.0,
+            track_only: false,
+          });
+        } else {
+          const existingTargets = await getCopyTradeTargetsByUser(userId).catch(() => []);
+          const match = existingTargets.find((t: any) => t.target_wallet.toLowerCase() === targetWallet.toLowerCase());
+          if (match) {
+            await updateCopyTradeTargetStatus(match.id, 'paused').catch(() => {});
+          }
+        }
+        await createRedis(REDIS_URL).publish('racerbot:refresh_tracked_wallets', '1').catch(() => {});
+      }
+    }
+  } catch (syncErr) {
+    logger.warn('Failed to sync Alpha Caller copy settings with copy_trade_targets', syncErr as Error);
+  }
 
   return { success: true };
 }
@@ -2459,47 +2520,56 @@ export async function updateCreatorProfile(userId: string, data: {
     // Check if the desired handle is claimed by a DIFFERENT user in users table
     const conflictUser = await db.query(
       `SELECT id FROM users 
-       WHERE LOWER(username) = LOWER($1) AND id <> $2 AND subaccount_id <> $3`,
+       WHERE LOWER(username) = LOWER($1) AND id::text <> $2 AND subaccount_id <> $3`,
       [handle, userId, wallet]
     );
     if (conflictUser.rows.length > 0) {
       return { success: false, reason: `The username "@${handle}" is already claimed by another account.` };
     }
 
+    // Resolve canonical UUID if userId was passed as a subaccount
+    let canonicalUserId = userId;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) {
+      const resolvedU = await getUserBySubaccount(userId).catch(() => null) || await getUserBySubaccount(wallet).catch(() => null);
+      if (resolvedU?.id) canonicalUserId = resolvedU.id;
+    }
+
     // Check if a trader record exists
     const existing = await db.query(
       `SELECT id, handle, display_name FROM racer_alpha_traders 
-       WHERE user_id = $1 OR (payout_wallet_address = $2 AND payout_wallet_address IS NOT NULL) 
+       WHERE user_id = $1 OR user_id = $2 OR (payout_wallet_address = $3 AND payout_wallet_address IS NOT NULL) 
        LIMIT 1`,
-      [userId, wallet]
+      [canonicalUserId, userId, wallet]
     );
 
     if (existing.rows.length === 0) {
-      const traderId = 'trader_' + userId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+      const traderId = 'trader_' + canonicalUserId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
       await db.query(
         `INSERT INTO racer_alpha_traders (
            id, user_id, handle, display_name, bio, strategy_tag, payout_wallet_address,
            key_price_near, tier_basic_price_near, tier_copy_price_near, tier_premium_price_near, is_active, is_creator_approved
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 3.5, 1.5, 3.5, 8.0, TRUE, TRUE)
          ON CONFLICT (handle) DO UPDATE SET
+           user_id = EXCLUDED.user_id,
            display_name = COALESCE(EXCLUDED.display_name, racer_alpha_traders.display_name),
            bio = COALESCE(EXCLUDED.bio, racer_alpha_traders.bio),
            strategy_tag = COALESCE(EXCLUDED.strategy_tag, racer_alpha_traders.strategy_tag),
            payout_wallet_address = COALESCE(EXCLUDED.payout_wallet_address, racer_alpha_traders.payout_wallet_address),
            updated_at = NOW()`,
-        [traderId, userId, handle, data.displayName || handle, data.bio || '', data.strategyTag || 'Trend Following', wallet]
+        [traderId, canonicalUserId, handle, data.displayName || handle, data.bio || '', data.strategyTag || 'Trend Following', wallet]
       );
     } else {
       await db.query(
         `UPDATE racer_alpha_traders
-         SET handle       = $1,
-             display_name = COALESCE($2, display_name),
-             bio          = COALESCE($3, bio),
-             strategy_tag = COALESCE($4, strategy_tag),
-             payout_wallet_address = COALESCE($5, payout_wallet_address),
+         SET user_id      = $1,
+             handle       = $2,
+             display_name = COALESCE($3, display_name),
+             bio          = COALESCE($4, bio),
+             strategy_tag = COALESCE($5, strategy_tag),
+             payout_wallet_address = COALESCE($6, payout_wallet_address),
              updated_at   = NOW()
-         WHERE id = $6`,
-        [handle, data.displayName || null, data.bio || null, data.strategyTag || null, wallet, existing.rows[0].id]
+         WHERE id = $7`,
+        [canonicalUserId, handle, data.displayName || null, data.bio || null, data.strategyTag || null, wallet, existing.rows[0].id]
       );
     }
 
@@ -2507,8 +2577,8 @@ export async function updateCreatorProfile(userId: string, data: {
     await db.query(
       `UPDATE users
        SET username = $1
-       WHERE id = $2 OR subaccount_id = $3`,
-      [handle, userId, wallet]
+       WHERE id::text = $2 OR subaccount_id = $3`,
+      [handle, canonicalUserId, wallet]
     ).catch(() => {});
 
     return { success: true, handle };

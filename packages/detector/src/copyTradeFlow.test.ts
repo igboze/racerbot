@@ -60,6 +60,25 @@ describe('copy-trade detection from balance changes', () => {
     expect(settle(0)[0].swap).toMatchObject({ side: 'sell', tokenAddress: 'cat.token.near' });
   });
 
+  it('handles mainnet wrap.near plain-text Deposit, Transfer, and Withdraw logs', () => {
+    const t0 = 2_000;
+    // Buy using existing wNEAR via aggregatedex.near (plain-text Transfer log on wrap.near)
+    observeReceipt(receipt({ tx: 'tx-plain-buy', receiver: 'wrap.near', logs: [`Transfer ${NEAR.toString()} from ${LEADER} to aggregatedex.near`] }), tracked, t0);
+    observeReceipt(receipt({ tx: 'tx-plain-buy', receiver: 'meme.token.near', predecessor: 'dclv2.ref-labs.near', logs: [ev('ft_transfer', [{ old_owner_id: 'dclv2.ref-labs.near', new_owner_id: LEADER, amount: '12345' }])] }), tracked, t0 + 100);
+    expect(settle(t0 + 100)).toEqual([
+      { wallet: LEADER, txHash: 'tx-plain-buy', swap: { side: 'buy', tokenAddress: 'meme.token.near', tokenIn: 'wrap.near', tokenOut: 'meme.token.near', amountIn: NEAR.toString() } },
+    ]);
+
+    // Sell receiving wNEAR and unwrapping via near_withdraw
+    observeReceipt(receipt({ tx: 'tx-plain-sell', receiver: 'meme.token.near', logs: [ev('ft_transfer', [{ old_owner_id: LEADER, new_owner_id: 'aggregatedex.near', amount: '12345' }])] }), tracked, t0);
+    observeReceipt(receipt({ tx: 'tx-plain-sell', receiver: 'wrap.near', predecessor: 'dclv2.ref-labs.near', logs: [`Transfer ${(2n * NEAR).toString()} from dclv2.ref-labs.near to ${LEADER}`] }), tracked, t0 + 100);
+    observeReceipt(receipt({ tx: 'tx-plain-sell', receiver: 'wrap.near', actions: [call(1n)], logs: [`Withdraw ${(2n * NEAR).toString()} NEAR from ${LEADER}`] }), tracked, t0 + 200);
+    observeReceipt(receipt({ tx: 'tx-plain-sell', receiver: LEADER, predecessor: 'wrap.near', actions: [transfer(2n * NEAR)] }), tracked, t0 + 300);
+    expect(settle(t0 + 300)).toEqual([
+      { wallet: LEADER, txHash: 'tx-plain-sell', swap: { side: 'sell', tokenAddress: 'meme.token.near', tokenIn: 'meme.token.near', tokenOut: 'wrap.near', amountIn: '12345' } },
+    ]);
+  });
+
   it('ignores a plain token transfer to a friend (no NEAR came back)', () => {
     observeReceipt(receipt({ receiver: 'cat.token.near', actions: [call(1n)], logs: [ev('ft_transfer', [{ old_owner_id: LEADER, new_owner_id: 'friend.near', amount: '500' }])] }), tracked, 0);
     expect(settle(0)).toEqual([]);
