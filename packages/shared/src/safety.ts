@@ -27,6 +27,7 @@ export interface TokenSafetyReport {
 export const VERIFIED_LAUNCHPAD_SUFFIXES = [
   '.meme-cooking.near',
   '.nearlytrade.near',
+  '.v2-launchpad.justhoot.near',
   '.launchpad.justhoot.near',
   '.launchpad-justhoot.near',
   '.nearpadfamily.near',
