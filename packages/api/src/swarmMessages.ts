@@ -16,8 +16,9 @@ interface PlanLike {
   sellPct?: number;
   droneCount?: number;
   tranches?: any[];
-  exitTrigger?: { targetDisplay?: string; targetValue?: number } | null;
-  exit_trigger?: { targetDisplay?: string; targetValue?: number } | null;
+  exitTrigger?: { targetDisplay?: string; targetValue?: number; sellPct?: number } | null;
+  exit_trigger?: { targetDisplay?: string; targetValue?: number; sellPct?: number } | null;
+  exitTriggers?: Array<{ targetDisplay?: string; targetValue?: number; sellPct?: number; order?: number }>;
   planner?: { label?: string } | null;
   stealthMode?: boolean;
   analysis?: string;
@@ -44,6 +45,11 @@ export function swarmPlanText(plan: PlanLike, heading: string, extra?: string): 
   const list = tranches.slice(0, 5).map((t, i) => trancheLine(t, i, action)).join('\n')
     + (tranches.length > 5 ? `\n• …and ${tranches.length - 5} more` : '');
   const trig = plan.exitTrigger || plan.exit_trigger;
+  const orderedTriggers = Array.isArray(plan.exitTriggers) && plan.exitTriggers.length > 0
+    ? plan.exitTriggers
+    : trig
+      ? [trig]
+      : [];
   const size = action === 'sell'
     ? `Sell: <b>${Number(plan.sellPct || 100)}% of your position</b> in ${count} tranches`
     : `Buy: <b>${Number(plan.totalNear || 0).toFixed(2)} NEAR</b> in ${count} tranches`;
@@ -59,7 +65,15 @@ export function swarmPlanText(plan: PlanLike, heading: string, extra?: string): 
     `Trades from: ${route}`,
     `🧠 Planned by: ${escapeHtml(plannerLabel(plan))}`,
   ];
-  if (trig) lines.push(`🎯 Exit trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>`);
+  if (orderedTriggers.length > 1) {
+    lines.push(`🎯 <b>Ordered Triggers (executed in sequence):</b>`);
+    orderedTriggers.forEach((t, idx) => {
+      const pct = t.sellPct ?? 100;
+      lines.push(`  ${idx + 1}. <b>Sell ${pct}% @ ${escapeHtml(String(t.targetDisplay || t.targetValue))}</b>`);
+    });
+  } else if (trig) {
+    lines.push(`🎯 Exit trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>`);
+  }
   lines.push('', `<b>Tranches:</b>`, list);
   const why = plan.analysis || plan.reasoning;
   if (why) lines.push('', `<i>${escapeHtml(why)}</i>`);
@@ -70,7 +84,7 @@ export function swarmPlanText(plan: PlanLike, heading: string, extra?: string): 
 export const SWARM_INTRO =
   `🤖 <b>Racer AI Swarm</b>\n` +
   `━━━━━━━━━━━━━━━━━━━━\n` +
-  `Describe a trade and an AI planner (NEAR AI Cloud) splits it into staggered tranches with randomized sizes and timing. ` +
+  `Describe any trade in natural language and NEAR AI splits it into staggered tranches and ordered exit triggers. ` +
   `You review the plan before anything trades.\n\n` +
-  `Trades run from your RacerBot wallet.\n\n` +
+  `Trades run from your RacerBot wallet or confidential executors.\n\n` +
   `Select a strategy preset or enter a custom prompt:`;

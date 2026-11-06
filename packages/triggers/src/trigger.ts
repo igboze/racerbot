@@ -147,16 +147,27 @@ export class TriggerEngine {
       refreshedThisCycle.add(tokenAddress);
     }));
 
-    // Bounded-concurrency evaluation — per-trigger try/catch so one
-    // failure can't reject the batch
+    // Group triggers by position_id so that multiple triggers on the same position
+    // are always evaluated sequentially in the exact order they were created, while
+    // different positions are evaluated with bounded concurrency.
+    const triggersByPosition = new Map<string, any[]>();
+    for (const trigger of activeTriggers) {
+      const list = triggersByPosition.get(trigger.position_id) || [];
+      list.push(trigger);
+      triggersByPosition.set(trigger.position_id, list);
+    }
+    const positionGroups = Array.from(triggersByPosition.values());
+
     const CONCURRENCY = 8;
-    for (let i = 0; i < activeTriggers.length; i += CONCURRENCY) {
-      const chunk = activeTriggers.slice(i, i + CONCURRENCY);
-      await Promise.all(chunk.map(async (trigger) => {
-        try {
-          await this.evaluateTrigger(trigger, positionById, refreshedThisCycle);
-        } catch (err) {
-          console.error(`[TRIGGERS] Error evaluating trigger ${trigger.id}:`, (err as Error).message);
+    for (let i = 0; i < positionGroups.length; i += CONCURRENCY) {
+      const chunk = positionGroups.slice(i, i + CONCURRENCY);
+      await Promise.all(chunk.map(async (posTriggers) => {
+        for (const trigger of posTriggers) {
+          try {
+            await this.evaluateTrigger(trigger, positionById, refreshedThisCycle);
+          } catch (err) {
+            console.error(`[TRIGGERS] Error evaluating trigger ${trigger.id}:`, (err as Error).message);
+          }
         }
       }));
     }
@@ -203,7 +214,9 @@ export class TriggerEngine {
 
     switch (trigger.type) {
       case 'stop_loss':
+      case 'stop_loss_pct':
       case 'take_profit':
+      case 'take_profit_pct':
         // Guard: if entry price is not yet settled (zero or NaN), the % calculation
         // is meaningless — any price would satisfy entryPrice*multiplier=0 and the
         // trigger would fire immediately after every buy. Hold active and retry.
@@ -213,7 +226,7 @@ export class TriggerEngine {
           );
           return;
         }
-        if (trigger.type === 'stop_loss') {
+        if (trigger.type === 'stop_loss' || trigger.type === 'stop_loss_pct') {
           triggered = currentPrice <= entryPrice * (1 - targetValue / 100);
         } else {
           triggered = currentPrice >= entryPrice * (1 + targetValue / 100);
@@ -261,11 +274,13 @@ export class TriggerEngine {
       [position.token_address]
     ).then(r => r.rows[0]).catch(() => null);
 
+    const isStopLoss = trigger.type === 'stop_loss' || trigger.type === 'stop_loss_pct';
+
     // Solana Chain Trigger Route
     if (position.chain === 'solana' || tokenRow?.chain === 'solana' || isSolanaAddress(position.token_address)) {
       const user = await getUserById(position.user_id).catch(() => null);
       const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
-      const slippagePct = trigger.type === 'stop_loss' ? Math.max(10.0, userSlip || 10.0) : Math.max(5.0, userSlip || 5.0);
+      const slippagePct = isStopLoss ? Math.max(10.0, userSlip || 10.0) : Math.max(5.0, userSlip || 5.0);
       const swapEvent = {
         type: 'execute_swap',
         chain: 'solana',
@@ -307,7 +322,7 @@ export class TriggerEngine {
     if (position.chain === 'sui' || tokenRow?.chain === 'sui' || tokenRow?.venue === 'suipump' || position.token_address.includes('::')) {
       const user = await getUserById(position.user_id).catch(() => null);
       const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
-      const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 3.0);
+      const slippagePct = isStopLoss ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 3.0);
       const swapEvent = {
         type: 'execute_swap',
         chain: 'sui',
@@ -360,7 +375,7 @@ export class TriggerEngine {
     // Stop-loss default slippage tolerance of 5% to prioritize exit execution; respect user setting if higher
     const user = await getUserById(position.user_id).catch(() => null);
     const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
-    const slippagePct = trigger.type === 'stop_loss' ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 3.0);
+    const slippagePct = isStopLoss ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 3.0);
     const near = getNear();
     const { minAmountOut } = await near.computeMinAmountOut(
       venue as any,

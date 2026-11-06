@@ -6894,13 +6894,13 @@ export function setupRoutes(bot: Telegraf): void {
     const presetType = ctx.match[1];
 
     let prompt = 'Accumulate 10 NEAR of HOOT in 5 tranches staggered over 15 minutes to avoid front-running';
-    let defaultToken = 'hoot.near';
+    let defaultToken = 'hoot-8ecf65.launchpad.justhoot.near';
     if (presetType === 'momentum_snipe') {
       prompt = 'Rapid breakout snipe of 5 NEAR on BATMAN in 3 tranches';
-      defaultToken = 'batman.near';
+      defaultToken = 'batman-4.nearlytrade.near';
     } else if (presetType === 'anti_mev') {
       prompt = 'Accumulate 20 NEAR of SHORE in 6 randomized tranches to avoid sandwich MEV';
-      defaultToken = 'shore.near';
+      defaultToken = 'shore-4lzt.launch.shoremarkets.near';
     } else if (presetType === 'liquidity_probe') {
       prompt = 'Buy 3 NEAR of BLACKDRAGON in 4 small tranches to probe liquidity depth';
       defaultToken = 'blackdragon.tkn.near';
@@ -6928,7 +6928,7 @@ export function setupRoutes(bot: Telegraf): void {
         droneCount: plan.droneCount,
         stealthMode: plan.stealthMode,
         planJson: plan,
-        teeAttestation: { planner: plan.planner },
+        teeAttestation: { planner: plan.planner, teeWrapped: true, commandSteps: plan.commandSteps || [], exitTriggers: plan.exitTriggers || [] },
       });
 
       const text = swarmPlanText(plan, 'Swarm plan ready for review');
@@ -12527,7 +12527,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
             droneCount: plan.droneCount,
             stealthMode: plan.stealthMode,
             planJson: plan,
-            teeAttestation: { planner: plan.planner },
+            teeAttestation: { planner: plan.planner, teeWrapped: true, commandSteps: plan.commandSteps || [], exitTriggers: plan.exitTriggers || [] },
           });
 
           const text = swarmPlanText(plan, 'Swarm plan ready for review');

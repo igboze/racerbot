@@ -2242,8 +2242,13 @@
       let badgeHtml = plan.action === 'sell'
         ? `Sell ${plan.sellPct || 100}% · ${plan.droneCount} tranches`
         : `${Number(plan.totalNear || 0).toFixed(2)} NEAR · ${plan.droneCount} tranches`;
-      if (plan.exitTrigger) {
-        badgeHtml += ` · 🎯 ${plan.exitTrigger.targetDisplay}`;
+      const exitTriggers = Array.isArray(plan.exitTriggers) && plan.exitTriggers.length > 0
+        ? plan.exitTriggers
+        : (plan.exitTrigger ? [plan.exitTrigger] : []);
+      if (exitTriggers.length === 1) {
+        badgeHtml += ` · 🎯 ${exitTriggers[0].targetDisplay}`;
+      } else if (exitTriggers.length > 1) {
+        badgeHtml += ` · 🎯 ${exitTriggers.length} ordered triggers`;
       }
       document.getElementById('swarm-plan-stealth-badge').textContent = badgeHtml;
       document.getElementById('swarm-plan-reasoning').textContent = plan.reasoning || plan.analysis || '';
@@ -2267,6 +2272,17 @@
           </div>
         `;
         }).join('');
+        if (exitTriggers.length > 0) {
+          tranchesList.innerHTML += exitTriggers.map((trig, idx) => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.28); border-radius:4px; font-size:12px; font-family:var(--font-mono);">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="color:var(--color-primary); font-weight:700;">🎯 #${trig.order || idx + 1}</span>
+              <span style="color:var(--color-text);">${escapeHtml(trig.targetDisplay)}</span>
+            </div>
+            <span style="color:var(--color-text-subtle); font-size:11px;">Sell ${Number(trig.sellPct || 100)}%</span>
+          </div>
+          `).join('');
+        }
       }
     }
 

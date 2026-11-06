@@ -67,7 +67,12 @@ export function createSwarmRouter(): Router {
         droneCount: plan.droneCount,
         stealthMode: plan.stealthMode,
         planJson: plan,
-        teeAttestation: { planner: plan.planner },
+        teeAttestation: {
+          planner: plan.planner,
+          teeWrapped: true,
+          commandSteps: plan.commandSteps || [],
+          exitTriggers: plan.exitTriggers || [],
+        },
       });
       const sessionId = session.id;
 

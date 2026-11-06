@@ -28,8 +28,11 @@ beforeEach(() => {
 describe('NEAR AI Swarm planner', () => {
   it('resolves top NEAR meme tokens from ticker symbols and aliases', () => {
     expect(resolveNearTokenQuery('HOOT')).toBe('hoot-8ecf65.launchpad.justhoot.near');
+    expect(resolveNearTokenQuery('hoot.near')).toBe('hoot-8ecf65.launchpad.justhoot.near');
     expect(resolveNearTokenQuery('batman')).toBe('batman-4.nearlytrade.near');
+    expect(resolveNearTokenQuery('batman.near')).toBe('batman-4.nearlytrade.near');
     expect(resolveNearTokenQuery('SHORE')).toBe('shore-4lzt.launch.shoremarkets.near');
+    expect(resolveNearTokenQuery('shore.near')).toBe('shore-4lzt.launch.shoremarkets.near');
     expect(resolveNearTokenQuery('Lonk')).toBe('token.lonk.near');
     expect(resolveNearTokenQuery('blackdragon.tkn.near')).toBe('blackdragon.tkn.near');
   });
@@ -124,6 +127,48 @@ describe('NEAR AI Swarm planner', () => {
     expect((await planSwarmSession({ prompt: 'Snipe 20 NEAR of $SWEAT in 3 tranches' })).tokenAddress).toBe('token.sweat');
     expect((await planSwarmSession({ prompt: 'Buy 15 NEAR of BLACKDRAGON in 5 tranches' })).tokenAddress).toBe('blackdragon.tkn.near');
     expect((await planSwarmSession({ prompt: 'Buy 10 NEAR of token.v2.ref-finance.near in 3 tranches' })).tokenAddress).toBe('token.v2.ref-finance.near');
+  });
+
+  it('understands diverse natural language phrasings, per-tranche sizing, and preserves ordered multi-triggers', async () => {
+    const plan = await planSwarmSession({
+      prompt: 'Ape 2 NEAR each across 4 tranches into black dragon every 30s, then sell half at 2x, sell 50% when market cap hits 500k, and set stop loss at 20%',
+    });
+    expect(plan.action).toBe('buy');
+    expect(plan.tokenAddress).toBe('blackdragon.tkn.near');
+    expect(plan.totalNear).toBe(8);
+    expect(plan.droneCount).toBe(4);
+    expect(plan.tranches.map(t => t.delaySec)).toEqual([0, 30, 60, 90]);
+    expect(plan.exitTriggers).toHaveLength(3);
+    expect(plan.exitTriggers).toMatchObject([
+      { type: 'take_profit_pct', targetValue: 100, sellPct: 50, order: 1 },
+      { type: 'market_cap', targetValue: 500000, sellPct: 50, order: 2 },
+      { type: 'stop_loss_pct', targetValue: 20, sellPct: 100, order: 3 },
+    ]);
+
+    const halfSell = await planSwarmSession({ prompt: 'Dump half of my HOOT in 2 tranches' });
+    expect(halfSell.action).toBe('sell');
+    expect(halfSell.sellPct).toBe(50);
+
+    const explicitSteps = await planSwarmSession({
+      prompt: 'Buy 2 NEAR of HOOT now, then 3 NEAR in 1 minute, then 5 NEAR in 3 minutes',
+    });
+    expect(explicitSteps.totalNear).toBe(10);
+    expect(explicitSteps.droneCount).toBe(3);
+    expect(explicitSteps.tranches.map(t => t.amountNear)).toEqual([2, 3, 5]);
+    expect(explicitSteps.tranches.map(t => t.delaySec)).toEqual([0, 60, 180]);
+
+    // Prompt token overrides a stale defaultTokenAddress from the UI input, and auto-ladders multi-TP
+    const laddered = await planSwarmSession({
+      prompt: 'Buy 6 NEAR of BATMAN in 3 tranches and take profit at 2x, 5x, and 10x with 15% SL',
+      defaultTokenAddress: 'token.lonk.near',
+    });
+    expect(laddered.tokenAddress).toBe('batman-4.nearlytrade.near');
+    expect(laddered.exitTriggers).toMatchObject([
+      { type: 'take_profit_pct', targetValue: 100, sellPct: 33, order: 1 },
+      { type: 'take_profit_pct', targetValue: 400, sellPct: 33, order: 2 },
+      { type: 'take_profit_pct', targetValue: 900, sellPct: 100, order: 3 },
+      { type: 'stop_loss_pct', targetValue: 15, sellPct: 100, order: 4 },
+    ]);
   });
 });
 

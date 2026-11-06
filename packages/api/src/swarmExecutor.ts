@@ -165,31 +165,37 @@ async function runBuy(userId: string, session: AiSwarmSessionRecord, tranche: an
   if (tranche.isConfidential) {
     const { EXECUTORS_ENABLED, confidentialBuy } = await import('./executorPool.js');
     const user = await getUserById(userId);
-    if (!EXECUTORS_ENABLED || !user) {
-      return { ok: false, txHash: null, error: 'Confidential trading is switched off', nearAmount: 0, tokenQty: '0', positionId: null };
+    if (EXECUTORS_ENABLED && user) {
+      const res = await confidentialBuy({
+        user, tokenAddress: session.token_address, venue: tranche.venue, amountYocto: nearToYocto(Number(tranche.amountNear) || 0),
+        slippagePct: tranche.maxSlippagePct,
+      });
+      if (res.success) {
+        const openPos = await getOpenPositions(userId).catch(() => []);
+        const matchedPos = openPos.find(p => p.token_address === session.token_address && (p.chain || 'near') === 'near');
+        return {
+          ok: true, txHash: res.txHashes[0] || null, error: null,
+          nearAmount: Number(tranche.amountNear) || 0, tokenQty: '0', positionId: matchedPos?.id || null,
+        };
+      }
+      logger.warn(`Confidential buy failed (${res.reason}); falling back to standard wallet execution`);
+    } else {
+      logger.warn('Confidential executors unavailable; falling back to standard wallet execution');
     }
-    const res = await confidentialBuy({
-      user, tokenAddress: session.token_address, venue: tranche.venue, amountYocto: nearToYocto(Number(tranche.amountNear) || 0),
-      slippagePct: tranche.maxSlippagePct,
-    });
-    if (res.success) {
-      return {
-        ok: true, txHash: res.txHashes[0] || null, error: null,
-        nearAmount: Number(tranche.amountNear) || 0, tokenQty: '0', positionId: null,
-      };
-    }
-    // If confidential buy fails (e.g. pool refilling, no ready executor, or low private balance),
-    // gracefully fall back to standard wallet execution so user's trade succeeds reliably
-    logger.warn(`Confidential buy failed (${res.reason}); falling back to standard wallet execution`);
   }
   const res = await executeBuyHelper(userId, session.token_address, tranche.amountNear);
+  let positionId = res?.positionId || null;
+  if (res?.success && !positionId) {
+    const openPos = await getOpenPositions(userId).catch(() => []);
+    positionId = openPos.find(p => p.token_address === session.token_address && (p.chain || 'near') === 'near')?.id || null;
+  }
   return {
     ok: Boolean(res?.success),
     txHash: res?.txHash || null,
     error: res?.success ? null : (res?.message || 'Swap did not complete'),
     nearAmount: res?.success ? Number(tranche.amountNear) || 0 : 0,
     tokenQty: res?.tokenQty || '0',
-    positionId: res?.positionId || null,
+    positionId,
   };
 }
 
@@ -205,23 +211,24 @@ export function sellPctOfRemaining(sharePct: number, trancheIndex: number): numb
 
 async function runSell(userId: string, session: AiSwarmSessionRecord, tranche: any, trancheIndex: number): Promise<TrancheOutcome> {
   const empty = { txHash: null, nearAmount: 0, tokenQty: '0', positionId: null };
+  const pct = sellPctOfRemaining(Number(tranche.sellPct) || 0, trancheIndex);
+  if (!(pct > 0)) return { ok: false, error: 'Nothing left to sell for this tranche', ...empty };
   if (tranche.isConfidential) {
     const { EXECUTORS_ENABLED, confidentialSell } = await import('./executorPool.js');
     const user = await getUserById(userId);
-    const pct = sellPctOfRemaining(Number(tranche.sellPct) || 0, trancheIndex);
-    if (!EXECUTORS_ENABLED || !user) return { ok: false, error: 'Confidential trading is switched off', ...empty };
-    if (!(pct > 0)) return { ok: false, error: 'Nothing left to sell for this tranche', ...empty };
-    const res = await confidentialSell({ user, tokenAddress: session.token_address, venue: tranche.venue, percent: pct, slippagePct: tranche.maxSlippagePct });
-    if (res.success) {
-      return { ok: true, error: null, ...empty, txHash: res.txHashes[0] || null };
+    if (EXECUTORS_ENABLED && user) {
+      const res = await confidentialSell({ user, tokenAddress: session.token_address, venue: tranche.venue, percent: pct, slippagePct: tranche.maxSlippagePct });
+      if (res.success) {
+        return { ok: true, error: null, ...empty, txHash: res.txHashes[0] || null };
+      }
+      logger.warn(`Confidential sell failed (${res.reason}); falling back to standard wallet execution`);
+    } else {
+      logger.warn('Confidential executors unavailable; falling back to standard wallet execution');
     }
-    logger.warn(`Confidential sell failed (${res.reason}); falling back to standard wallet execution`);
   }
   const position = (await getOpenPositions(userId))
     .find(p => p.token_address === session.token_address && (p.chain || 'near') === 'near');
   if (!position) return { ok: false, error: 'No open position in this token to sell', ...empty };
-  const pct = sellPctOfRemaining(Number(tranche.sellPct) || 0, trancheIndex);
-  if (!(pct > 0)) return { ok: false, error: 'Nothing left to sell for this tranche', ...empty };
   const res = await sellAtTarget(userId, position.id, parseFloat(pct.toFixed(2)), undefined, { slippagePct: tranche.maxSlippagePct });
   return {
     ok: Boolean(res?.success),
@@ -234,7 +241,7 @@ async function runSell(userId: string, session: AiSwarmSessionRecord, tranche: a
 }
 
 /**
- * Executes one tranche, then records the result.
+ * Executes one tranche, then records the result and arms all ordered exit triggers.
  */
 async function executeTranche(
   sessionId: string,
@@ -278,29 +285,52 @@ async function executeTranche(
       if (outcome.error) curTranches[trancheIndex].error = outcome.error;
     }
 
-    // One exit trigger per position, however many tranches filled it
+    // Arm all ordered exit triggers once per position in the exact sequence specified by the user
     const triggered: string[] = Array.isArray(curState.triggered_positions) ? curState.triggered_positions : [];
-    const exitTrigger = updated.plan_json?.exitTrigger || updated.plan_json?.exit_trigger;
-    if (!isSell && outcome.ok && exitTrigger && outcome.positionId && !triggered.includes(outcome.positionId)) {
+    const rawTriggerList: any[] = Array.isArray(updated.plan_json?.exitTriggers) && updated.plan_json.exitTriggers.length > 0
+      ? updated.plan_json.exitTriggers
+      : Array.isArray(updated.plan_json?.exit_triggers) && updated.plan_json.exit_triggers.length > 0
+        ? updated.plan_json.exit_triggers
+        : (updated.plan_json?.exitTrigger || updated.plan_json?.exit_trigger)
+          ? [updated.plan_json?.exitTrigger || updated.plan_json?.exit_trigger]
+          : [];
+
+    const orderedTriggers = [...rawTriggerList]
+      .filter(Boolean)
+      .sort((a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0));
+
+    const extraLogs: any[] = [];
+    const nowStr = new Date().toLocaleTimeString('en-US', { hour12: false });
+
+    if (!isSell && outcome.ok && orderedTriggers.length > 0 && outcome.positionId && !triggered.includes(outcome.positionId)) {
       try {
         const { createTrigger } = await import('@racerbot/db');
-        await createTrigger({
-          user_id: updated.user_id,
-          position_id: outcome.positionId,
-          type: exitTrigger.type || 'market_cap',
-          target_value: exitTrigger.targetValue,
-          sell_pct: exitTrigger.sellPct || 100,
-        });
+        for (let idx = 0; idx < orderedTriggers.length; idx++) {
+          const trig = orderedTriggers[idx];
+          const targetVal = trig.targetValue ?? trig.target_value;
+          const sellPctVal = trig.sellPct ?? trig.sell_pct ?? 100;
+          await createTrigger({
+            user_id: updated.user_id,
+            position_id: outcome.positionId,
+            type: trig.type || 'market_cap',
+            target_value: targetVal,
+            sell_pct: sellPctVal,
+          });
+          extraLogs.push({
+            time: nowStr,
+            status: 'success',
+            message: `Trigger #${idx + 1} armed: Sell ${sellPctVal}% @ ${trig.targetDisplay || targetVal}`,
+          });
+        }
         triggered.push(outcome.positionId);
       } catch (trigErr: any) {
-        logger.warn(`Failed to add exit trigger for position ${outcome.positionId}:`, trigErr?.message || trigErr);
+        logger.warn(`Failed to add exit trigger(s) for position ${outcome.positionId}:`, trigErr?.message || trigErr);
       }
     }
 
     const completed = curTranches.filter((t: any) => DONE.has(t.status)).length;
     const filledAmt = parseFloat(curState.filled_amount_near || '0') + outcome.nearAmount;
     const isFinished = completed >= curTranches.length;
-    const nowStr = new Date().toLocaleTimeString('en-US', { hour12: false });
     const verb = isSell ? 'sold' : 'filled';
     const logEntry = outcome.ok
       ? {
@@ -314,7 +344,8 @@ async function executeTranche(
         status: 'failed',
         message: `Tranche ${trancheIndex + 1} failed: ${(outcome.error || 'Execution error').slice(0, 70)}`,
       };
-    const curLogs = Array.isArray(curState.executionLog) ? [...curState.executionLog, logEntry] : [logEntry];
+    const prevLogs = Array.isArray(curState.executionLog) ? curState.executionLog : [];
+    const curLogs = [...prevLogs, logEntry, ...extraLogs];
 
     // A swarm paused or aborted meanwhile keeps that status
     const keepStatus = updated.status !== 'executing';

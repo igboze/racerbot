@@ -119,6 +119,28 @@ describe('swarm executor', () => {
     expect(triggers[0]).toMatchObject({ position_id: 'pos-1', type: 'market_cap', target_value: 250000 });
   });
 
+  it('arms multiple exitTriggers in the exact sequence ordered by the user', async () => {
+    sessions.s1 = session({
+      plan_json: {
+        action: 'buy',
+        exitTriggers: [
+          { type: 'take_profit_pct', targetValue: 100, sellPct: 50, order: 1, targetDisplay: '+100% TP' },
+          { type: 'market_cap', targetValue: 500000, sellPct: 50, order: 2, targetDisplay: '500.0K MC' },
+          { type: 'stop_loss_pct', targetValue: 20, sellPct: 100, order: 3, targetDisplay: '-20% SL' },
+        ],
+        tranches: [tranche(0), tranche(1)],
+      },
+    });
+    await ex.launchSwarmSession('s1');
+    await runAll();
+    expect(triggers).toHaveLength(3);
+    expect(triggers.map((t: any) => ({ type: t.type, target_value: t.target_value, sell_pct: t.sell_pct }))).toEqual([
+      { type: 'take_profit_pct', target_value: 100, sell_pct: 50 },
+      { type: 'market_cap', target_value: 500000, sell_pct: 50 },
+      { type: 'stop_loss_pct', target_value: 20, sell_pct: 100 },
+    ]);
+  });
+
   it('after a restart, executing swarms become paused, and a tranche caught mid-flight is not re-run', async () => {
     sessions.s1 = session({
       status: 'executing',

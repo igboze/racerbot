@@ -1514,13 +1514,13 @@ export async function createTrigger(params: CreateTriggerParams): Promise<Trigge
 
 export async function getActiveTriggers(): Promise<TriggerRecord[]> {
   const db = await getDb();
-  const result = await db.query('SELECT * FROM triggers WHERE status = $1', ['active']);
+  const result = await db.query('SELECT * FROM triggers WHERE status = $1 ORDER BY created_at ASC, id ASC', ['active']);
   return result.rows.map(rowToTrigger);
 }
 
 export async function getTriggersByPosition(positionId: string): Promise<TriggerRecord[]> {
   const db = await getDb();
-  const result = await db.query('SELECT * FROM triggers WHERE position_id = $1 AND status = $2', [positionId, 'active']);
+  const result = await db.query('SELECT * FROM triggers WHERE position_id = $1 AND status = $2 ORDER BY created_at ASC, id ASC', [positionId, 'active']);
   return result.rows.map(rowToTrigger);
 }
 
