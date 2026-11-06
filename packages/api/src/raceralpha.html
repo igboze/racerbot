@@ -6535,20 +6535,24 @@
     async function verifyConnectedWalletSession(btn) {
       const prev = btn ? btn.innerHTML : '';
       if (btn) { btn.disabled = true; btn.innerHTML = '<span>Approve in wallet...</span>'; }
+      let success = false;
       try {
         if (window.RacerConnect && typeof window.RacerConnect.ensureWalletSession === 'function') {
           const ok = await window.RacerConnect.ensureWalletSession();
           if (!ok) {
             await handleOpenNearWalletSelector();
           }
+          success = Boolean(window.RacerConnect.token);
         } else {
           await handleOpenNearWalletSelector();
         }
         await loadTradingWallet();
         await loadConfidential();
         updateWalletUI();
+        return success;
       } catch (err) {
         showToast(err.message || 'Could not verify wallet session.', 'error');
+        return false;
       } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = prev; }
       }
@@ -6658,6 +6662,16 @@
           }),
         });
         const data = await res.json();
+        if (res.status === 401) {
+          localStorage.removeItem('racer_auth_token');
+          if (window.RacerConnect) window.RacerConnect.token = null;
+          showToast('Session expired. Please approve the sign-in message to close position.', 'info');
+          const reauthed = await verifyConnectedWalletSession(btn);
+          if (reauthed) {
+            return sellAndCloseExecutorPosition(tokenAddress, symbol, venue, btn);
+          }
+          throw new Error(data.error || 'Please connect your NEAR wallet or Telegram to trade.');
+        }
         if (!res.ok || !data.success) throw new Error(data.error || 'Failed to sell executor position');
         showToast(`Sold ${symbol} privately. Executor is returning NEAR to Intents and self-deleting on-chain.`, 'success');
         loadConfidential();
@@ -10867,10 +10881,14 @@
       const headers = { 'Content-Type': 'application/json' };
       if (addr) headers['x-wallet-address'] = addr;
       if (window.RacerConnect && typeof window.RacerConnect.getAuthHeader === 'function') {
-        Object.assign(headers, window.RacerConnect.getAuthHeader());
-      } else {
+        const rcHeaders = window.RacerConnect.getAuthHeader();
+        if (rcHeaders && rcHeaders.Authorization) headers['Authorization'] = rcHeaders.Authorization;
+      }
+      if (!headers['Authorization']) {
         const token = localStorage.getItem('racer_auth_token');
-        if (token) headers['Authorization'] = `Bearer ${token}`;
+        if (token && token !== 'undefined' && token !== 'null') {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
       }
       return headers;
     }
@@ -11213,12 +11231,14 @@
         if (!window.RacerConnect) throw new Error('RacerConnect not ready');
         await window.RacerConnect.connectSolanaWallet();
         if (statusDiv) { statusDiv.textContent = 'Connected successfully!'; statusDiv.style.color = 'var(--color-primary)'; }
+        showToast('Solana wallet connected successfully!', 'success');
         updateWalletUI();
         fetchTraders();
         refreshUserBalance();
         closeConnectModal();
       } catch (err) {
         if (statusDiv) { statusDiv.textContent = 'Solana Error: ' + (err.message || 'Connection failed'); statusDiv.style.color = '#FF6B73'; }
+        showToast(err.message || 'Solana connection failed', 'error');
       }
     }
 
@@ -11229,12 +11249,14 @@
         if (!window.RacerConnect) throw new Error('RacerConnect not ready');
         await window.RacerConnect.connectEvmWallet();
         if (statusDiv) { statusDiv.textContent = 'Connected successfully!'; statusDiv.style.color = 'var(--color-primary)'; }
+        showToast('EVM wallet connected successfully!', 'success');
         updateWalletUI();
         fetchTraders();
         refreshUserBalance();
         closeConnectModal();
       } catch (err) {
         if (statusDiv) { statusDiv.textContent = 'EVM Error: ' + (err.message || 'Connection failed'); statusDiv.style.color = '#FF6B73'; }
+        showToast(err.message || 'EVM connection failed', 'error');
       }
     }
 

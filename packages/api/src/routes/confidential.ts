@@ -32,7 +32,7 @@ function nearToYocto(n: unknown): bigint | null {
 }
 
 const toNear = (y: bigint) => Number(y / 10n ** 18n) / 1e6;
-const NEAR_ACCOUNT = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$|^[0-9a-f]{64}$/;
+const NEAR_ACCOUNT = /^(([a-z\d]+[-_])*[a-z\d]+\.)+([a-z\d]+[-_])*[a-z\d]+$|^[0-9a-f]{64}$|^0x[0-9a-f]{40}$/i;
 
 export function registerConfidentialRoutes(router: Router): void {
   const authed = async (req: any, res: any, allowClaimForRead = false): Promise<UserRecord | null> => {
@@ -51,6 +51,24 @@ export function registerConfidentialRoutes(router: Router): void {
       return null;
     }
     // Private balances pay out to this account on NEAR (an EVM address is a valid NEAR account; a Solana one is not)
+    if (!user.subaccount_id || !NEAR_ACCOUNT.test(user.subaccount_id)) {
+      const db = await (await import('@racerbot/db')).getDb().catch(() => null);
+      if (db) {
+        const nearWallet = await db.query(
+          "SELECT address FROM user_wallets WHERE user_id = $1 AND chain = 'near' AND is_active = TRUE LIMIT 1",
+          [user.id]
+        ).catch(() => ({ rows: [] }));
+        if (nearWallet.rows[0]?.address && NEAR_ACCOUNT.test(nearWallet.rows[0].address)) {
+          user.subaccount_id = nearWallet.rows[0].address;
+        } else {
+          const { createWebManagedWallet } = await import('../webWallet.js');
+          const managed = await createWebManagedWallet(user.id).catch(() => null);
+          if (managed?.address && NEAR_ACCOUNT.test(managed.address)) {
+            user.subaccount_id = managed.address;
+          }
+        }
+      }
+    }
     if (!user.subaccount_id || !NEAR_ACCOUNT.test(user.subaccount_id)) {
       res.status(400).json({ error: 'Private trading pays out to a NEAR account. Connect a NEAR or EVM wallet, or sign in with Telegram, to use it.' });
       return null;
@@ -262,7 +280,7 @@ export function registerConfidentialRoutes(router: Router): void {
         res.status(400).json({ error: 'Deposit to your private balance first.' });
         return;
       }
-      const started = await refillPool(acct);
+      const started = await refillPool(acct, { manual: true });
       res.json({ success: true, started });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Refill failed' });

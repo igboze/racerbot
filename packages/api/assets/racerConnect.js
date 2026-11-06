@@ -588,14 +588,33 @@
         recipient: challengeData.recipient,
       });
 
+      let signatureBase64 = '';
+      if (typeof signed?.signature === 'string') {
+        signatureBase64 = signed.signature;
+      } else if (signed?.signature instanceof Uint8Array || Array.isArray(signed?.signature)) {
+        const bytes = new Uint8Array(signed.signature);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        signatureBase64 = btoa(binary);
+      } else if (signed?.signature && typeof signed.signature === 'object') {
+        const bytes = new Uint8Array(Object.values(signed.signature));
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        signatureBase64 = btoa(binary);
+      }
+
+      const publicKeyStr = typeof signed?.publicKey === 'string'
+        ? signed.publicKey
+        : (signed?.publicKey?.toString ? signed.publicKey.toString() : '');
+
       return {
         challengeId: challengeData.challengeId,
         accountId,
         message: challengeData.message,
         nonce: challengeData.nonce,
         recipient: challengeData.recipient,
-        publicKey: signed?.publicKey || '',
-        signature: signed?.signature || '',
+        publicKey: publicKeyStr,
+        signature: signatureBase64,
       };
     }
 

@@ -373,11 +373,16 @@ export async function createWalletAuthChallenge(accountIdInput: string, chainInp
   if (!savedInRedis) {
     inMemoryWalletChallenges.set(challengeId, challenge);
   }
+  // Always mirror in memory so challenges survive any Redis reconnection jitter
+  inMemoryWalletChallenges.set(challengeId, challenge);
 
   return { challengeId, accountId, chain, message, nonce, recipient };
 }
 
 async function consumeWalletAuthChallenge(challengeId: string): Promise<WalletAuthChallenge | null> {
+  let challenge = inMemoryWalletChallenges.get(challengeId) || null;
+  inMemoryWalletChallenges.delete(challengeId);
+
   const redis = getAuthRedis();
   if (redis) {
     try {
@@ -386,14 +391,15 @@ async function consumeWalletAuthChallenge(challengeId: string): Promise<WalletAu
         1,
         `auth:wallet-challenge:${challengeId}`
       );
-      if (typeof result === 'string') return JSON.parse(result) as WalletAuthChallenge;
+      if (typeof result === 'string') {
+        const parsed = JSON.parse(result) as WalletAuthChallenge;
+        if (!challenge) challenge = parsed;
+      }
     } catch (err: any) {
       logger.warn('Redis consume challenge failed; checking memory fallback:', err?.message);
     }
   }
 
-  const challenge = inMemoryWalletChallenges.get(challengeId) || null;
-  inMemoryWalletChallenges.delete(challengeId);
   return challenge;
 }
 
@@ -412,37 +418,57 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
   const nonce = Buffer.from(proof.nonce || '', 'base64');
   const expectedNonce = Buffer.from(challenge.nonce, 'base64');
 
+  // Normalize signature: support objects from JSON-serialized Uint8Arrays, arrays, hex, or base64
+  let normalizedSig: string = typeof proof.signature === 'string' ? proof.signature : '';
+  if (!normalizedSig && proof.signature && typeof proof.signature === 'object') {
+    if ((proof.signature as any) instanceof Uint8Array || Array.isArray(proof.signature)) {
+      normalizedSig = Buffer.from(proof.signature as any).toString('base64');
+    } else {
+      normalizedSig = Buffer.from(Object.values(proof.signature) as number[]).toString('base64');
+    }
+  }
+
   if (
     accountId !== challenge.accountId ||
     proof.message !== challenge.message ||
     proof.recipient !== challenge.recipient ||
     nonce.length !== 32 ||
     !crypto.timingSafeEqual(nonce, expectedNonce) ||
-    !proof.signature
+    !normalizedSig
   ) {
     throw new Error('Wallet authentication proof does not match the issued challenge.');
   }
 
   if (chain === 'evm') {
-    const valid = verifyEvmSignature(challenge.message, proof.signature, accountId);
+    const valid = verifyEvmSignature(challenge.message, normalizedSig, accountId);
     if (!valid) throw new Error('The EVM wallet signature is invalid.');
     return { chain, accountId };
   }
 
   if (chain === 'solana') {
-    const valid = verifySolanaSignature(challenge.message, proof.signature, accountId);
+    const valid = verifySolanaSignature(challenge.message, normalizedSig, accountId);
     if (!valid) throw new Error('The Solana wallet signature is invalid.');
     return { chain, accountId };
   }
 
   // NEAR signature verification
-  if (!proof.publicKey) {
+  const pubKeyStr = typeof proof.publicKey === 'string'
+    ? proof.publicKey
+    : ((proof.publicKey as any)?.toString ? (proof.publicKey as any).toString() : String(proof.publicKey || ''));
+
+  if (!pubKeyStr) {
     throw new Error('A public key is required for NEAR wallet authentication.');
   }
+
+  let nearSigToVerify = normalizedSig;
+  if (/^[0-9a-fA-F]{128}$/.test(nearSigToVerify)) {
+    nearSigToVerify = Buffer.from(nearSigToVerify, 'hex').toString('base64');
+  }
+
   const { verifySignature, verifyFullKeyBelongsToUser } = await import('@near-wallet-selector/core');
   const validSignature = verifySignature({
-    publicKey: proof.publicKey,
-    signature: proof.signature,
+    publicKey: pubKeyStr,
+    signature: nearSigToVerify,
     message: challenge.message,
     nonce,
     recipient: challenge.recipient,
@@ -463,7 +489,7 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
   for (const nodeUrl of rpcCandidates) {
     try {
       ownsAccountKey = await verifyFullKeyBelongsToUser({
-        publicKey: proof.publicKey,
+        publicKey: pubKeyStr,
         accountId,
         network: {
           networkId: 'mainnet',
@@ -489,7 +515,7 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
           request_type: 'view_access_key',
           finality: 'final',
           account_id: accountId,
-          public_key: proof.publicKey,
+          public_key: pubKeyStr,
         });
         if (keyInfo && !keyInfo.error) {
           ownsAccountKey = true;
@@ -605,7 +631,10 @@ export async function authenticateWalletUser(params: {
     // generated for them in Telegram already has one, and keeps using that profile.
     if (chain !== 'near' && !hasManagedWallet(user)) {
       try {
-        await createWebManagedWallet(user.id);
+        const managed = await createWebManagedWallet(user.id);
+        if (managed?.address && !isValidNearAccountId(user.subaccount_id)) {
+          await db.query('UPDATE users SET subaccount_id = $1 WHERE id = $2', [managed.address, user.id]);
+        }
         const fresh = await db.query('SELECT * FROM users WHERE id = $1', [user.id]);
         if (fresh.rows[0]) user = fresh.rows[0];
       } catch (walletErr: any) {

@@ -237,8 +237,8 @@ function failureOf(outcome: any): string | null {
 /** The user's private balance account, created on first use (no on-chain transaction) */
 /** A NEAR account a private balance can pay out to (named, 64-hex implicit, or 0x ETH-implicit) */
 export function isNearPayoutAccount(id: string | null | undefined): boolean {
-  return Boolean(id) && String(id).length <= 64 && /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/.test(String(id))
-    && (String(id).includes('.') || /^[0-9a-f]{64}$/.test(String(id)) || /^0x[0-9a-f]{40}$/.test(String(id)));
+  return Boolean(id) && String(id).length <= 64 && /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/i.test(String(id))
+    && (String(id).includes('.') || /^[0-9a-f]{64}$/i.test(String(id)) || /^0x[0-9a-f]{40}$/i.test(String(id)));
 }
 
 export async function ensureConfidentialAccount(user: UserRecord): Promise<ConfidentialAccountRecord> {
@@ -325,28 +325,32 @@ async function spawnExecutor(acct: ConfidentialAccountRecord, size: bigint): Pro
   } catch (e: any) {
     logger.warn(`Executor ${executor} setup failed: ${e?.message}`);
     await updateExecutor(executor, { status: 'failed', last_error: e?.message || 'setup failed' });
+    void closeExecutor(executor).catch(closeErr => logger.warn(`Immediate cleanup of ${executor} failed: ${closeErr?.message}`));
   }
 }
 
 const refilling = new Set<string>();
 
 /** Top the ready pool back up to the user's settings, within their private balance and cap */
-export async function refillPool(acct: ConfidentialAccountRecord): Promise<number> {
-  if (!EXECUTORS_ENABLED || !acct.enabled || !acct.auto_refill || refilling.has(acct.user_id)) return 0;
+export async function refillPool(acct: ConfidentialAccountRecord, options: { manual?: boolean } = {}): Promise<number> {
+  const isManual = options.manual === true;
+  if (!EXECUTORS_ENABLED || !acct.enabled || (!isManual && !acct.auto_refill) || refilling.has(acct.user_id)) return 0;
   refilling.add(acct.user_id);
   try {
-    // Circuit breaker: do not refill if this user experienced any failure in the last 30 minutes
-    const recentFailed = await listUserExecutors(acct.user_id, ['failed']);
-    const now = Date.now();
-    const hasRecentFailure = recentFailed.some(e => e.updated_at && (now - new Date(e.updated_at).getTime()) < 30 * 60_000);
-    if (hasRecentFailure) {
-      return 0;
+    if (!isManual) {
+      // Circuit breaker: do not auto-refill in background if user experienced any failure in the last 15 minutes
+      const recentFailed = await listUserExecutors(acct.user_id, ['failed']);
+      const now = Date.now();
+      const hasRecentFailure = recentFailed.some(e => e.updated_at && (now - new Date(e.updated_at).getTime()) < 15 * 60_000);
+      if (hasRecentFailure) {
+        return 0;
+      }
     }
 
-    // Circuit breaker: do not spawn executors if controller balance is low (< 2.0 NEAR)
+    // Circuit breaker: do not spawn executors if controller balance is critically low (< 0.05 NEAR)
     const ctrlBal = await getNear().getNearBalance(EXECUTOR_CONTROLLER).catch(() => null);
-    if (ctrlBal && BigInt(ctrlBal) < 2_000_000_000_000_000_000_000_000n) {
-      logger.warn('Controller ' + EXECUTOR_CONTROLLER + ' balance is low; pausing executor pool refills');
+    if (ctrlBal && BigInt(ctrlBal) < 50_000_000_000_000_000_000_000n) {
+      logger.warn('Controller ' + EXECUTOR_CONTROLLER + ' balance is critically low (< 0.05 NEAR); pausing executor pool refills');
       return 0;
     }
 
@@ -1098,7 +1102,7 @@ async function workerTick(): Promise<void> {
     // New money in the private balance (a deposit, or a closed position) can fund the ready pool
     if (s.status === 'SUCCESS' && (m.kind === 'deposit' || m.kind === 'return')) {
       const acct = await getConfidentialAccount(m.user_id).catch(() => null);
-      if (acct) void refillPool(acct).catch(err => logger.warn(`Refill after ${m.kind}: ${err?.message}`));
+      if (acct) void refillPool(acct, { manual: true }).catch(err => logger.warn(`Refill after ${m.kind}: ${err?.message}`));
     }
   }
   // Moves that did not change go to the back of the queue
