@@ -399,20 +399,12 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     ? resolvedName.trim()
     : (event.token_address.split('.')[0] || symbol).toUpperCase();
 
-  const headingTitle = cleanName.toUpperCase() !== symbol
-    ? `${escapeHtml(cleanName.toUpperCase())} ($${escapeHtml(symbol)}) BUY!`
-    : `${escapeHtml(cleanName.toUpperCase())} BUY!`;
+  const headingTitle = `${escapeHtml(cleanName.toUpperCase())} BUY!`;
 
   const greenDotsCount = Math.min(18, Math.max(3, Math.round(event.spent_usd / 250)));
   const whaleBar = `${'🟢'.repeat(greenDotsCount)}🐋`;
 
   const spentUsdStr = event.spent_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const tierBadge = event.spent_usd >= 5000
-    ? `🐳 <b>MEGA WHALE</b> • <b>$${spentUsdStr} USD</b>`
-    : event.spent_usd >= 1500
-    ? `🐋 <b>HEAVY WHALE</b> • <b>$${spentUsdStr} USD</b>`
-    : `🐋 <b>WHALE BUY</b> • <b>$${spentUsdStr} USD</b>`;
-
   const priceFormatted = priceUsd && priceUsd > 0 ? formatPriceUsd(priceUsd) : '';
   const venueLabel = resolveNearVenueLabel(event.token_address, tokenCache?.venue);
   const spentNativeClean = formatSpentNativeClean(event.spent_amount_native);
@@ -434,13 +426,15 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
 
   const text =
     `🟢 <b>${headingTitle}</b>\n` +
-    `${tierBadge}\n` +
     `${whaleBar}\n\n` +
+    `<blockquote>` +
     `💰 <b>Spent:</b> <b>$${spentUsdStr}</b> <code>(${escapeHtml(spentNativeClean)})</code>\n` +
     `📦 <b>Bought:</b> <b>${escapeHtml(event.tokens_received)}</b>\n` +
     (priceFormatted ? `💵 <b>Price:</b> <code>$${priceFormatted}</code>\n` : '') +
     (mcapFormatted ? `📊 <b>Market Cap:</b> ${mcapFormatted}\n` : '') +
-    `🏛️ <b>Venue:</b> ${venueLabel}\n\n` +
+    `🏛️ <b>Venue:</b> ${venueLabel}` +
+    `</blockquote>\n\n` +
+    `🪙 <b>Token:</b> <b>${escapeHtml(cleanName)}</b> (<code>$${escapeHtml(symbol)}</code>)\n` +
     `👤 <b>Buyer:</b> ${buyerLinkHtml}${buyerBalSuffix}\n` +
     `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>`;
 

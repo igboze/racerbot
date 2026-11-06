@@ -370,10 +370,7 @@ export async function sendStarknetWhaleBuyAlert(params: {
   const launchyUrl = `${LAUNCHY_OFFICIAL_URL}/token/${ca}`;
   const buyDeepLink = `https://t.me/${botUsername}?start=token_${ca}`;
 
-  const headerTitle =
-    params.spentUsd >= WHALE_BUY_THRESHOLD_HIGH_MCAP_USD
-      ? `🚨 <b>STARKNET MEGA WHALE BUY! ($1,000+)</b> 🚨`
-      : `🚨 <b>STARKNET WHALE BUY DETECTED! ($100+)</b> 🚨`;
+  const headerTitle = `🟢 <b>${escapeHtml(name.toUpperCase())} BUY!</b>`;
 
   const venueLine = isLaunchy
     ? `🏛️ <b>Venue:</b> 🚀 <b>Launchy</b> (starklaunchy.fun)`
