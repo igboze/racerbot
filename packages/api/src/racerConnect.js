@@ -400,7 +400,12 @@
           this.dispatchEvent('racer:profile-updated', this.user);
           return this.user;
         } else if (res.status === 401) {
-          this.logout();
+          if (this.activeNearWallet || this.activeEvmWallet || this.activeSolanaWallet) {
+            this.token = null;
+            localStorage.removeItem(STORAGE_KEY);
+          } else {
+            this.logout();
+          }
         }
       } catch (err) {
         console.warn('[RacerConnect] Failed to fetch profile:', err);
@@ -621,8 +626,20 @@
     /**
      * Ensure an active connected NEAR wallet has a verified session token
      */
-    async ensureWalletSession() {
+    async ensureWalletSession(force = false) {
+      if (force) {
+        this.token = null;
+        localStorage.removeItem(STORAGE_KEY);
+      }
       if (this.token || this.isTelegramMiniApp()) return true;
+      if (!this.activeNearWallet && this.nearConnector) {
+        try {
+          const { accounts } = await this.nearConnector.getConnectedWallet();
+          if (accounts && accounts.length > 0 && accounts[0].accountId) {
+            this.activeNearWallet = accounts[0].accountId;
+          }
+        } catch (_e) {}
+      }
       if (this.activeNearWallet) {
         await this.connectSelectorAccount(this.activeNearWallet, "NEAR Connect", true);
         return Boolean(this.token);

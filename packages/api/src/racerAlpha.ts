@@ -1327,6 +1327,15 @@ export async function recordAlphaSignal(params: {
 
   const db = await getDb().catch(() => null);
   let signalPersisted = false;
+  if (db && params.txHash) {
+    const existingSig = await db.query(
+      `SELECT id FROM racer_alpha_signals WHERE tx_hash = $1 LIMIT 1`,
+      [params.txHash]
+    ).catch(() => ({ rows: [] }));
+    if (existingSig.rows.length > 0) {
+      return { signalId: existingSig.rows[0].id, autoCopyFillsCount: 0 };
+    }
+  }
   if (db) {
     try {
       await db.query(
@@ -1564,7 +1573,16 @@ export async function recordAlphaSignal(params: {
 
   // Process keyholders: broadcast alert and execute auto-copy
   for (const kh of keyholders) {
-    // 1. Send instant alert DM in Telegram
+    // 1. Send instant alert DM in Telegram (skip if already handled via Direct Wallet Copy for this tx)
+    if (db && params.txHash) {
+      const directFill = await db.query(
+        `SELECT 1 FROM copy_trade_fills WHERE user_id::text = $1::text AND source_tx_hash = $2 LIMIT 1`,
+        [kh.buyerUserId, params.txHash]
+      ).catch(() => ({ rows: [] }));
+      if (directFill.rows.length > 0) {
+        continue;
+      }
+    }
     if (bot && kh.buyerTelegramId) {
       bot.telegram.sendMessage(
         kh.buyerTelegramId,

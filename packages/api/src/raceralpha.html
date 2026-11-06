@@ -7367,9 +7367,9 @@
       document.getElementById('detail-stat-winrate').textContent = `${t.winRatePct ? `${t.winRatePct}%` : '0%'}`;
       document.getElementById('detail-stat-trades').textContent = `${(t.totalTrades || 0).toLocaleString()} closed trades`;
 
-      document.getElementById('tier-price-basic').innerHTML = `${t.tierViewPriceNear || 1.5} NEAR <span>/ mo</span>`;
+      document.getElementById('tier-price-basic').innerHTML = `${t.tierBasicPriceNear || t.tierViewPriceNear || 1.5} NEAR <span>/ mo</span>`;
       document.getElementById('tier-price-copy').innerHTML = `${t.tierCopyPriceNear || 3.5} NEAR <span>/ mo</span>`;
-      document.getElementById('tier-price-premium').innerHTML = `${t.tierProPriceNear || 8.0} NEAR <span>/ mo</span>`;
+      document.getElementById('tier-price-premium').innerHTML = `${t.tierPremiumPriceNear || t.tierProPriceNear || 8.0} NEAR <span>/ mo</span>`;
 
       renderDetailChart(t.equityCurve && t.equityCurve.length > 1 ? t.equityCurve : [100, 100 * (1 + (t.verifiedPnlPct || 0) / 200), 100 * (1 + (t.verifiedPnlPct || 0) / 100)]);
 
@@ -7529,9 +7529,9 @@
       });
 
       let price = 3.5;
-      if (tier === 'basic') price = currentTrader ? currentTrader.tierViewPriceNear : 1.5;
-      else if (tier === 'premium') price = currentTrader ? currentTrader.tierProPriceNear : 8.0;
-      else price = currentTrader ? currentTrader.tierCopyPriceNear : 3.5;
+      if (tier === 'basic') price = currentTrader ? (currentTrader.tierBasicPriceNear || currentTrader.tierViewPriceNear || 1.5) : 1.5;
+      else if (tier === 'premium') price = currentTrader ? (currentTrader.tierPremiumPriceNear || currentTrader.tierProPriceNear || 8.0) : 8.0;
+      else price = currentTrader ? (currentTrader.tierCopyPriceNear || 3.5) : 3.5;
 
       const creatorShare = (price * 0.9).toFixed(2);
       const platShare = (price * 0.1).toFixed(2);
@@ -7553,12 +7553,19 @@
       btn.disabled = true;
 
       const price = selectedModalTierType === 'basic' 
-        ? (currentTrader?.tierViewPriceNear || 1.5) 
-        : (selectedModalTierType === 'premium' ? (currentTrader?.tierProPriceNear || 8.0) : (currentTrader?.tierCopyPriceNear || 3.5));
+        ? (currentTrader?.tierBasicPriceNear || currentTrader?.tierViewPriceNear || 1.5) 
+        : (selectedModalTierType === 'premium' ? (currentTrader?.tierPremiumPriceNear || currentTrader?.tierProPriceNear || 8.0) : (currentTrader?.tierCopyPriceNear || 3.5));
 
       let onChainTxHash = null;
 
       try {
+        // 0. Ensure an authenticated Racer session BEFORE requesting any on-chain transfer
+        btn.innerHTML = '<span>Verifying Wallet Session...</span>';
+        await ensureAlphaAuthSession();
+        if (!getAuthHeaders().Authorization) {
+          throw new Error('Please connect your wallet and approve the sign-in message first so we can link your Viewing Key.');
+        }
+
         // 1. Direct on-chain transaction via NEAR Wallet Selector if connected
         if (window.RacerConnect) {
           try {
@@ -7592,9 +7599,8 @@
 
         btn.innerHTML = '<span>Verifying &amp; Minting Viewing Key...</span>';
 
-        const res = await fetch('/alpha/keys/buy', {
+        const res = await alphaAuthedFetch('/alpha/keys/buy', {
           method: 'POST',
-          headers: getAuthHeaders(),
           body: JSON.stringify({
             traderId: currentTrader.id,
             tier: selectedModalTierType,
@@ -9527,12 +9533,8 @@
       const baseAmt = parseFloat(document.getElementById('copy-base-amount-near')?.value || '1.0') || 1.0;
 
       try {
-        const res = await fetch('/alpha/copy-settings', {
+        const res = await alphaAuthedFetch('/alpha/copy-settings', {
           method: 'POST',
-          headers: {
-            ...getAuthHeaders(),
-            'Content-Type': 'application/json',
-          },
           body: JSON.stringify({
             traderId,
             allocationPct: parseFloat(alloc),
@@ -9616,12 +9618,8 @@
       const copySells = sellsEl ? sellsEl.checked : true;
 
       try {
-        const res = await fetch('/alpha/wallet-copy/targets', {
+        const res = await alphaAuthedFetch('/alpha/wallet-copy/targets', {
           method: 'POST',
-          headers: {
-            ...getAuthHeaders(),
-            'Content-Type': 'application/json',
-          },
           body: JSON.stringify({
             targetWallet,
             buyAmountNear,
@@ -9643,12 +9641,8 @@
 
     async function toggleDirectWalletCopyStatus(targetId, status) {
       try {
-        const res = await fetch(`/alpha/wallet-copy/targets/${encodeURIComponent(targetId)}/status`, {
+        const res = await alphaAuthedFetch(`/alpha/wallet-copy/targets/${encodeURIComponent(targetId)}/status`, {
           method: 'POST',
-          headers: {
-            ...getAuthHeaders(),
-            'Content-Type': 'application/json',
-          },
           body: JSON.stringify({ status }),
         });
         const data = await res.json();
@@ -11045,6 +11039,34 @@
         }
       }
       return headers;
+    }
+
+    async function ensureAlphaAuthSession(force = false) {
+      if (!force && getAuthHeaders().Authorization) return true;
+      if (window.RacerConnect && typeof window.RacerConnect.ensureWalletSession === 'function') {
+        try {
+          return await window.RacerConnect.ensureWalletSession(force);
+        } catch (err) {
+          console.warn('[RacerAlpha] ensureWalletSession error:', err);
+        }
+      }
+      return Boolean(getAuthHeaders().Authorization);
+    }
+
+    async function alphaAuthedFetch(url, options = {}) {
+      await ensureAlphaAuthSession(false);
+      const makeHeaders = () => ({
+        ...getAuthHeaders(),
+        ...(options.headers || {}),
+      });
+      let res = await fetch(url, { ...options, headers: makeHeaders() });
+      if (res.status === 401 && window.RacerConnect) {
+        const refreshed = await ensureAlphaAuthSession(true);
+        if (refreshed) {
+          res = await fetch(url, { ...options, headers: makeHeaders() });
+        }
+      }
+      return res;
     }
 
     function showToast(msg, type = 'info') {

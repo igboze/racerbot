@@ -2,6 +2,7 @@ import type { Telegraf } from 'telegraf';
 import { createRedis, CHANNELS, isSolanaAddress, type NotifyUserEvent } from '@racerbot/shared';
 import { getUserById } from '@racerbot/db';
 import { executeFleetBundleBuy, executeFleetBundleSell } from './raceFleet.js';
+import { shortenTrackerAlertMarkup } from './copyLinks.js';
 
 let _bot: Telegraf | null = null;
 
@@ -34,6 +35,121 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
     }
 
     // Resolve telegram_id from user_id if not set (executor publishes user_id, not telegram_id)
+    const evName = String(event.event || '');
+    const evData = (event.data ?? {}) as Record<string, any>;
+
+    // 1. On-chain trade detected by detector for a registered RacerAlpha Caller -> record signal & run subscriber auto-copy
+    if (evName === 'alpha_caller_onchain_trade' && evData.trader_id && evData.token_address) {
+      try {
+        const { recordAlphaSignal } = await import('./racerAlpha.js');
+        const { getTokenInfo } = await import('./wallet.js');
+        const info: any = await getTokenInfo(String(evData.token_address), false).catch(() => null);
+        await recordAlphaSignal({
+          traderId: String(evData.trader_id),
+          tokenAddress: String(evData.token_address),
+          tokenSymbol: String(evData.token_symbol || info?.symbol || evData.token_address.split('.')[0].toUpperCase()),
+          tokenName: String(evData.token_name || info?.name || evData.token_symbol || 'TOKEN'),
+          side: String(evData.side || 'BUY').toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+          priceNear: parseFloat(info?.price || '0') || 0,
+          amountNear: Number(evData.amount_near) || 1.0,
+          venue: String(evData.venue || 'rhea'),
+          txHash: evData.tx_hash ? String(evData.tx_hash) : undefined,
+        });
+      } catch (err: any) {
+        console.warn('[NOTIFY] Failed to process alpha_caller_onchain_trade:', err?.message);
+      }
+      return;
+    }
+
+    // 2. Direct Wallet Copy Trade via Confidential Executor Pool (works for WebApp & Telegram users)
+    if (evName === 'confidential_copy_trade' && evData.user_id && evData.token_address) {
+      try {
+        const { updateCopyTradeFillResult, awardPointsForCopyTrade } = await import('@racerbot/db');
+        const { confidentialBuy, confidentialSell } = await import('./executorPool.js');
+        const copierUser = await getUserById(String(evData.user_id)).catch(() => null);
+        const fillId = String(evData.fill_id || '');
+        if (!copierUser) {
+          if (fillId) await updateCopyTradeFillResult(fillId, 'failed', { skip_reason: 'User not found' }).catch(() => {});
+          return;
+        }
+        const side = String(evData.side || 'buy').toLowerCase();
+        const tokenAddress = String(evData.token_address);
+        const venue = String(evData.venue || 'rhea');
+        const slippagePct = Number(evData.slippage_pct) || 5;
+        if (side === 'buy') {
+          const buyNear = Number(evData.amount_near) || 1.0;
+          const amountYocto = BigInt(Math.round(buyNear * 1e6)) * 10n ** 18n;
+          const res = await confidentialBuy({
+            user: copierUser,
+            tokenAddress,
+            venue,
+            amountYocto,
+            slippagePct,
+          });
+          if (res.success && res.txHashes.length > 0) {
+            if (fillId) {
+              await updateCopyTradeFillResult(fillId, 'filled', {
+                our_tx_hash: res.txHashes[0],
+                amount_near: buyNear,
+              }).catch(() => {});
+            }
+            await awardPointsForCopyTrade(copierUser.id, fillId || res.txHashes[0], buyNear, undefined).catch(() => {});
+            if (copierUser.telegram_id && _bot) {
+              await _bot.telegram.sendMessage(
+                copierUser.telegram_id,
+                `✅ <b>Confidential Copy Trade Executed (BUY)</b>\n\n` +
+                `🎯 <b>Copied</b>: <code>${evData.leader_wallet || ''}</code>\n` +
+                `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+                `💰 <b>Amount</b>: <code>${buyNear.toFixed(2)} NEAR</code>\n` +
+                `🛡️ <b>Route</b>: Confidential Executor Pool`,
+                { parse_mode: 'HTML' }
+              ).catch(() => {});
+            }
+          } else {
+            if (fillId) {
+              await updateCopyTradeFillResult(fillId, 'failed', {
+                skip_reason: (res.reason || 'Confidential buy failed').slice(0, 200),
+              }).catch(() => {});
+            }
+          }
+        } else {
+          const res = await confidentialSell({
+            user: copierUser,
+            tokenAddress,
+            venue,
+            percent: 100,
+            slippagePct,
+          });
+          if (res.success && res.txHashes.length > 0) {
+            if (fillId) {
+              await updateCopyTradeFillResult(fillId, 'filled', {
+                our_tx_hash: res.txHashes[0],
+              }).catch(() => {});
+            }
+            if (copierUser.telegram_id && _bot) {
+              await _bot.telegram.sendMessage(
+                copierUser.telegram_id,
+                `✅ <b>Confidential Copy Trade Executed (SELL)</b>\n\n` +
+                `🎯 <b>Copied</b>: <code>${evData.leader_wallet || ''}</code>\n` +
+                `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
+                `🔴 <b>Action</b>: Sold 100% via Confidential Executor`,
+                { parse_mode: 'HTML' }
+              ).catch(() => {});
+            }
+          } else {
+            if (fillId) {
+              await updateCopyTradeFillResult(fillId, 'failed', {
+                skip_reason: (res.reason || 'Confidential sell failed').slice(0, 200),
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[NOTIFY] Failed to process confidential_copy_trade:', err?.message);
+      }
+      return;
+    }
+
     let telegramId = event.telegram_id;
     if ((!telegramId || telegramId === 0) && (event.data?.user_id || (event as any).user_id)) {
       const uid = (event.data?.user_id ?? (event as any).user_id) as string;
@@ -341,15 +457,20 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       break;
     }
 
-    case 'copy_trade_filled' as any:
-    case 'wallet_tracker_alert' as any: {
+    case 'copy_trade_filled':
+    case 'wallet_tracker_alert': {
       // Pre-formatted message is composed by the copy-trade detector
       const msg = (data as any).message as string | undefined;
       const markup = (data as any).reply_markup;
       if (msg) {
+        const replyMarkup = event.event === 'wallet_tracker_alert'
+          && markup
+          && typeof data.token_address === 'string'
+          ? shortenTrackerAlertMarkup(markup, data.token_address)
+          : markup;
         await _bot.telegram.sendMessage(telegramId, msg, {
           parse_mode: 'Markdown',
-          ...(markup ? { reply_markup: markup } : {}),
+          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
         });
       }
       break;

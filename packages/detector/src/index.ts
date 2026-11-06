@@ -167,6 +167,8 @@ async function main() {
 
   // Steady-state polling loop: fetch next block from neardata with automatic RPC fallback on 429/5xx
   let lastTipCheckAt = Date.now();
+  let neardataCooldownUntil = 0;
+  let cachedTipHeight = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -174,6 +176,7 @@ async function main() {
         const h = await fetchBlockHeight();
         if (h > 0) {
           lastBlock = h;
+          cachedTipHeight = h;
           await redis.set(LAST_BLOCK_KEY, h.toString(), 86400).catch(() => {});
         } else {
           await sleep(POLL_INTERVAL_MS);
@@ -181,28 +184,34 @@ async function main() {
         }
       }
 
-      // Periodically verify we have not drifted behind chain tip
+      // Periodically verify we have not drifted behind or ahead of chain tip
       if (Date.now() - lastTipCheckAt > 30_000) {
         lastTipCheckAt = Date.now();
         const tipHeight = await fetchBlockHeight();
-        if (tipHeight > 0 && tipHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
-          logger.info('Detector lagged behind chain tip; jumping forward', {
-            from: lastBlock,
-            to: tipHeight - 5,
-            lagBlocks: tipHeight - lastBlock,
-          });
-          lastBlock = tipHeight - 5;
-          await redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
+        if (tipHeight > 0) {
+          cachedTipHeight = tipHeight;
+          if (tipHeight - lastBlock > MAX_CATCHUP_BLOCKS || lastBlock > tipHeight + 5) {
+            logger.info('Detector block height resynced to chain tip', {
+              from: lastBlock,
+              to: tipHeight - 3,
+              lagBlocks: tipHeight - lastBlock,
+            });
+            lastBlock = tipHeight - 3;
+            await redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
+          }
         }
       }
 
       const nextHeight = lastBlock + 1;
-      const res = await fetch(`https://mainnet.neardata.xyz/v0/block/${nextHeight}`, {
-        headers: getNeardataHeaders(),
-        signal: AbortSignal.timeout(3000),
-      }).catch(() => null);
+      const inNeardataCooldown = Date.now() < neardataCooldownUntil;
+      const res = inNeardataCooldown
+        ? null
+        : await fetch(`https://mainnet.neardata.xyz/v0/block/${nextHeight}`, {
+            headers: getNeardataHeaders(),
+            signal: AbortSignal.timeout(3000),
+          }).catch(() => null);
 
-      if (!res || res.status === 404) {
+      if (!inNeardataCooldown && (!res || res.status === 404)) {
         // Next block hasn't been produced yet: sleep and retry same height
         await sleep(POLL_INTERVAL_MS);
         continue;
@@ -210,15 +219,23 @@ async function main() {
 
       // Neardata enforces 30 blocks/min on free tier (HTTP 429) while NEAR produces ~100 blocks/min.
       // Fall back to standard NEAR JSON-RPC immediately so the detector never stalls behind real-time.
-      if (res.status === 429 || res.status >= 500) {
-        const tipHeight = await fetchBlockHeight();
-        lastTipCheckAt = Date.now();
-        if (tipHeight > 0 && nextHeight > tipHeight) {
+      if (inNeardataCooldown || (res && (res.status === 429 || res.status >= 500))) {
+        if (res && (res.status === 429 || res.status >= 500)) {
+          neardataCooldownUntil = Date.now() + 15_000;
+        }
+        if (Date.now() - lastTipCheckAt > 3_000 || cachedTipHeight === 0 || nextHeight > cachedTipHeight) {
+          const tipHeight = await fetchBlockHeight();
+          if (tipHeight > 0) {
+            cachedTipHeight = tipHeight;
+            lastTipCheckAt = Date.now();
+          }
+        }
+        if (cachedTipHeight <= 0 || nextHeight > cachedTipHeight) {
           await sleep(POLL_INTERVAL_MS);
           continue;
         }
-        if (tipHeight > 0 && tipHeight - lastBlock > MAX_CATCHUP_BLOCKS) {
-          lastBlock = tipHeight - 5;
+        if (cachedTipHeight - lastBlock > MAX_CATCHUP_BLOCKS || lastBlock > cachedTipHeight + 5) {
+          lastBlock = cachedTipHeight - 3;
         }
         const targetHeight = lastBlock + 1;
         await processBlockRpc(targetHeight).catch(err => {
@@ -226,6 +243,11 @@ async function main() {
         });
         lastBlock = targetHeight;
         redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
+        continue;
+      }
+
+      if (!res) {
+        await sleep(POLL_INTERVAL_MS);
         continue;
       }
 
@@ -471,11 +493,13 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
     const receipts = data?.result?.receipts ?? [];
 
     // Copy-trade detection on RPC chunk transactions & receipts (when neardata is rate-limited)
+    const signersInChunkTxs = new Set<string>();
     for (const tx of txs) {
       const signerId: string = tx?.signer_id ?? '';
       const receiverId: string = tx?.receiver_id ?? '';
       const txHash: string = tx?.hash ?? '';
       if (txHash && signerId) {
+        signersInChunkTxs.add(signerId.toLowerCase());
         const parsedActions = ((tx?.actions ?? []) as any[]).map((a: any) => {
           const fn = a?.FunctionCall;
           if (!fn) return null;
@@ -497,7 +521,9 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
       const predecessorId: string = rcpt?.predecessor_id ?? '';
       const realSigner: string = rcpt?.receipt?.Action?.signer_id ?? '';
       const rcptId: string = rcpt?.receipt_id ?? '';
-      if (rcptId && (realSigner || predecessorId)) {
+      // Only inspect cross-contract receipts when the signer wasn't already handled via a direct tx in this chunk
+      // or when receiver is aggregatedex.near (whose callback_swap holds the decoded swap_request)
+      if (rcptId && realSigner && (!signersInChunkTxs.has(realSigner.toLowerCase()) || receiverId === 'aggregatedex.near')) {
         const parsedActions = ((rcpt?.receipt?.Action?.actions ?? []) as any[]).map((a: any) => {
           const fn = a?.FunctionCall;
           if (!fn) return null;
@@ -509,12 +535,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
           } catch { return null; }
         }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
         if (parsedActions.length > 0) {
-          if (realSigner) {
-            checkCopyTradeReceipt(realSigner, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
-          }
-          if (predecessorId && predecessorId !== realSigner) {
-            checkCopyTradeReceipt(predecessorId, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
-          }
+          checkCopyTradeReceipt(realSigner, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
         }
       }
     }

@@ -33,6 +33,8 @@ import {
   getUserById,
   getUserBySubaccount,
   getOpenPositions,
+  getDb,
+  listUserExecutors,
   type CopyTradeTargetRecord,
 } from '@racerbot/db';
 
@@ -146,11 +148,14 @@ const redis = createRedis(REDIS_URL);
 // In-memory set of tracked wallets (refreshed every 60s)
 // The detector reads this set on every block - DB must not be hit in the hot path.
 let trackedWallets = new Set<string>();
+let alphaCallerWallets = new Map<string, string>(); // normalized wallet -> trader_id
 const WALLET_REFRESH_MS = 60_000;
 
 /** Transactions the instant (message-based) path already copied; the balance path skips them */
 const handledTxs = new Map<string, number>();
+const recentCopyTriggers = new Map<string, number>();
 const HANDLED_TTL_MS = 5 * 60_000;
+const RECENT_TRIGGER_TTL_MS = 4_500;
 
 export function isTrackedWallet(wallet: string): boolean {
   const normalized = wallet.trim().toLowerCase();
@@ -169,15 +174,22 @@ export function observeCopyFlow(item: unknown): void {
 function flushCopyFlows(): void {
   const now = Date.now();
   for (const [tx, at] of handledTxs) if (now - at > HANDLED_TTL_MS) handledTxs.delete(tx);
+  for (const [k, at] of recentCopyTriggers) if (now - at > RECENT_TRIGGER_TTL_MS) recentCopyTriggers.delete(k);
   for (const { wallet, txHash, swap } of flushFlows(now)) {
     if (handledTxs.has(txHash)) continue;
+    const walletDedupKey = `flow:${wallet}:${swap.side}:${swap.tokenAddress.toLowerCase()}`;
+    const lastTrig = recentCopyTriggers.get(walletDedupKey);
+    if (lastTrig && now - lastTrig < RECENT_TRIGGER_TTL_MS) continue;
     handledTxs.set(txHash, now);
+    recentCopyTriggers.set(walletDedupKey, now);
     logger.info('Copy-trade event detected from balance changes', { signer: wallet, side: swap.side, token: swap.tokenAddress, txHash });
     dispatchCopyTrade(wallet, swap, txHash).catch(err => logger.error('Copy-trade dispatch failed', err as Error, { txHash }));
   }
 }
 
 export async function initCopyTradeDetector(): Promise<void> {
+  handledTxs.clear();
+  recentCopyTriggers.clear();
   await refreshTrackedWallets();
   setInterval(refreshTrackedWallets, WALLET_REFRESH_MS);
   setInterval(flushCopyFlows, 2_000);
@@ -195,11 +207,33 @@ export async function initCopyTradeDetector(): Promise<void> {
 async function refreshTrackedWallets(): Promise<void> {
   try {
     const wallets = await getAllActiveCopyTargetWallets();
-    trackedWallets = new Set(
+    const nextTracked = new Set(
       wallets
         .map((w) => w.trim().toLowerCase())
         .filter((w) => !isNonTraderContract(w))
     );
+    const nextAlphaCallers = new Map<string, string>();
+    try {
+      const db = await getDb();
+      const callerRows = await db.query(
+        `SELECT t.id AS trader_id,
+                LOWER(TRIM(COALESCE(NULLIF(t.payout_wallet_address, ''), u.subaccount_id))) AS wallet
+         FROM racer_alpha_traders t
+         LEFT JOIN users u ON u.id::text = t.user_id
+         WHERE t.is_active = TRUE AND t.user_id <> 'system_alpha'`
+      );
+      for (const r of callerRows.rows) {
+        const w = (r.wallet || '').trim().toLowerCase();
+        if (w && !isNonTraderContract(w)) {
+          nextTracked.add(w);
+          nextAlphaCallers.set(w, r.trader_id);
+        }
+      }
+    } catch {
+      // non-fatal if racer_alpha_traders is not yet migrated
+    }
+    trackedWallets = nextTracked;
+    alphaCallerWallets = nextAlphaCallers;
   } catch (err) {
     logger.error('Failed to refresh tracked copy-trade wallets', err as Error);
   }
@@ -262,9 +296,12 @@ export async function checkCopyTradeReceipt(
   const swap = extractSwapDetails(receiverAccountId, actions, predecessorId);
   if (!swap || !swap.tokenAddress) return;
 
+  const now = Date.now();
   if (txHash) {
-    handledTxs.set(txHash, Date.now());
+    handledTxs.set(txHash, now);
   }
+  // Mark flow dedup key so flushCopyFlows skips this swap if balance observer also saw it with another receipt_id
+  recentCopyTriggers.set(`flow:${normalizedSigner}:${swap.side}:${swap.tokenAddress.toLowerCase()}`, now);
   logger.info('Copy-trade event detected', {
     signer: normalizedSigner,
     side: swap.side,
@@ -277,13 +314,56 @@ export async function checkCopyTradeReceipt(
 /** Copy or alert a detected trade for every follower of `normalizedSigner` */
 async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, txHash: string): Promise<void> {
   const signerAccountId = normalizedSigner;
-  // Load followers (with DB cache-hit courtesy of the in-memory set above)
+  const now = Date.now();
+  const tokenKey = swap.tokenAddress.toLowerCase();
+
+  // 1. If signer is a registered RacerAlpha Caller, notify API to record signal & trigger Alpha Caller auto-copies
+  const alphaTraderId = alphaCallerWallets.get(normalizedSigner);
+  if (alphaTraderId) {
+    const alphaDedupKey = `alpha:${alphaTraderId}:${swap.side}:${tokenKey}`;
+    const lastAlpha = recentCopyTriggers.get(alphaDedupKey);
+    if (!lastAlpha || now - lastAlpha >= RECENT_TRIGGER_TTL_MS) {
+      recentCopyTriggers.set(alphaDedupKey, now);
+      let amountNear = 1.0;
+      if (swap.side === 'buy' && swap.amountIn && /^\d+$/.test(swap.amountIn)) {
+        try {
+          const nearFloat = Number(BigInt(swap.amountIn) / 10n ** 18n) / 1e6;
+          if (nearFloat > 0 && nearFloat < 1_000_000) amountNear = nearFloat;
+        } catch {}
+      }
+      const tokenCache = await getTokenCache(swap.tokenAddress).catch(() => null);
+      const venue = tokenCache?.venue || inferVenueFromToken(swap.tokenAddress);
+      const tokenSymbol = tokenCache?.symbol || (swap.tokenAddress.split('.')[0] || swap.tokenAddress).toUpperCase();
+      await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+        type: 'notify_user',
+        telegram_id: 0,
+        event: 'alpha_caller_onchain_trade',
+        data: {
+          trader_id: alphaTraderId,
+          leader_wallet: normalizedSigner,
+          token_address: swap.tokenAddress,
+          token_symbol: tokenSymbol,
+          token_name: tokenCache?.name || tokenSymbol,
+          side: swap.side.toUpperCase(),
+          amount_near: amountNear,
+          venue,
+          tx_hash: txHash,
+        },
+      })).catch(() => {});
+    }
+  }
+
+  // 2. Load direct wallet copy followers
   const followers = await getCopyTargetFollowersByWallet(normalizedSigner).catch(() => []);
   if (followers.length === 0) return;
 
   // Process each follower in parallel, independently - one failure must not block others
   await Promise.all(
     followers.map(async (target) => {
+      const targetDedupKey = `target:${target.id}:${swap.side}:${tokenKey}`;
+      const lastTargetTrig = recentCopyTriggers.get(targetDedupKey);
+      if (lastTargetTrig && now - lastTargetTrig < RECENT_TRIGGER_TTL_MS) return;
+      recentCopyTriggers.set(targetDedupKey, now);
       try {
         if (target.track_only) {
           // Wallet Tracker mode: Send alert with quick actions without auto-buying/selling
@@ -441,6 +521,39 @@ async function executeCopyBuy(
     }
     const slippagePct = target.max_slippage_pct;
 
+    // 4b. Check if WebApp user should execute via Confidential Executor Pool (when they have ready executors
+    // and either an external connected wallet or insufficient balance on their direct subaccount)
+    const isNearChain = tokenCache?.chain !== 'sui' && venue !== 'suipump' && !tokenAddress.includes('::');
+    if (isNearChain) {
+      const readyExecutors = await listUserExecutors(target.user_id, ['ready']).catch(() => []);
+      if (readyExecutors.length > 0) {
+        const isExternalWallet = !user.scoped_key_encrypted || user.scoped_key_encrypted === 'EXTERNAL_CONNECTED_WALLET';
+        const subBalNear = parseFloat(String(user.last_near_balance || '0'));
+        if (isExternalWallet || subBalNear < target.buy_amount_near + 0.05) {
+          await updateCopyTradeFillResult(fill.id, 'pending', { amount_near: target.buy_amount_near });
+          await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+            type: 'notify_user',
+            telegram_id: user.telegram_id ?? 0,
+            event: 'confidential_copy_trade',
+            data: {
+              fill_id: fill.id,
+              user_id: target.user_id,
+              copy_target_id: target.id,
+              leader_wallet: leaderWallet,
+              token_address: tokenAddress,
+              token_symbol: tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase(),
+              venue,
+              side: 'buy',
+              amount_near: target.buy_amount_near,
+              slippage_pct: slippagePct,
+              source_tx_hash: sourceTxHash,
+            },
+          }));
+          return;
+        }
+      }
+    }
+
     // 5. Build swap
     let swapEvent: any;
     if (tokenCache?.chain === 'sui' || venue === 'suipump' || tokenAddress.includes('::')) {
@@ -567,13 +680,40 @@ async function executeCopySell(
   if (!fill) return;
 
   try {
-    // 2. Check if copier holds an open position
+    // 2. Check if copier holds an open position (in standard positions OR Confidential Executor Pool)
     const positions = await getOpenPositions(target.user_id).catch(() => []);
     const pos = positions.find(
       p => p.token_address.toLowerCase() === tokenAddress.toLowerCase() && p.status === 'open'
     );
 
     if (!pos || !pos.quantity_held || BigInt(pos.quantity_held) <= 0n) {
+      const openExecutors = await listUserExecutors(target.user_id, ['open']).catch(() => []);
+      const hasConfPosition = openExecutors.some(
+        e => (e.token || '').toLowerCase() === tokenAddress.toLowerCase()
+      );
+      if (hasConfPosition) {
+        const tokenCache = await getTokenCache(tokenAddress).catch(() => null);
+        const venue = tokenCache?.venue || inferVenueFromToken(tokenAddress);
+        await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+          type: 'notify_user',
+          telegram_id: 0,
+          event: 'confidential_copy_trade',
+          data: {
+            fill_id: fill.id,
+            user_id: target.user_id,
+            copy_target_id: target.id,
+            leader_wallet: leaderWallet,
+            token_address: tokenAddress,
+            token_symbol: tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase(),
+            venue,
+            side: 'sell',
+            slippage_pct: target.max_slippage_pct,
+            source_tx_hash: sourceTxHash,
+          },
+        }));
+        return;
+      }
+
       await updateCopyTradeFillResult(fill.id, 'skipped', {
         skip_reason: 'User holds no open position in token',
       });
