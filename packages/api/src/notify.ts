@@ -69,7 +69,7 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
         const copierUser = await getUserById(String(evData.user_id)).catch(() => null);
         const fillId = String(evData.fill_id || '');
         if (!copierUser) {
-          if (fillId) await updateCopyTradeFillResult(fillId, 'failed', { skip_reason: 'User not found' }).catch(() => {});
+          if (fillId) await updateCopyTradeFillResult(fillId, 'failed', { skip_reason: 'User not found' }).catch(() => { });
           return;
         }
         const side = String(evData.side || 'buy').toLowerCase();
@@ -89,11 +89,11 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
           if (res.success && res.txHashes.length > 0) {
             if (fillId) {
               await updateCopyTradeFillResult(fillId, 'filled', {
-                our_tx_hash: res.txHashes[0],
+                tx_hash: res.txHashes[0],
                 amount_near: buyNear,
-              }).catch(() => {});
+              }).catch(() => { });
             }
-            await awardPointsForCopyTrade(copierUser.id, fillId || res.txHashes[0], buyNear, undefined).catch(() => {});
+            await awardPointsForCopyTrade(copierUser.id, buyNear, tokenAddress).catch(() => { });
             if (copierUser.telegram_id && _bot) {
               await _bot.telegram.sendMessage(
                 copierUser.telegram_id,
@@ -103,13 +103,13 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
                 `💰 <b>Amount</b>: <code>${buyNear.toFixed(2)} NEAR</code>\n` +
                 `🛡️ <b>Route</b>: Confidential Executor Pool`,
                 { parse_mode: 'HTML' }
-              ).catch(() => {});
+              ).catch(() => { });
             }
           } else {
             if (fillId) {
               await updateCopyTradeFillResult(fillId, 'failed', {
                 skip_reason: (res.reason || 'Confidential buy failed').slice(0, 200),
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         } else {
@@ -123,8 +123,8 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
           if (res.success && res.txHashes.length > 0) {
             if (fillId) {
               await updateCopyTradeFillResult(fillId, 'filled', {
-                our_tx_hash: res.txHashes[0],
-              }).catch(() => {});
+                tx_hash: res.txHashes[0],
+              }).catch(() => { });
             }
             if (copierUser.telegram_id && _bot) {
               await _bot.telegram.sendMessage(
@@ -134,13 +134,13 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
                 `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
                 `🔴 <b>Action</b>: Sold 100% via Confidential Executor`,
                 { parse_mode: 'HTML' }
-              ).catch(() => {});
+              ).catch(() => { });
             }
           } else {
             if (fillId) {
               await updateCopyTradeFillResult(fillId, 'failed', {
                 skip_reason: (res.reason || 'Confidential sell failed').slice(0, 200),
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         }
@@ -177,7 +177,7 @@ function queueRacerRankCheck(event: NotifyUserEvent): void {
   if (!userId || (data.chain && data.chain !== 'near')) return;
   const delays = event.event === 'trade_confirmed' ? [0]
     : event.event === 'trigger_fired' ? [45_000, 150_000]
-    : null;
+      : null;
   if (!delays) return;
   void import('./racerCard.js')
     .then(m => m.scheduleRankUpCheck(userId, delays))
@@ -221,10 +221,10 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const qtyDisplay = humanQty >= 1_000_000
         ? `${(humanQty / 1_000_000).toFixed(2)}M`
         : humanQty >= 1_000
-        ? humanQty.toLocaleString('en-US', { maximumFractionDigits: 1 })
-        : humanQty > 0
-        ? humanQty.toFixed(2)
-        : '—';
+          ? humanQty.toLocaleString('en-US', { maximumFractionDigits: 1 })
+          : humanQty > 0
+            ? humanQty.toFixed(2)
+            : '—';
 
       const soldForNative = humanQty * currentPrice;
       const costBasisNative = humanQty * entryPrice;
@@ -329,7 +329,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         const { getCachedTokenInfo } = await import('./wallet.js');
         const info = getCachedTokenInfo(token);
         if (info?.symbol) sym = info.symbol;
-      } catch {}
+      } catch { }
       const tokenLine = sym ? `🪙 Token: \`${sanitize(sym)}\`\n` : '';
 
       // Map raw NEAR / RPC errors to user-friendly language
@@ -361,8 +361,8 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const refundNote = isSell
         ? 'No funds were lost on a failed swap — your tokens remain in your wallet. Use /wallet to check.'
         : isSolanaFail
-        ? 'A failed Solana swap does not move your SOL (only a tiny network fee may apply). Use /wallet to check.'
-        : 'No funds were lost on a failed swap — wNEAR is returned to your wallet. Use /wallet to check.';
+          ? 'A failed Solana swap does not move your SOL (only a tiny network fee may apply). Use /wallet to check.'
+          : 'No funds were lost on a failed swap — wNEAR is returned to your wallet. Use /wallet to check.';
       const retryNote = data.trigger_id ? '\n\n🔄 _Stop loss trigger remains active and will retry on the next price tick._' : '';
 
       await _bot.telegram.sendMessage(telegramId,
@@ -388,10 +388,10 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const qtyDisplay = tokenQty >= 1_000_000
         ? `${(tokenQty / 1_000_000).toFixed(3)}M`
         : tokenQty >= 1_000
-        ? tokenQty.toLocaleString('en-US', { maximumFractionDigits: 2 })
-        : tokenQty >= 0.0001
-        ? tokenQty.toFixed(4)
-        : tokenQty.toExponential(3);
+          ? tokenQty.toLocaleString('en-US', { maximumFractionDigits: 2 })
+          : tokenQty >= 0.0001
+            ? tokenQty.toFixed(4)
+            : tokenQty.toExponential(3);
 
       // PNL snapshot at entry instead of an explorer link: position value vs
       // amount spent (the t=0 delta is the entry cost — fee + token tax).
@@ -424,19 +424,19 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const solAmount = Number(data.solAmount ?? 0);
       const qtyDisplay = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(3)}M`
         : qty >= 1_000 ? `${(qty / 1_000).toFixed(2)}K`
-        : qty >= 0.0001 ? qty.toFixed(4) : qty.toExponential(3);
+          : qty >= 0.0001 ? qty.toFixed(4) : qty.toExponential(3);
       const txHash = String(data.txHash || '');
       const lines = side === 'buy'
         ? `✅ *Buy Confirmed on Solana!*\n\n` +
-          `🪙 *${tokenName}* (${tokenSym})\n` +
-          `📦 Received: \`${qtyDisplay} ${tokenSym}\`\n` +
-          `💸 Spent: \`${solAmount.toFixed(4)} SOL\`\n` +
-          `💵 Entry: \`${priceSol > 0 ? priceSol.toExponential(4) : '—'} SOL\``
+        `🪙 *${tokenName}* (${tokenSym})\n` +
+        `📦 Received: \`${qtyDisplay} ${tokenSym}\`\n` +
+        `💸 Spent: \`${solAmount.toFixed(4)} SOL\`\n` +
+        `💵 Entry: \`${priceSol > 0 ? priceSol.toExponential(4) : '—'} SOL\``
         : `✅ *Sell Confirmed on Solana!*\n\n` +
-          `🪙 *${tokenName}* (${tokenSym})\n` +
-          `📦 Sold: \`${qtyDisplay} ${tokenSym}\`\n` +
-          `💰 Received: \`${solAmount.toFixed(4)} SOL\`\n` +
-          `💵 Price: \`${priceSol > 0 ? priceSol.toExponential(4) : '—'} SOL\``;
+        `🪙 *${tokenName}* (${tokenSym})\n` +
+        `📦 Sold: \`${qtyDisplay} ${tokenSym}\`\n` +
+        `💰 Received: \`${solAmount.toFixed(4)} SOL\`\n` +
+        `💵 Price: \`${priceSol > 0 ? priceSol.toExponential(4) : '—'} SOL\``;
       const keyboard: any[] = [];
       if (txHash) keyboard.push([{ text: '🔗 View on Solscan', url: `https://solscan.io/tx/${txHash}` }]);
       if (data.positionId) keyboard.push([{ text: '📊 View Position', callback_data: `token_detail:${data.positionId}` }]);
@@ -550,7 +550,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
             ],
           ],
         },
-      }).catch(() => {});
+      }).catch(() => { });
       break;
     }
 
@@ -583,7 +583,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
             ],
           ],
         },
-      }).catch(() => {});
+      }).catch(() => { });
 
       // Automatically execute fleet bundle if fleetId and tokenAddress exist
       if (fleetId && tokenAddress) {
@@ -599,13 +599,13 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
                   `📦 <b>Swaps</b>: ${res.successCount} wallets\n` +
                   `💰 <b>Spent</b>: ${res.totalSpentNear} ${fleetUnit}`,
                   { parse_mode: 'HTML' }
-                ).catch(() => {});
+                ).catch(() => { });
               } else {
                 _bot!.telegram.sendMessage(
                   telegramId,
                   `❌ <b>Fleet Limit Buy Failed:</b> ${res.errors[0] || 'Unknown error'}`,
                   { parse_mode: 'HTML' }
-                ).catch(() => {});
+                ).catch(() => { });
               }
             })
             .catch((err) => {
@@ -613,7 +613,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
                 telegramId,
                 `❌ <b>Fleet Order Execution Error:</b> ${err?.message || err}`,
                 { parse_mode: 'HTML' }
-              ).catch(() => {});
+              ).catch(() => { });
             });
         } else if (orderType === 'limit_sell' || orderType === 'tp_sl') {
           const sellPct = Number(data.sell_pct) || 100;
@@ -626,13 +626,13 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
                   `🪙 <b>Token</b>: <code>${tokenAddress}</code>\n` +
                   `📦 <b>Wallets Executed</b>: ${res.successCount} wallets`,
                   { parse_mode: 'HTML' }
-                ).catch(() => {});
+                ).catch(() => { });
               } else {
                 _bot!.telegram.sendMessage(
                   telegramId,
                   `❌ <b>Fleet Sell Failed:</b> ${res.errors[0] || 'Unknown error'}`,
                   { parse_mode: 'HTML' }
-                ).catch(() => {});
+                ).catch(() => { });
               }
             })
             .catch((err) => {
@@ -640,7 +640,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
                 telegramId,
                 `❌ <b>Fleet Order Execution Error:</b> ${err?.message || err}`,
                 { parse_mode: 'HTML' }
-              ).catch(() => {});
+              ).catch(() => { });
             });
         }
       }
@@ -668,7 +668,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
             ],
           ],
         },
-      }).catch(() => {});
+      }).catch(() => { });
       break;
     }
   }
@@ -861,5 +861,5 @@ export async function sendPnlCard(telegramId: number, pnlData: {
     telegram_id: telegramId,
     event: 'pnl_card',
     data: pnlData as any,
-  }).catch(() => {});
+  }).catch(() => { });
 }

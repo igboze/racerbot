@@ -354,8 +354,8 @@ export async function getFleetBalances(
     tokenTotalFormatted = tokenHuman >= 1e6
       ? `${(tokenHuman / 1e6).toFixed(2)}M`
       : tokenHuman >= 1e3
-      ? `${(tokenHuman / 1e3).toFixed(2)}K`
-      : tokenHuman.toFixed(2);
+        ? `${(tokenHuman / 1e3).toFixed(2)}K`
+        : tokenHuman.toFixed(2);
   }
 
   const result: FleetBalancesResult = {
@@ -739,7 +739,7 @@ export async function executeFleetBundleSell(
       keyPair: KeyPair.fromString(decrypt(x.s.w.encrypted_private_key, MASTER_KEY) as any),
       receiverId: 'wrap.near',
       actions: [nearActions.call('near_withdraw', { amount: x.amt.toString() }, 30, 1n)],
-    })), 30_000).catch(() => {});
+    })), 30_000).catch(() => { });
   }
 
   if (txHashes.length > 0) {
@@ -910,7 +910,7 @@ export async function getFleetTokenPosition(fleetId: string, tokenAddress: strin
           totalBalanceRaw += raw;
           walletsHoldingCount++;
         }
-      } catch {}
+      } catch { }
     }
   }
 
@@ -1017,9 +1017,9 @@ export async function buildFleetCockpit(
 
   const holdingsText = balances.tokenTotal && balances.tokenTotal !== '0'
     ? `🎒 <b>Fleet Holdings</b>: <b>${balances.tokenTotalFormatted} ${sym}</b>\n` +
-      (fleetPos && fleetPos.avgEntryPriceNear > 0
-        ? `📈 <b>Fleet PnL</b>: ${fleetPos.emoji} <b>${fleetPos.pnlDisplay}</b> (Entry: <code>${fleetPos.avgEntryPriceNear.toFixed(8)} N</code>)\n`
-        : '')
+    (fleetPos && fleetPos.avgEntryPriceNear > 0
+      ? `📈 <b>Fleet PnL</b>: ${fleetPos.emoji} <b>${fleetPos.pnlDisplay}</b> (Entry: <code>${fleetPos.avgEntryPriceNear.toFixed(8)} N</code>)\n`
+      : '')
     : '';
 
   const text =
@@ -1122,8 +1122,8 @@ export async function buildRaceFleetDashboard(telegramId: number): Promise<{ tex
 }
 
 // ── Telegram UI: RaceFleet Holdings & PnL View ──────────────────────────────
-export async function buildFleetHoldingsView(userOrTelegramId: number | string | UserRecord, forceRefresh = false): Promise<{ text: string; keyboard: any }> {
-  const user = await resolveFleetUser(userOrTelegramId);
+export async function buildFleetHoldingsView(telegramId: number, forceRefresh = false): Promise<{ text: string; keyboard: any }> {
+  const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('User not found');
 
   const fleet = await getRaceFleetByUserId(user.id);
@@ -1198,7 +1198,7 @@ export async function buildFleetHoldingsView(userOrTelegramId: number | string |
               totalRawBigInt += raw;
               walletsHoldingCount++;
             }
-          } catch {}
+          } catch { }
         }
       }
 
@@ -1233,7 +1233,7 @@ export async function buildFleetHoldingsView(userOrTelegramId: number | string |
         if (totalBuyQty > 0 && totalBuyCost > 0) {
           avgEntryPriceNear = totalBuyCost / totalBuyQty;
         }
-      } catch {}
+      } catch { }
 
       let pnlPct = 0;
       let pnlDisplay = 'N/A';
@@ -1313,8 +1313,8 @@ export async function buildFleetHoldingsView(userOrTelegramId: number | string |
       const balanceStr = t.totalBalanceHuman >= 1e6
         ? `${(t.totalBalanceHuman / 1e6).toFixed(2)}M`
         : t.totalBalanceHuman >= 1e3
-        ? `${(t.totalBalanceHuman / 1e3).toFixed(2)}K`
-        : t.totalBalanceHuman.toFixed(2);
+          ? `${(t.totalBalanceHuman / 1e3).toFixed(2)}K`
+          : t.totalBalanceHuman.toFixed(2);
 
       text +=
         `${t.emoji} <b>$${t.symbol}</b> (${t.pnlDisplay})\n` +

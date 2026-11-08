@@ -598,9 +598,9 @@ describe('extractSwapDetails on real venue messages', () => {
     operations: [
       ...(viaIntear
         ? [
-            { SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: assetIn, asset_out: 'nep141:token.intear.near', amount: { Amount: { ExactIn: '1000' } }, message: 'EgEAAA==' } },
-            { SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: 'nep141:token.intear.near', asset_out: assetOut, amount: 'OutputOfLastIn', message: 'CQAAAA==' } },
-          ]
+          { SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: assetIn, asset_out: 'nep141:token.intear.near', amount: { Amount: { ExactIn: '1000' } }, message: 'EgEAAA==' } },
+          { SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: 'nep141:token.intear.near', asset_out: assetOut, amount: 'OutputOfLastIn', message: 'CQAAAA==' } },
+        ]
         : [{ SwapSimple: { dex_id: 'slimedragon.near/xyk', asset_in: assetIn, asset_out: assetOut, amount: { Amount: { ExactIn: '1000' } }, message: 'EgEAAA==' } }]),
       { Withdraw: { asset_id: assetOut, amount: { Full: { at_least: null } }, to: null, rescue_address: null } },
     ],
