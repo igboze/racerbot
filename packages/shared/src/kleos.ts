@@ -16,6 +16,7 @@ import {
   encodeAscendSell,
   quoteAscend,
   resolveAscendRoute,
+  findElysiumV4Route,
   type AscendRoute,
 } from './ascend.js';
 
@@ -101,7 +102,8 @@ export const RONSPAD = {
 export const RONSPAD_TOKEN_URL = 'https://ronspad.fun/token?token=';
 
 /** The Elysium mainnet launchpads RacerBot trades, by venue name */
-export const ELYSIUM_PAD_VENUES = ['kleos', 'ronspad', 'ascend'] as const;
+/** `univ4`: any other coin with a Uniswap v4 pool against HYPE on Elysium (launchpads without special support) */
+export const ELYSIUM_PAD_VENUES = ['kleos', 'ronspad', 'ascend', 'univ4'] as const;
 export type ElysiumPadVenue = (typeof ELYSIUM_PAD_VENUES)[number];
 
 export function isElysiumPadVenue(venue: unknown): venue is ElysiumPadVenue {
@@ -109,13 +111,14 @@ export function isElysiumPadVenue(venue: unknown): venue is ElysiumPadVenue {
 }
 
 export function elysiumPadName(venue: unknown): string {
-  return venue === 'ronspad' ? 'RonsPad' : venue === 'ascend' ? 'Ascend' : 'Kleos';
+  return venue === 'ronspad' ? 'RonsPad' : venue === 'ascend' ? 'Ascend' : venue === 'univ4' ? 'Uniswap v4' : 'Kleos';
 }
 
 /** The launchpad's own page for a coin */
 export function elysiumPadUrl(venue: unknown, address: string): string {
   if (venue === 'ronspad') return `${RONSPAD_TOKEN_URL}${address}`;
   if (venue === 'ascend') return `${ASCEND_TOKEN_URL}${address}`;
+  if (venue === 'univ4') return `https://dexscreener.com/elysium/${address}`;
   return `https://www.thekleos.xyz/token/${address}`;
 }
 
@@ -242,7 +245,7 @@ export function describeKleosRevert(err: any): string {
 
 // ── Routing ─────────────────────────────────────────────────────────────────
 
-export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad' | 'ascend';
+export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad' | 'ascend' | 'univ4';
 
 export interface KleosRoute {
   kind: KleosRouteKind;
@@ -251,7 +254,7 @@ export interface KleosRoute {
   hopFee: number;
   /** hop only: the quote token's HYPE pool */
   hop?: KleosPoolKey;
-  /** ascend only: the coin's launch pool and, for a USDC or KNTQ coin, the HYPE pool into its quote */
+  /** ascend / univ4: the coin's Uniswap v4 pool and, for a USDC or KNTQ Ascend coin, the HYPE pool into its quote */
   ascend?: AscendRoute;
 }
 
@@ -263,6 +266,7 @@ const ROUTES: Record<KleosRouteKind, KleosRoute> = {
   hop: { kind: 'hop', router: KLEOS.hopRouter, hopFee: 0 },
   ronspad: { kind: 'ronspad', router: RONSPAD.padFactory, hopFee: 0 },
   ascend: { kind: 'ascend', router: ASCEND.universalRouter, hopFee: 0 },
+  univ4: { kind: 'univ4', router: ASCEND.universalRouter, hopFee: 0 },
 };
 
 type V5Deployment = (typeof KLEOS_V5_DEPLOYMENTS)[number];
@@ -344,7 +348,7 @@ export async function quoteKleos(
     return out;
   }
   if (route.kind === 'ronspad') return quoteRonsPad(provider, token, side, amountIn, from);
-  if (route.kind === 'ascend') return quoteAscend(provider, route.ascend!, token, side, amountIn);
+  if (route.kind === 'ascend' || route.kind === 'univ4') return quoteAscend(provider, route.ascend!, token, side, amountIn);
   if (route.kind === 'classic') {
     const quoter = new ethers.Contract(KLEOS.quoterV2, KLEOS_QUOTER_V2_ABI, provider);
     const [tokenIn, tokenOut] = side === 'buy' ? [KLEOS.whype, token] : [token, KLEOS.whype];
@@ -438,7 +442,13 @@ const V5_HOP_FEES = [0, 10000, 3000, 500];
  * UnknownToken() for the rest, so a quote that answers proves the route. The board's launch data is
  * tried first (it carries a v5 coin's hop fee); without it every v5 hop fee is tried.
  */
-export async function resolveKleosRoute(provider: ethers.Provider, token: string, launchHint?: any): Promise<KleosRoute> {
+export async function resolveKleosRoute(
+  provider: ethers.Provider,
+  token: string,
+  launchHint?: any,
+  /** false: only the launchpads' own routers (a Kleos lookup), never a plain Uniswap v4 pool */
+  options: { allowUniV4?: boolean } = {}
+): Promise<KleosRoute> {
   const probe = 10n ** 15n; // 0.001 HYPE
   // RonsPad and Ascend name their own launches on chain
   const [ronsPad, ascend] = await Promise.all([
@@ -473,6 +483,11 @@ export async function resolveKleosRoute(provider: ethers.Provider, token: string
       if ((await quoteKleos(provider, route, token, 'buy', probe)) > 0n) return route;
     } catch { /* not this router */ }
   }
+  // Another launchpad's coin: trade its Uniswap v4 pool against HYPE, if it has one
+  if (options.allowUniV4 !== false) {
+    const v4 = await findElysiumV4Route(provider, token).catch(() => null);
+    if (v4) return { ...ROUTES.univ4, ascend: v4 };
+  }
   throw new Error('No Kleos router trades this coin.');
 }
 
@@ -483,7 +498,7 @@ export interface EvmCall {
 }
 
 export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
-  if (route.kind === 'ascend') return encodeAscendBuy(route.ascend!, token, hypeIn, minOut, recipient, deadline);
+  if (route.kind === 'ascend' || route.kind === 'univ4') return encodeAscendBuy(route.ascend!, token, hypeIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('buy', [token, route.hop, minOut, recipient, deadline]);
     return { to: route.router, data, value: hypeIn };
@@ -507,7 +522,7 @@ export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint,
 }
 
 export function encodeKleosSell(route: KleosRoute, token: string, amountIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
-  if (route.kind === 'ascend') return encodeAscendSell(route.ascend!, token, amountIn, minOut, recipient, deadline);
+  if (route.kind === 'ascend' || route.kind === 'univ4') return encodeAscendSell(route.ascend!, token, amountIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('sell', [token, route.hop, amountIn, minOut, recipient, deadline]);
     return { to: route.router, data, value: 0n };

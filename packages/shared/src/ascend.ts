@@ -167,6 +167,18 @@ function execute(commands: number[], inputs: string[], deadline: bigint): string
  */
 export function encodeAscendBuy(route: AscendRoute, token: string, hypeIn: bigint, minOut: bigint, recipient: string, deadline: bigint): { to: string; data: string; value: bigint } {
   const coin = ethers.getAddress(token);
+  if (!route.hypeHop && route.quote === NATIVE) {
+    // A pool paired with native HYPE (always currency0): settle the HYPE sent, no wrapping
+    const swap = v4Swap(
+      [ACT.SWAP_EXACT_IN_SINGLE, ACT.SETTLE, ACT.TAKE],
+      [
+        coder.encode([EXACT_IN_SINGLE_T], [{ poolKey: route.launchKey, zeroForOne: true, amountIn: hypeIn, amountOutMinimum: minOut, minHopPriceX36: 0n, hookData: '0x' }]),
+        coder.encode(['address', 'uint256', 'bool'], [NATIVE, OPEN_DELTA, false]),
+        coder.encode(['address', 'address', 'uint256'], [coin, recipient, OPEN_DELTA]),
+      ],
+    );
+    return { to: ASCEND.universalRouter, data: execute([CMD.V4_SWAP], [swap], deadline), value: hypeIn };
+  }
   if (!route.hypeHop) {
     const zeroForOne = route.launchKey.currency0.toLowerCase() === ASCEND.whype.toLowerCase();
     const swap = v4Swap(
@@ -198,6 +210,17 @@ export function encodeAscendBuy(route: AscendRoute, token: string, hypeIn: bigin
 export function encodeAscendSell(route: AscendRoute, token: string, amountIn: bigint, minOut: bigint, recipient: string, deadline: bigint): { to: string; data: string; value: bigint } {
   const coin = ethers.getAddress(token);
   const settle = coder.encode(['address', 'uint256'], [coin, amountIn]);
+  if (!route.hypeHop && route.quote === NATIVE) {
+    const swap = v4Swap(
+      [ACT.SWAP_EXACT_IN_SINGLE, ACT.SETTLE_ALL, ACT.TAKE],
+      [
+        coder.encode([EXACT_IN_SINGLE_T], [{ poolKey: route.launchKey, zeroForOne: false, amountIn, amountOutMinimum: minOut, minHopPriceX36: 0n, hookData: '0x' }]),
+        settle,
+        coder.encode(['address', 'address', 'uint256'], [NATIVE, recipient, OPEN_DELTA]),
+      ],
+    );
+    return { to: ASCEND.universalRouter, data: execute([CMD.V4_SWAP], [swap], deadline), value: 0n };
+  }
   if (!route.hypeHop) {
     const zeroForOne = route.launchKey.currency0.toLowerCase() === coin.toLowerCase();
     const swap = v4Swap(
@@ -245,4 +268,96 @@ export async function ascendSellApprovals(provider: ethers.Provider, token: stri
     calls.push({ to: ASCEND.permit2, data: permit2.interface.encodeFunctionData('approve', [token, ASCEND.universalRouter, amountIn, now + 1800n]), value: 0n });
   }
   return calls;
+}
+
+// ── Any Uniswap v4 pool on Elysium ──────────────────────────────────────────
+
+const INITIALIZE_ABI = ['event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)'];
+const v4KeyCache = new Map<string, AscendRoute | null>();
+
+/**
+ * The pool key behind a pool id, from the PoolManager's Initialize event. Searches back from the newest block,
+ * where launchpad pools usually are, in chunks an RPC accepts.
+ */
+export async function findV4PoolKey(provider: ethers.Provider, poolId: string, chunk = 400_000): Promise<V4PoolKey | null> {
+  const iface = new ethers.Interface(INITIALIZE_ABI);
+  const topic = iface.getEvent('Initialize')!.topicHash;
+  const latest = await provider.getBlockNumber();
+  for (let to = latest; to >= 0; to -= chunk) {
+    const from = Math.max(0, to - chunk + 1);
+    const logs = await provider.getLogs({ address: ASCEND.poolManager, topics: [topic, poolId], fromBlock: from, toBlock: to });
+    if (logs.length > 0) {
+      const e = iface.parseLog(logs[0])!;
+      return { currency0: e.args.currency0, currency1: e.args.currency1, fee: Number(e.args.fee), tickSpacing: Number(e.args.tickSpacing), hooks: e.args.hooks };
+    }
+  }
+  return null;
+}
+
+/**
+ * The deepest Uniswap v4 pool pairing a coin with HYPE (native or WHYPE) on Elysium's PoolManager, found
+ * through DexScreener's Elysium listing and confirmed on chain. Covers launchpads RacerBot has no special
+ * support for. Null when there is none.
+ */
+export async function findElysiumV4Route(provider: ethers.Provider, token: string): Promise<AscendRoute | null> {
+  const key = token.toLowerCase();
+  if (v4KeyCache.has(key)) return v4KeyCache.get(key)!;
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ethers.getAddress(token)}`, { signal: AbortSignal.timeout(6000) });
+  if (!res.ok) throw new Error(`DexScreener returned ${res.status}`);
+  const data: any = await res.json();
+  const hypeQuotes = new Set([NATIVE, ASCEND.whype.toLowerCase()]);
+  const pools = (data?.pairs ?? [])
+    .filter((p: any) => p.chainId === 'elysium' && /^0x[0-9a-fA-F]{64}$/.test(p.pairAddress ?? '')
+      && p.baseToken?.address?.toLowerCase() === key && hypeQuotes.has(String(p.quoteToken?.address).toLowerCase()))
+    .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+  for (const pair of pools.slice(0, 2)) {
+    const poolKey = await findV4PoolKey(provider, pair.pairAddress);
+    if (!poolKey || v4PoolId(poolKey) !== pair.pairAddress.toLowerCase()) continue;
+    const quote = poolKey.currency0 === NATIVE ? NATIVE : ethers.getAddress(String(pair.quoteToken.address));
+    const route: AscendRoute = { quote, quoteSymbol: quote === NATIVE ? 'HYPE' : 'WHYPE', launchKey: poolKey };
+    v4KeyCache.set(key, route);
+    return route;
+  }
+  v4KeyCache.set(key, null);
+  return null;
+}
+
+/**
+ * Buys a little of the coin and sells part of it back in one simulated block (eth_simulateV1, a funded
+ * throwaway address, nothing sent). Pools with an unknown hook can block sells; this catches that before any
+ * real buy. 'unavailable' when the RPC cannot simulate.
+ */
+export async function simulateV4RoundTrip(provider: ethers.JsonRpcProvider, route: AscendRoute, token: string): Promise<'ok' | 'sell_blocked' | 'buy_blocked' | 'unavailable'> {
+  const sim = '0x000000000000000000000000000000000000bEEF';
+  const hypeIn = 10n ** 15n; // 0.001 HYPE
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+  const out = await quoteAscend(provider, route, token, 'buy', hypeIn).catch(() => 0n);
+  if (out <= 0n) return 'buy_blocked';
+  const sellAmount = out / 2n;
+  const buy = encodeAscendBuy(route, token, hypeIn, 1n, sim, deadline);
+  const sell = encodeAscendSell(route, token, sellAmount, 1n, sim, deadline);
+  const erc20 = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
+  const permit2 = new ethers.Interface(PERMIT2_ABI);
+  const q = ethers.toQuantity;
+  let result: any;
+  try {
+    result = await provider.send('eth_simulateV1', [{
+      blockStateCalls: [{
+        stateOverrides: { [sim]: { balance: q(10n ** 18n) } },
+        calls: [
+          { from: sim, to: buy.to, data: buy.data, value: q(buy.value) },
+          { from: sim, to: token, data: erc20.encodeFunctionData('approve', [ASCEND.permit2, sellAmount]) },
+          { from: sim, to: ASCEND.permit2, data: permit2.encodeFunctionData('approve', [token, ASCEND.universalRouter, sellAmount, deadline]) },
+          { from: sim, to: sell.to, data: sell.data, value: '0x0' },
+        ],
+      }],
+      validation: false,
+    }, 'latest']);
+  } catch {
+    return 'unavailable';
+  }
+  const calls = result?.[0]?.calls;
+  if (!Array.isArray(calls) || calls.length !== 4) return 'unavailable';
+  if (calls[0].status !== '0x1') return 'buy_blocked';
+  return calls.every((c: any) => c.status === '0x1') ? 'ok' : 'sell_blocked';
 }

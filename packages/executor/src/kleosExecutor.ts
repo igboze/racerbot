@@ -36,6 +36,7 @@ import {
   describeElysiumSendError,
   elysiumPadName,
   ascendSellApprovals,
+  simulateV4RoundTrip,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -167,7 +168,7 @@ export async function executeKleosSwap(
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
   // RonsPad coins trade through the same inbox flow, on RonsPad's PadFactory
-  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : 'kleos';
+  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'univ4' ? 'univ4' : 'kleos';
   const venueName = elysiumPadName(fillVenue);
 
   const direct = isElysiumDirectSend();
@@ -227,6 +228,15 @@ export async function executeKleosSwap(
       return fail(`${venueName} could not quote this buy: ${describeKleosRevert(err)} Nothing was spent.`);
     }
     if (expectedOut <= 0n) return fail(`${venueName} quoted zero coins for this buy. Nothing was spent.`);
+    // A plain Uniswap v4 pool can carry any hook: make sure the coin can be sold back before buying it
+    if (route.kind === 'univ4') {
+      onProgress?.('simulating');
+      const roundTrip = await simulateV4RoundTrip(l2, route.ascend!, token);
+      if (roundTrip === 'sell_blocked') {
+        return fail(`RacerBot won't buy this coin: a test buy followed by a sell failed, so its pool may not let you sell it back (a possible honeypot). Nothing was spent.`);
+      }
+      if (roundTrip === 'buy_blocked') return fail(`This coin's pool is not accepting buys right now. Nothing was spent.`);
+    }
     const minOut = calculateSlippageMin(expectedOut, slippage_pct);
 
     const [l1Balance, l2Balance, l1Block] = await Promise.all([l1.getBalance(userAddress), l2.getBalance(userAddress), l1.getBlock('latest')]);
@@ -359,7 +369,7 @@ export async function executeKleosSwap(
   const sell = encodeKleosSell(route, token, amountIn, minOut, userAddress, deadline);
 
   // Exactly this amount, as the launchpads' own apps approve. Ascend pulls coins through Permit2 (two approvals).
-  const approvals: EvmCall[] = route.kind === 'ascend'
+  const approvals: EvmCall[] = route.kind === 'ascend' || route.kind === 'univ4'
     ? await ascendSellApprovals(l2, token, userAddress, amountIn)
     : (await coin.allowance(userAddress, route.router)) < amountIn
       ? [{ to: token, data: new ethers.Interface(ERC20_ABI).encodeFunctionData('approve', [route.router, amountIn]), value: 0n }]
