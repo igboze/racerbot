@@ -137,5 +137,23 @@ describe('Coins from other Elysium launchpads (any Uniswap v4 pool against HYPE)
     expect(route).toEqual({ quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: expect.objectContaining({ hooks: HOOK, fee: 0x800000 }) });
     vi.unstubAllGlobals();
   });
+
+  it('takes a pool from the Kleos app only when its settings hash to the pool id it names (HELIOS)', async () => {
+    const HELIOS = '0x875E0130b52404c75f594EA8451597dd16C6B6e4';
+    const HOOK = '0x10F11002b148BE522005f9b5D666bef339392aEC';
+    const goodKey = { currency0: ethers.ZeroAddress, currency1: HELIOS, fee: 0, tickSpacing: 200, hooks: HOOK };
+    const asset = (poolId: string) => ({ venue: 'v4', router: ASCEND.universalRouter, hooks: HOOK, fee: 0, tickSpacing: 200, pool: { id: poolId, v4: true } });
+    const provider = { getBlockNumber: vi.fn(async () => 1), getLogs: vi.fn(async () => []) } as any;
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(asset(v4PoolId(goodKey))), { status: 200 })));
+    expect(await findElysiumV4Route(provider, HELIOS)).toEqual({ quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: goodKey });
+    expect(provider.getLogs).not.toHaveBeenCalled(); // no slow log search
+
+    // Settings that do not hash to the pool id are ignored (and DexScreener lists nothing here)
+    const OTHER = '0x0000000000000000000000000000000000c0ffee';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('thekleos') ? asset('0x' + '2'.repeat(64)) : { pairs: [] }), { status: 200 })));
+    expect(await findElysiumV4Route(provider, OTHER)).toBeNull();
+    vi.unstubAllGlobals();
+  });
 });
 

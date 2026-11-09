@@ -273,19 +273,23 @@ export async function ascendSellApprovals(provider: ethers.Provider, token: stri
 // ── Any Uniswap v4 pool on Elysium ──────────────────────────────────────────
 
 const INITIALIZE_ABI = ['event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)'];
-const v4KeyCache = new Map<string, AscendRoute | null>();
+const v4KeyCache = new Map<string, { route: AscendRoute | null; at: number }>();
+/** A coin with no pool yet (e.g. not on DexScreener yet) is looked up again after this long */
+const V4_MISS_TTL_MS = 3 * 60_000;
 
 /**
  * The pool key behind a pool id, from the PoolManager's Initialize event. Searches back from the newest block,
  * where launchpad pools usually are, in chunks an RPC accepts.
  */
-export async function findV4PoolKey(provider: ethers.Provider, poolId: string, chunk = 400_000): Promise<V4PoolKey | null> {
+export async function findV4PoolKey(provider: ethers.Provider, poolId: string, chunk = 150_000): Promise<V4PoolKey | null> {
   const iface = new ethers.Interface(INITIALIZE_ABI);
   const topic = iface.getEvent('Initialize')!.topicHash;
   const latest = await provider.getBlockNumber();
   for (let to = latest; to >= 0; to -= chunk) {
     const from = Math.max(0, to - chunk + 1);
-    const logs = await provider.getLogs({ address: ASCEND.poolManager, topics: [topic, poolId], fromBlock: from, toBlock: to });
+    const filter = { address: ASCEND.poolManager, topics: [topic, poolId], fromBlock: from, toBlock: to };
+    // A busy RPC can time out on a log search: try each chunk twice before giving up
+    const logs = await provider.getLogs(filter).catch(() => provider.getLogs(filter));
     if (logs.length > 0) {
       const e = iface.parseLog(logs[0])!;
       return { currency0: e.args.currency0, currency1: e.args.currency1, fee: Number(e.args.fee), tickSpacing: Number(e.args.tickSpacing), hooks: e.args.hooks };
@@ -301,7 +305,14 @@ export async function findV4PoolKey(provider: ethers.Provider, poolId: string, c
  */
 export async function findElysiumV4Route(provider: ethers.Provider, token: string): Promise<AscendRoute | null> {
   const key = token.toLowerCase();
-  if (v4KeyCache.has(key)) return v4KeyCache.get(key)!;
+  const cached = v4KeyCache.get(key);
+  if (cached && (cached.route || Date.now() - cached.at < V4_MISS_TTL_MS)) return cached.route;
+  // Fast path: the pool settings the Kleos app reports, accepted only when they hash to that pool's id
+  const fromKleos = await v4RouteFromKleos(token).catch(() => null);
+  if (fromKleos) {
+    v4KeyCache.set(key, { route: fromKleos, at: Date.now() });
+    return fromKleos;
+  }
   const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ethers.getAddress(token)}`, { signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`DexScreener returned ${res.status}`);
   const data: any = await res.json();
@@ -315,11 +326,28 @@ export async function findElysiumV4Route(provider: ethers.Provider, token: strin
     if (!poolKey || v4PoolId(poolKey) !== pair.pairAddress.toLowerCase()) continue;
     const quote = poolKey.currency0 === NATIVE ? NATIVE : ethers.getAddress(String(pair.quoteToken.address));
     const route: AscendRoute = { quote, quoteSymbol: quote === NATIVE ? 'HYPE' : 'WHYPE', launchKey: poolKey };
-    v4KeyCache.set(key, route);
+    v4KeyCache.set(key, { route, at: Date.now() });
     return route;
   }
-  v4KeyCache.set(key, null);
+  v4KeyCache.set(key, { route: null, at: Date.now() });
   return null;
+}
+
+/**
+ * The coin's Uniswap v4 pool from the Kleos app's /api/asset (which names the pool id, hook, fee and tick
+ * spacing). Used only for a pool on Elysium's Uniswap PoolManager traded through the Universal Router, paired
+ * with native HYPE, and only when those settings hash to the pool id it names; anything else is ignored.
+ */
+async function v4RouteFromKleos(token: string): Promise<AscendRoute | null> {
+  const res = await fetch(`https://www.thekleos.xyz/api/asset?address=${ethers.getAddress(token)}&interval=1h`, { signal: AbortSignal.timeout(6000) });
+  if (!res.ok) return null;
+  const a: any = await res.json();
+  if (a?.venue !== 'v4' || !a.pool?.id || !a.hooks || String(a.router).toLowerCase() !== ASCEND.universalRouter.toLowerCase()) return null;
+  const launchKey: V4PoolKey = {
+    currency0: NATIVE, currency1: ethers.getAddress(token), fee: Number(a.fee ?? 0), tickSpacing: Number(a.tickSpacing ?? 200), hooks: ethers.getAddress(a.hooks),
+  };
+  if (v4PoolId(launchKey) !== String(a.pool.id).toLowerCase()) return null;
+  return { quote: NATIVE, quoteSymbol: 'HYPE', launchKey };
 }
 
 /**
