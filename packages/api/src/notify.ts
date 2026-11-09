@@ -89,11 +89,12 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
           if (res.success && res.txHashes.length > 0) {
             if (fillId) {
               await updateCopyTradeFillResult(fillId, 'filled', {
-                tx_hash: res.txHashes[0],
+                our_tx_hash: res.txHashes[0],
                 amount_near: buyNear,
               }).catch(() => { });
+              // Points are keyed to the fill; the event names the leader by wallet only, so no leader bonus here
+              await awardPointsForCopyTrade(copierUser.id, fillId, buyNear, undefined).catch(() => { });
             }
-            await awardPointsForCopyTrade(copierUser.id, buyNear, tokenAddress).catch(() => { });
             if (copierUser.telegram_id && _bot) {
               await _bot.telegram.sendMessage(
                 copierUser.telegram_id,
@@ -123,7 +124,7 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
           if (res.success && res.txHashes.length > 0) {
             if (fillId) {
               await updateCopyTradeFillResult(fillId, 'filled', {
-                tx_hash: res.txHashes[0],
+                our_tx_hash: res.txHashes[0],
               }).catch(() => { });
             }
             if (copierUser.telegram_id && _bot) {
