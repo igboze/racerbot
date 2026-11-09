@@ -89,6 +89,13 @@ export function publicBaseUrl(): string {
 }
 
 /**
+ * Version of the card design, carried in every card link (v=2). X keeps a
+ * link's preview for about a week and never looks again, so a new design
+ * needs a new link: raise this whenever the card's look changes.
+ */
+export const CARD_DESIGN_VERSION = '2';
+
+/**
  * Public card page that X and Telegram unfurl into the card image. The rank
  * key is in the URL so a rank-up is a new URL (X caches previews for days).
  * The weekly card adds the week (w=2026-11-09), so each week is a new URL too.
@@ -98,7 +105,7 @@ export function racerCardPageUrl(code: string | null, rankKey: number, period: R
   const base = publicBaseUrl();
   if (!base || !code) return null;
   const week = period === 'week' ? `&w=${weekKey()}` : '';
-  return `${base}/c/${encodeURIComponent(code)}?r=${rankKey}${week}`;
+  return `${base}/c/${encodeURIComponent(code)}?r=${rankKey}${week}&v=${CARD_DESIGN_VERSION}`;
 }
 const FINISH_NAMES = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold', holo: 'Holo' } as const;
 
@@ -389,6 +396,8 @@ export function racerCardPageHtml(data: RacerCardImageData, rankParam: string, w
   const params = new URLSearchParams();
   if (rankParam) params.set('r', rankParam);
   if (weekly) params.set('w', weekParam || weekKey());
+  // Always the current design's images, even from a link shared before it
+  params.set('v', CARD_DESIGN_VERSION);
   const q = params.size ? `?${params.toString()}` : '';
   const c = encodeURIComponent(data.referralCode);
   const page = `${base}/c/${c}${q}`;

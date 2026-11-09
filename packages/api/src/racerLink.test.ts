@@ -336,7 +336,7 @@ describe('/api/racer-card', () => {
     await route('get', '/')({ headers: {} }, r);
     expect(r.statusCode).toBe(200);
     expect(r.headers['Cache-Control']).toBe('private, no-store');
-    expect(r.body).toMatchObject({ rank: { name: 'Circuit Racer II' }, shareUrl: 'https://racer.example/c/SPEEDY?r=8', canLink: false });
+    expect(r.body).toMatchObject({ rank: { name: 'Circuit Racer II' }, shareUrl: 'https://racer.example/c/SPEEDY?r=8&v=2', canLink: false });
     expect(JSON.stringify(r.body)).not.toMatch(/secret-token|speedy\.racerbot\.near|\b290\b|\b150\b|\b140\b/);
   });
 
