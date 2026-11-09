@@ -469,5 +469,8 @@ export {
   encodeAscendBuy,
   encodeAscendSell,
   ascendSellApprovals,
+  findV4PoolKey,
+  findElysiumV4Route,
+  simulateV4RoundTrip,
 } from './ascend.js';
 export type { AscendRoute, V4PoolKey } from './ascend.js';

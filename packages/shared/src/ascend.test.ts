@@ -8,8 +8,10 @@ import {
   encodeAscendBuy,
   encodeAscendSell,
   UNIVERSAL_ROUTER_ABI,
+  findElysiumV4Route,
   type AscendRoute,
 } from './ascend.js';
+import { vi } from 'vitest';
 import { describeKleosRevert, elysiumPadName, elysiumPadUrl, isElysiumPadVenue, encodeKleosBuy, encodeKleosBuyWithTransfers } from './kleos.js';
 
 // ORPHEUS, launched on Ascend against WHYPE; its launch pool id is the one DexScreener lists
@@ -97,3 +99,43 @@ describe('Ascend Universal Router calls', () => {
     expect(describeKleosRevert({ data: iface.encodeErrorResult('V4TooLittleReceived', [2n, 1n]) })).toMatch(/slippage/);
   });
 });
+
+describe('Coins from other Elysium launchpads (any Uniswap v4 pool against HYPE)', () => {
+  const HYPEJAK = '0xFC877FDdA01522876E398bcf1657aF183631bA38';
+  const HOOK = '0x6b1216A40B65c83e9c9e18a562C446697B8cf8EC';
+  const key = { currency0: ethers.ZeroAddress, currency1: HYPEJAK, fee: 0x800000, tickSpacing: 200, hooks: HOOK };
+  const nativeRoute: AscendRoute = { quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: key };
+
+  it('buys with native HYPE straight into the pool: no wrapping, the HYPE sent is settled', () => {
+    const d = decode(encodeAscendBuy(nativeRoute, HYPEJAK, 1000n, 900n, USER, DEADLINE).data);
+    expect(d.commands).toEqual([0x10]);
+    expect(d.actions).toEqual([0x06, 0x0b, 0x0e]);
+    const [swap] = coder.decode([`tuple(${POOL_KEY_T} poolKey, bool zeroForOne, uint128 amountIn, uint128 amountOutMinimum, uint256 minHopPriceX36, bytes hookData)`], d.params[0]);
+    expect([swap.zeroForOne, swap.poolKey.hooks]).toEqual([true, HOOK]);
+    expect(coder.decode(['address', 'uint256', 'bool'], d.params[1]).toArray()).toEqual([ethers.ZeroAddress, 0n, false]);
+  });
+
+  it('sells for native HYPE paid straight to the user', () => {
+    const d = decode(encodeAscendSell(nativeRoute, HYPEJAK, 5000n, 40n, USER, DEADLINE).data);
+    expect(d.commands).toEqual([0x10]);
+    expect(coder.decode(['address', 'address', 'uint256'], d.params[2]).toArray()).toEqual([ethers.ZeroAddress, USER, 0n]);
+  });
+
+  it('finds the pool from DexScreener and confirms its key from the chain', async () => {
+    const poolId = v4PoolId(key);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ pairs: [
+      { chainId: 'hyperevm', pairAddress: '0x' + '1'.repeat(64), baseToken: { address: HYPEJAK }, quoteToken: { address: ethers.ZeroAddress }, liquidity: { usd: 1e9 } },
+      { chainId: 'elysium', pairAddress: poolId, baseToken: { address: HYPEJAK }, quoteToken: { address: ethers.ZeroAddress }, liquidity: { usd: 16543 } },
+    ] }), { status: 200 })));
+    const iface = new ethers.Interface(['event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)']);
+    const log = iface.encodeEventLog('Initialize', [poolId, key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks, 1n, 0]);
+    const provider = {
+      getBlockNumber: async () => 3_500_000,
+      getLogs: vi.fn(async (f: any) => (f.toBlock === 3_500_000 ? [{ ...log, address: ASCEND.poolManager }] : [])),
+    } as any;
+    const route = await findElysiumV4Route(provider, HYPEJAK);
+    expect(route).toEqual({ quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: expect.objectContaining({ hooks: HOOK, fee: 0x800000 }) });
+    vi.unstubAllGlobals();
+  });
+});
+

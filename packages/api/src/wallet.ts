@@ -86,6 +86,7 @@ import {
   resolveKleosRoute,
   resolveAscendRoute,
   quoteAscend,
+  findElysiumV4Route,
   ronsPadPriceHype,
   RONSPAD,
   getErc20Balance,
@@ -792,6 +793,57 @@ export async function lookupAscendToken(address: string): Promise<TokenInfoResul
 }
 
 /**
+ * Look up an Elysium coin from a launchpad without special support, through its Uniswap v4 pool against HYPE
+ * (found via DexScreener's Elysium listing, confirmed on chain). Price and market data come from that listing.
+ */
+export async function lookupUniV4Token(address: string): Promise<TokenInfoResult | null> {
+  const provider = getEvmProvider('elysium', false);
+  const route = await findElysiumV4Route(provider, address).catch(() => null);
+  if (!route) return null;
+  const [meta, dex, hypeUsd] = await Promise.all([
+    getErc20TokenInfo(address, 'elysium', false).catch(() => null),
+    fetchDexScreenerTokenData(address, 'elysium').catch(() => null),
+    getHypeUsdPrice().catch(() => 25.0),
+  ]);
+  const decimals = meta?.decimals ?? 18;
+  const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
+  const dexOnElysium = dex && dex.chainId === 'elysium' ? dex : null;
+  let priceUsd = dexOnElysium?.priceUsd || 0;
+  if (!(priceUsd > 0)) {
+    const out = await quoteAscend(provider, route, address, 'buy', 10n ** 15n).catch(() => 0n);
+    priceUsd = out > 0n ? (0.001 / Number(ethers.formatUnits(out, decimals))) * hypeUsd : 0;
+  }
+  const priceHype = hypeUsd > 0 ? priceUsd / hypeUsd : 0;
+  const liquidityUsd = dexOnElysium?.liquidityUsd || 0;
+  const marketCapHype = priceHype * supply;
+  return {
+    address: meta?.address ?? ethers.getAddress(address),
+    chain: 'elysium',
+    name: meta?.name || dexOnElysium?.name || 'Elysium coin',
+    symbol: meta?.symbol || dexOnElysium?.symbol || 'TKN',
+    decimals,
+    total_supply: meta?.totalSupply ?? '0',
+    price: priceHype.toString(),
+    price_usd: priceUsd.toString(),
+    liquidity: (hypeUsd > 0 ? liquidityUsd / hypeUsd : 0).toFixed(2),
+    liquidity_usd: liquidityUsd.toFixed(2),
+    market_cap: marketCapHype,
+    market_cap_usd: marketCapHype * hypeUsd,
+    near_usd: hypeUsd,
+    venue: 'univ4',
+    launchpad: 'Uniswap v4',
+    tradeable: isKleosTradingEnabled(),
+    price_24h_change: dexOnElysium?.priceChange24h,
+    volume_24h_usd: dexOnElysium?.volume24hUsd,
+    buys_count: dexOnElysium?.buys24h,
+    sells_count: dexOnElysium?.sells24h,
+    // The pool's own fee and hook are counted in every quote
+    buy_tax_pct: 0,
+    sell_tax_pct: 0,
+  } as TokenInfoResult;
+}
+
+/**
  * Look up a coin launched on RonsPad (ronspad.fun), the other launchpad on Elysium mainnet. Everything is
  * read from the chain: PadFactory names its own launches, and the coin's pool gives its price and depth.
  */
@@ -866,9 +918,9 @@ export async function lookupKleosToken(address: string, boardCoin?: any): Promis
   } else if (!coin) {
     // Not on the Kleos board: a coin launched in the last minute, or a token from another Elysium launchpad.
     // A Kleos router that quotes it proves it is Kleos's; otherwise say plainly that it can't be traded here.
-    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address).then(() => true).catch(() => false);
+    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address, undefined, { allowUniV4: false }).then(() => true).catch(() => false);
     if (!routed) {
-      noRouteReason = 'This Elysium token is not a Kleos, RonsPad or Ascend coin, the Elysium launchpads RacerBot trades, so it can’t be bought here yet.';
+      noRouteReason = 'RacerBot could not find a HYPE pool for this Elysium token, so it can’t be bought here yet.';
     }
   }
   return {
@@ -1546,9 +1598,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
       if (!tokenMeta && !dexscreenerData) {
         // Elysium mainnet launchpads: RonsPad and Ascend name their launches on chain, then Kleos coins newer than its board
-        const kleos = (await lookupRonsPadToken(tokenAddress).catch(() => null))
+        let kleos = (await lookupRonsPadToken(tokenAddress).catch(() => null))
           ?? (await lookupAscendToken(tokenAddress).catch(() => null))
           ?? await lookupKleosToken(tokenAddress, null).catch(() => null);
+        // Not a Kleos coin either: another launchpad's coin trades through its Uniswap v4 pool against HYPE
+        if (!kleos || (kleos.venue === 'kleos' && kleos.trade_block_reason)) {
+          kleos = (await lookupUniV4Token(tokenAddress).catch(() => null)) ?? kleos;
+        }
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
           tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

@@ -83,7 +83,7 @@ describe('Kleos (Elysium mainnet) tokens', () => {
     resolveKleosRoute.mockRejectedValue(new Error('No Kleos router trades this coin.'));
     const info = await lookupKleosToken(KSOCKS, null);
     expect(info).toMatchObject({ chain: 'elysium', tradeable: false });
-    expect(info!.trade_block_reason).toMatch(/not a Kleos, RonsPad or Ascend coin/);
+    expect(info!.trade_block_reason).toMatch(/could not find a HYPE pool/);
   });
 
   it('never takes an Elysium coin listed on DexScreener for a HyperEVM token', async () => {
