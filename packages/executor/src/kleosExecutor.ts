@@ -37,6 +37,7 @@ import {
   elysiumPadName,
   ascendSellApprovals,
   montraSellApprovals,
+  padSellApprovals,
   simulateV4RoundTrip,
 } from '@racerbot/shared';
 import {
@@ -169,7 +170,8 @@ export async function executeKleosSwap(
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
   // RonsPad, Ascend, Montra and Uniswap v4 coins trade through the same Elysium flow
-  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'montra' ? 'montra' : route.kind === 'univ4' ? 'univ4' : 'kleos';
+  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'montra' ? 'montra'
+    : route.kind === 'pad' ? route.pad!.pad.name : route.kind === 'padv3' ? 'elyspump' : route.kind === 'univ4' ? 'univ4' : 'kleos';
   const venueName = elysiumPadName(fillVenue);
 
   const direct = isElysiumDirectSend();
@@ -370,7 +372,9 @@ export async function executeKleosSwap(
   const sell = encodeKleosSell(route, token, amountIn, minOut, userAddress, deadline);
 
   // Exactly this amount, as the launchpads' own apps approve. Ascend, univ4 and multi-hop Montra pull coins through Permit2 (two approvals).
-  const approvals: EvmCall[] = route.kind === 'ascend' || route.kind === 'univ4'
+  const approvals: EvmCall[] = route.kind === 'pad'
+    ? await padSellApprovals(l2, route.pad!, userAddress, amountIn)
+    : route.kind === 'ascend' || route.kind === 'univ4'
     ? await ascendSellApprovals(l2, token, userAddress, amountIn)
     : route.kind === 'montra'
       ? await montraSellApprovals(l2, route.montra!, token, userAddress, amountIn)
