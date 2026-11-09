@@ -1045,6 +1045,18 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
       return;
     }
 
+    // Elysium mainnet coins (Kleos, RonsPad) trade with HYPE through the EVM executor, not the NEAR path below
+    if (typeof tokenAddress === 'string' && tokenAddress.startsWith('0x') && !isPrivateTrade) {
+      const { executeWebElysiumTrade } = await import('../elysiumWebTrade.js');
+      const elysium = await executeWebElysiumTrade(user, tokenAddress, {
+        side, amountHype: req.body.amountHype, sellPercent: req.body.sellPercent, slippagePct,
+      });
+      if (elysium) {
+        res.status(elysium.status).json(elysium.body);
+        return;
+      }
+    }
+
     const { inferVenueFromToken, normalizeVenueName } = await import('../racerAlpha.js');
     const isBuy = side.toUpperCase() === 'BUY';
     const numNear = Number(amountNear) || 1.0;

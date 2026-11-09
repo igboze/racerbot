@@ -15,10 +15,8 @@ import {
   getEvmWalletFromEncrypted,
   toTokenUnits,
   ERC20_ABI,
-  ELYSIUM_BRIDGE,
-  ELYSIUM_INBOX_ABI,
   elysiumInboxMaxFeePerGas,
-  encodeSignedTxMessage,
+  sendElysiumTransaction,
   type EvmChain,
 } from '@racerbot/shared';
 import {
@@ -34,7 +32,6 @@ const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || '';
 export const MAX_EVM_WALLETS_PER_USER = 5;
 
 /** Gas for the HyperEVM transaction that posts an Elysium call into the inbox */
-const HYPEREVM_INBOX_GAS_RESERVE = ethers.parseEther('0.0002');
 /** Gas an inbox-delivered Elysium token transfer is given; unused gas is refunded */
 const ELYSIUM_TOKEN_TRANSFER_GAS = 150_000n;
 const HYPEREVM_TOKEN_TRANSFER_GAS = 120_000n;
@@ -199,8 +196,8 @@ export async function planEvmTokenSend(user: UserRecord, tokenInput: string, to:
   throw new Error('Your EVM wallet holds none of that token on HyperEVM or Elysium. Check the token address.');
 }
 
-/** Sends a planned ERC-20 transfer: directly on HyperEVM, through the HyperEVM inbox on Elysium */
-export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Promise<{ txHash: string; elysiumTxHash?: string }> {
+/** Sends a planned ERC-20 transfer directly on HyperEVM or Elysium (the HyperEVM inbox when ELYSIUM_SEND_MODE=inbox) */
+export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Promise<{ txHash: string; elysiumTxHash?: string; viaInbox?: boolean }> {
   if (!user.evm_address || !user.evm_private_key_enc) throw new Error('EVM wallet not configured.');
   // Re-check right before signing: the plan may have waited on a confirm button
   const problem = evmRecipientProblem(plan.to, user.evm_address);
@@ -221,29 +218,13 @@ export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Pr
 
   const elysium = getEvmProvider('elysium', false);
   const l2Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, elysium);
-  const [l2Balance, l1Balance, l2Block, nonce] = await Promise.all([
-    elysium.getBalance(user.evm_address),
-    hyperevm.getBalance(user.evm_address),
-    elysium.getBlock('latest'),
-    elysium.getTransactionCount(user.evm_address, 'pending'),
-  ]);
+  const [l2Balance, l2Block] = await Promise.all([elysium.getBalance(user.evm_address), elysium.getBlock('latest')]);
   const maxFeePerGas = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);
   if (l2Balance < ELYSIUM_TOKEN_TRANSFER_GAS * maxFeePerGas) {
     throw new Error('You need a little HYPE on Elysium for gas before sending tokens there.');
   }
-  if (l1Balance < HYPEREVM_INBOX_GAS_RESERVE) {
-    throw new Error(`Sending on Elysium needs about ${ethers.formatEther(HYPEREVM_INBOX_GAS_RESERVE)} HYPE on HyperEVM for the inbox transaction.`);
-  }
-  const raw = await l2Signer.signTransaction({
-    type: 2, chainId: Number(ELYSIUM_BRIDGE.childChainId), nonce,
-    to: plan.token, data, value: 0n, gasLimit: ELYSIUM_TOKEN_TRANSFER_GAS, maxFeePerGas, maxPriorityFeePerGas: 0n,
+  const sent = await sendElysiumTransaction({
+    elysium, l2Signer, l1Signer, hyperevm, tx: { to: plan.token, data }, inboxGasLimit: ELYSIUM_TOKEN_TRANSFER_GAS,
   });
-  const inbox = new ethers.Interface(ELYSIUM_INBOX_ABI);
-  const tx = await l1Signer.sendTransaction({
-    to: ELYSIUM_BRIDGE.inbox,
-    data: inbox.encodeFunctionData('sendL2Message', [encodeSignedTxMessage([raw])]),
-  });
-  const receipt = await tx.wait(1);
-  if (receipt?.status !== 1) throw new Error('The HyperEVM inbox transaction reverted. Nothing was sent on Elysium.');
-  return { txHash: receipt.hash, elysiumTxHash: ethers.keccak256(raw) };
+  return { txHash: sent.inboxTxHash ?? sent.elysiumTxHash, elysiumTxHash: sent.elysiumTxHash, viaInbox: Boolean(sent.inboxTxHash) };
 }

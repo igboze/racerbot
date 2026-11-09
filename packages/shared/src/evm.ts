@@ -30,8 +30,9 @@ export const HYPE_DECIMALS = 18;
 export const HYPEREVM_MAINNET_RPC = 'https://rpc.hyperliquid.xyz/evm';
 export const HYPEREVM_TESTNET_RPC = 'https://rpc.hyperliquid-testnet.xyz/evm';
 export const ELYSIUM_TESTNET_RPC = 'https://testnet-rpc.elysium.kinetiq.xyz';
-// Elysium mainnet (99901) is the chain the Kleos launchpad runs on; its RPC is the only public one so far
-export const ELYSIUM_MAINNET_RPC = 'https://rpc.thekleos.xyz/rpc';
+// Elysium mainnet (99901), where Kleos runs: Kinetiq's public RPC (sequencer open since 2026-11-09).
+// rpc.thekleos.xyz/rpc was the pre-launch Kleos relay; it still answers but is a third party.
+export const ELYSIUM_MAINNET_RPC = 'https://rpc.elysium.kinetiq.xyz';
 export const KLEOS_TOKEN_URL = 'https://www.thekleos.xyz/token';
 
 // Precompiles & System Contracts
@@ -413,7 +414,7 @@ export async function simulateEvmTrade(
         sellSimulated: false,
         estimatedBuyTaxPct: 0,
         estimatedSellTaxPct: 0,
-        reason: 'Contract address has no bytecode (EOA or not deployed).',
+        reason: `There is no token at this address on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}. Check the address, and that it is on the chain you meant. Nothing was spent.`,
       };
     }
 

@@ -31,6 +31,11 @@ import {
   toTokenUnits,
   type EvmCall,
   distributeTradeFeeRewards,
+  isElysiumDirectSend,
+  elysiumGasLimit,
+  describeElysiumSendError,
+  elysiumPadName,
+  ascendSellApprovals,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -44,9 +49,13 @@ import type { EvmSwapExecutionResult } from './evmExecutor.js';
 
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || '';
 const CONFIRM_TIMEOUT_MS = Number(process.env.KLEOS_CONFIRM_TIMEOUT_MS || 300_000);
-const POLL_MS = 4_000;
+// Direct Elysium transactions confirm in about a second; inbox messages take minutes
+const pollMs = () => (isElysiumDirectSend() ? 1_000 : 4_000);
 // An inbox message can wait up to the 24h force-inclusion delay; minOut is the price guard, as in the Kleos app
 const INBOX_DEADLINE_SEC = 3 * 24 * 3600;
+// Gas budgeted for a direct Elysium buy or sell when checking a balance (hop coins use up to ~660k; unused gas is never charged)
+const ELYSIUM_DIRECT_TRADE_GAS = 800_000n;
+const ELYSIUM_DIRECT_APPROVE_GAS = 80_000n;
 // HYPE sent along with a HyperEVM-paid buy so the coins can be sold later (approve + sell gas on Elysium)
 export const KLEOS_SELL_GAS_TOPUP = ethers.parseEther('0.0005');
 // Gas for the HyperEVM transaction that carries the order into the inbox (~93k used)
@@ -64,8 +73,11 @@ export function chooseKleosBuyFunding(p: {
   elysiumGasCost: bigint;
   hyperevmBalance: bigint;
   ticketDeposit: bigint;
+  /** True when signed Elysium transactions go through the HyperEVM inbox, which costs HyperEVM gas */
+  viaInbox?: boolean;
 }): KleosBuyFunding | null {
-  if (p.elysiumBalance >= p.gross + p.elysiumGasCost && p.hyperevmBalance >= HYPEREVM_INBOX_GAS_RESERVE) return 'elysium';
+  const inboxGasOk = !p.viaInbox || p.hyperevmBalance >= HYPEREVM_INBOX_GAS_RESERVE;
+  if (p.elysiumBalance >= p.gross + p.elysiumGasCost && inboxGasOk) return 'elysium';
   if (p.hyperevmBalance >= p.ticketDeposit + HYPEREVM_INBOX_GAS_RESERVE) return 'hyperevm';
   return null;
 }
@@ -75,7 +87,7 @@ async function waitForElysiumReceipt(provider: ethers.JsonRpcProvider, hash: str
   while (Date.now() < until) {
     const receipt = await provider.getTransactionReceipt(hash).catch(() => null);
     if (receipt) return receipt;
-    await new Promise(r => setTimeout(r, POLL_MS));
+    await new Promise(r => setTimeout(r, pollMs()));
   }
   return null;
 }
@@ -96,8 +108,17 @@ const notYetRun = (what: string, parentTx: string): string =>
   `${what} was sent into the Elysium inbox (${HYPEREVM_EXPLORER_URL}/tx/${parentTx}) but has not run on Elysium yet. ` +
   `It usually runs within a few minutes. Check your Kleos balance before trying again, so you don't buy twice.`;
 
+const notYetConfirmed = (what: string, elysiumTx: string): string =>
+  `${what} was sent to Elysium (${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${elysiumTx}) but no confirmation arrived yet. ` +
+  `Check your balance before trying again, so you don't trade twice.`;
+
+/** A signed Elysium transaction the RPC refused (or would revert); its message is already in plain language */
+class ElysiumSendError extends Error {}
+
 /**
- * Buy or sell a Kleos coin on Elysium mainnet, entering through the HyperEVM inbox.
+ * Buy or sell a Kleos (or RonsPad) coin on Elysium mainnet. Signed transactions go straight to Elysium
+ * (ELYSIUM_SEND_MODE=inbox posts them through the HyperEVM inbox instead); a buy paid from HyperEVM HYPE
+ * enters through a retryable ticket in the HyperEVM inbox.
  * Buys pay the 1.5% platform fee in the same Multicall3 call as the swap; sells pay none, as on HyperEVM.
  */
 export async function executeKleosSwap(
@@ -112,7 +133,7 @@ export async function executeKleosSwap(
   const user = await getUserById(user_id);
   if (!user) throw new Error(`User not found: ${user_id}`);
   const activeWallet = await getActiveWallet(user.id, chain).catch(() => null);
-  const userAddress = activeWallet?.address || user.evm_address;
+  const userAddress: string = activeWallet?.address || user.evm_address || '';
   const userKeyEnc = activeWallet?.encrypted_private_key || user.evm_private_key_enc;
   if (!userAddress || !userKeyEnc) throw new Error(`User ${user_id} does not have an initialized EVM wallet.`);
 
@@ -143,12 +164,39 @@ export async function executeKleosSwap(
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
   // RonsPad coins trade through the same inbox flow, on RonsPad's PadFactory
-  const venueName = route.kind === 'ronspad' ? 'RonsPad' : 'Kleos';
-  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : 'kleos';
+  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : 'kleos';
+  const venueName = elysiumPadName(fillVenue);
 
+  const direct = isElysiumDirectSend();
   const l2Block = await l2.getBlock('latest');
   const l2MaxFee = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + INBOX_DEADLINE_SEC);
+  // A direct transaction runs within seconds; an inbox message can wait up to the 24h force-inclusion delay
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + (direct ? 20 * 60 : INBOX_DEADLINE_SEC));
+
+  /**
+   * Signs one Elysium transaction from the user's own address and sends it straight to the Elysium RPC.
+   * Gas is estimated first, so a call that would revert is never sent.
+   */
+  const sendDirect = async (call: EvmCall): Promise<string> => {
+    let estimate: bigint;
+    try {
+      estimate = await l2.estimateGas({ from: userAddress, to: call.to, data: call.data, value: call.value });
+    } catch (err) {
+      throw new ElysiumSendError(describeKleosRevert(err));
+    }
+    const nonce = await l2.getTransactionCount(userAddress, 'pending');
+    const raw = await l2Signer.signTransaction({
+      type: 2, chainId: Number(ELYSIUM_BRIDGE.childChainId), nonce,
+      to: call.to, data: call.data, value: call.value,
+      gasLimit: elysiumGasLimit(estimate), maxFeePerGas: l2MaxFee, maxPriorityFeePerGas: 0n,
+    });
+    try {
+      await l2.send('eth_sendRawTransaction', [raw]);
+    } catch (err) {
+      throw new ElysiumSendError(describeElysiumSendError(err));
+    }
+    return ethers.keccak256(raw);
+  };
 
   /** Signs Elysium transactions from the user's own address and posts them into the inbox from HyperEVM */
   const sendSigned = async (calls: { call: EvmCall; gasLimit: bigint }[]): Promise<{ hashes: string[]; parentTx: string }> => {
@@ -186,14 +234,16 @@ export async function executeKleosSwap(
       dataLength: ethers.dataLength(ticketCall.data), l1BaseFee: l1Block?.baseFeePerGas ?? 0n,
       l2BaseFee: l2Block?.baseFeePerGas ?? 0n, gasLimit: KLEOS_INBOX_TRADE_GAS, l2CallValue: ticketCall.value,
     });
+    const elysiumGasCost = (direct ? ELYSIUM_DIRECT_TRADE_GAS : KLEOS_INBOX_TRADE_GAS) * l2MaxFee;
     const funding = chooseKleosBuyFunding({
-      gross, elysiumBalance: l2Balance, elysiumGasCost: KLEOS_INBOX_TRADE_GAS * l2MaxFee,
-      hyperevmBalance: l1Balance, ticketDeposit: ticket.deposit,
+      gross, elysiumBalance: l2Balance, elysiumGasCost,
+      hyperevmBalance: l1Balance, ticketDeposit: ticket.deposit, viaInbox: !direct,
     });
     if (!funding) {
       return fail(
-        `Insufficient HYPE. A ${amount_in} HYPE Kleos buy needs about ${ethers.formatEther(ticket.deposit + HYPEREVM_INBOX_GAS_RESERVE)} HYPE on HyperEVM ` +
-        `(you have ${ethers.formatEther(l1Balance)}), or ${amount_in} HYPE plus gas on Elysium (you have ${ethers.formatEther(l2Balance)}).`
+        `Not enough HYPE. A ${amount_in} HYPE buy needs about ${ethers.formatEther(gross + elysiumGasCost)} HYPE on Elysium ` +
+        `(you have ${ethers.formatEther(l2Balance)}), or about ${ethers.formatEther(ticket.deposit + HYPEREVM_INBOX_GAS_RESERVE)} HYPE on HyperEVM ` +
+        `(you have ${ethers.formatEther(l1Balance)}). Nothing was spent.`
       );
     }
 
@@ -207,8 +257,15 @@ export async function executeKleosSwap(
     const before = await getErc20Balance(token, userAddress, chain, false);
     onProgress?.('executing_swap');
     let swapTxHash: string | null;
-    let parentTx: string;
-    if (funding === 'elysium') {
+    let parentTx = '';
+    if (funding === 'elysium' && direct) {
+      try {
+        swapTxHash = await sendDirect(call);
+      } catch (err: any) {
+        if (err instanceof ElysiumSendError) return fail(`This buy could not be sent: ${err.message} Nothing was spent.`);
+        throw err;
+      }
+    } else if (funding === 'elysium') {
       const sent = await sendSigned([{ call, gasLimit: KLEOS_INBOX_TRADE_GAS }]);
       parentTx = sent.parentTx;
       swapTxHash = sent.hashes[0];
@@ -232,7 +289,7 @@ export async function executeKleosSwap(
 
     onProgress?.('waiting_elysium');
     const swapReceipt = await waitForElysiumReceipt(l2, swapTxHash);
-    if (!swapReceipt) return fail(notYetRun('Your buy', parentTx));
+    if (!swapReceipt) return fail(parentTx ? notYetRun('Your buy', parentTx) : notYetConfirmed('Your buy', swapTxHash));
     if (swapReceipt.status !== 1) {
       return fail(funding === 'hyperevm'
         ? 'The buy ran on Elysium but reverted (usually the price moved past your slippage). Its HYPE waits in the ticket and returns to your Elysium address when it expires (7 days).'
@@ -297,16 +354,22 @@ export async function executeKleosSwap(
   const minOut = calculateSlippageMin(expectedHype, slippage_pct);
   const sell = encodeKleosSell(route, token, amountIn, minOut, userAddress, deadline);
 
-  const allowance: bigint = await coin.allowance(userAddress, route.router);
+  // Exactly this amount, as the launchpads' own apps approve. Ascend pulls coins through Permit2 (two approvals).
+  const approvals: EvmCall[] = route.kind === 'ascend'
+    ? await ascendSellApprovals(l2, token, userAddress, amountIn)
+    : (await coin.allowance(userAddress, route.router)) < amountIn
+      ? [{ to: token, data: new ethers.Interface(ERC20_ABI).encodeFunctionData('approve', [route.router, amountIn]), value: 0n }]
+      : [];
+  const needsApprove = approvals.length > 0;
+  if (direct) return sellDirect();
+
   const calls: { call: EvmCall; gasLimit: bigint }[] = [];
-  if (allowance < amountIn) {
-    // Exactly this amount, as the Kleos app approves
-    const approve = new ethers.Interface(ERC20_ABI).encodeFunctionData('approve', [route.router, amountIn]);
-    calls.push({ call: { to: token, data: approve, value: 0n }, gasLimit: KLEOS_INBOX_APPROVE_GAS });
+  if (needsApprove) {
+    for (const call of approvals) calls.push({ call, gasLimit: KLEOS_INBOX_APPROVE_GAS });
   } else {
     onProgress?.('simulating');
     const simError = await simulateOnElysium(l2, userAddress, sell, false);
-    if (simError) return fail(`This sell would fail on Kleos: ${simError} Nothing was sold.`);
+    if (simError) return fail(`This sell would fail on ${venueName}: ${simError} Nothing was sold.`);
   }
   calls.push({ call: sell, gasLimit: KLEOS_INBOX_TRADE_GAS });
 
@@ -331,32 +394,75 @@ export async function executeKleosSwap(
     if (!receipt) return fail(notYetRun('Your sell', sent.parentTx));
     receipts.push(receipt);
   }
-  const sellReceipt = receipts[receipts.length - 1];
-  if (sellReceipt.status !== 1) {
+  if (receipts[receipts.length - 1].status !== 1) {
     return fail('The sell ran on Elysium but reverted (usually the price moved past your slippage). Only its gas was spent; you still hold the coins.');
   }
 
-  // HYPE received = balance change plus the gas both transactions paid
-  const l2After = await l2.getBalance(userAddress);
-  const gasPaid = receipts.reduce((sum, r) => sum + r.gasUsed * (r.gasPrice ?? 0n), 0n);
-  const receivedRaw = l2After + gasPaid - l2Before;
-  const receivedHype = Number(ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n));
-  const priceHype = receivedHype / (Number(soldQty) || 1);
+  return finishSell(receipts, l2Before);
 
-  const openPositions = await getOpenPositions(user.id);
-  const pos = openPositions.find(p => p.token_address === token && p.chain === (chain as any));
-  if (pos) {
-    const fill = await createFill({
-      user_id: user.id, position_id: pos.id, chain: chain as any, side: 'sell', token_address: token,
-      amount: soldQty, price: priceHype.toString(), fee_paid: '0',
-      input_amount: ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n), venue: fillVenue, tx_hash: sellReceipt.hash,
-    }).catch(() => null);
-    if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, '0').catch(() => {});
+  /** Approve (when needed), then sell, each sent straight to Elysium and confirmed before the next */
+  async function sellDirect(): Promise<EvmSwapExecutionResult> {
+    const gasNeeded = (ELYSIUM_DIRECT_APPROVE_GAS * BigInt(approvals.length) + ELYSIUM_DIRECT_TRADE_GAS) * l2MaxFee;
+    const l2Before = await l2.getBalance(userAddress);
+    if (l2Before < gasNeeded) {
+      return fail(
+        `Selling needs about ${ethers.formatEther(gasNeeded)} HYPE on Elysium for gas; you have ${ethers.formatEther(l2Before)}. ` +
+        `Add a little HYPE to your Elysium wallet first. Nothing was sold.`
+      );
+    }
+    const receipts: ethers.TransactionReceipt[] = [];
+    try {
+      for (const approveCall of approvals) {
+        onProgress?.('approving');
+        const approveHash = await sendDirect(approveCall);
+        const approveReceipt = await waitForElysiumReceipt(l2, approveHash);
+        if (!approveReceipt) return fail(notYetConfirmed(`The approval to sell ${tokenSymbol}`, approveHash));
+        if (approveReceipt.status !== 1) return fail('The approval to sell was refused on Elysium. Only its gas was spent; you still hold the coins.');
+        receipts.push(approveReceipt);
+      }
+      onProgress?.('simulating');
+      const simError = await simulateOnElysium(l2, userAddress, sell, false);
+      if (simError) return fail(`This sell would fail on ${venueName}: ${simError} Nothing was sold.`);
+      onProgress?.('executing_swap');
+      const sellHash = await sendDirect(sell);
+      onProgress?.('waiting_elysium');
+      const sellReceipt = await waitForElysiumReceipt(l2, sellHash);
+      if (!sellReceipt) return fail(notYetConfirmed('Your sell', sellHash));
+      receipts.push(sellReceipt);
+    } catch (err: any) {
+      if (err instanceof ElysiumSendError) return fail(`This sell could not be sent: ${err.message} Nothing was sold.`);
+      throw err;
+    }
+    if (receipts[receipts.length - 1].status !== 1) {
+      return fail('The sell ran on Elysium but reverted (usually the price moved past your slippage). Only its gas was spent; you still hold the coins.');
+    }
+    return finishSell(receipts, l2Before);
   }
 
-  return {
-    txHash: sellReceipt.hash, success: true, chain, positionId: pos?.id, tokenName, tokenSymbol,
-    tokenQty: soldQty, priceHype, hypeSpentOrReceived: receivedHype,
-    explorerUrl: `${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${sellReceipt.hash}`,
-  };
+  async function finishSell(receipts: ethers.TransactionReceipt[], l2Before: bigint): Promise<EvmSwapExecutionResult> {
+    const sellReceipt = receipts[receipts.length - 1];
+    // HYPE received = balance change plus the gas every transaction paid
+    const l2After = await l2.getBalance(userAddress);
+    const gasPaid = receipts.reduce((sum, r) => sum + r.gasUsed * (r.gasPrice ?? 0n), 0n);
+    const receivedRaw = l2After + gasPaid - l2Before;
+    const receivedHype = Number(ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n));
+    const priceHype = receivedHype / (Number(soldQty) || 1);
+
+    const openPositions = await getOpenPositions(user!.id);
+    const pos = openPositions.find(p => p.token_address === token && p.chain === (chain as any));
+    if (pos) {
+      const fill = await createFill({
+        user_id: user!.id, position_id: pos.id, chain: chain as any, side: 'sell', token_address: token,
+        amount: soldQty, price: priceHype.toString(), fee_paid: '0',
+        input_amount: ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n), venue: fillVenue, tx_hash: sellReceipt.hash,
+      }).catch(() => null);
+      if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, '0').catch(() => {});
+    }
+
+    return {
+      txHash: sellReceipt.hash, success: true, chain, positionId: pos?.id, tokenName, tokenSymbol,
+      tokenQty: soldQty, priceHype, hypeSpentOrReceived: receivedHype,
+      explorerUrl: `${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${sellReceipt.hash}`,
+    };
+  }
 }
