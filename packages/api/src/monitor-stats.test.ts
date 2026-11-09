@@ -163,4 +163,37 @@ describe('buildVolumeUpdateText', () => {
     expect(text).toContain('• Solana volume: `450 SOL` (~$67,500)');
     expect(text).toContain('• Total trades: `1,444`');
   });
+
+  it('includes HyperEVM and Elysium, and totals every chain in USD', async () => {
+    const { buildVolumeUpdateText } = await import('./monitorStats.js');
+    const stats = {
+      volume24hNear: 1000, fees24hNear: 15, trades24h: 20, buys24h: 25, sells24h: 11, activeTraders24h: 12,
+      volumeTotalNear: 50000, feesTotalNear: 750, tradesTotal: 1000,
+      volume24hSui: 500, fees24hSui: 7.5, trades24hSui: 10, volumeTotalSui: 20000, feesTotalSui: 300, tradesTotalSui: 400,
+      volume24hStarknet: 800, fees24hStarknet: 12, trades24hStarknet: 15, volumeTotalStarknet: 1839.73, feesTotalStarknet: 27.596, tradesTotalStarknet: 14,
+      volume24hSolana: 120, fees24hSolana: 1.8, trades24hSolana: 8, volumeTotalSolana: 450, feesTotalSolana: 6.75, tradesTotalSolana: 30,
+      volume24hHyperevm: 100, trades24hHyperevm: 4, volumeTotalHyperevm: 400, tradesTotalHyperevm: 16,
+      volume24hElysium: 50, trades24hElysium: 2, volumeTotalElysium: 200, tradesTotalElysium: 6,
+      usersTotal: 250, newUsers24h: 5,
+    };
+
+    const text = buildVolumeUpdateText(stats as any, 2.5, 1.8, 0.4, 150, 30);
+    expect(text).toContain('🟢 *HyperEVM — 24h*\n• Volume: `100 HYPE` (~$3,000)\n• Trades: `4`');
+    expect(text).toContain('🏛 *Elysium (Kleos) — 24h*\n• Volume: `50 HYPE` (~$1,500)\n• Trades: `2`');
+    expect(text).toContain('• HyperEVM volume: `400 HYPE` (~$12,000)');
+    expect(text).toContain('• Elysium volume: `200 HYPE` (~$6,000)');
+    // 2,500 + 900 + 320 + 18,000 + 3,000 + 1,500
+    expect(text).toContain('• 24h volume: `$26,220`');
+    // 125,000 + 36,000 + 735.89 + 67,500 + 12,000 + 6,000
+    expect(text).toContain('• All-time volume: `$247,236`');
+    expect(text).toContain('• Total trades: `59` (25 buys / 11 sells)');
+    expect(text).toContain('• Total trades: `1,466`');
+    expect(text).not.toContain('No price right now');
+
+    // Without a HYPE price both HYPE chains drop out of the USD totals, and the report says so
+    const noHype = buildVolumeUpdateText(stats as any, 2.5, 1.8, 0.4, 150, 0);
+    expect(noHype).toContain('• 24h volume: `$21,720`');
+    expect(noHype).toContain('No price right now for HyperEVM, Elysium: not in these totals');
+    expect(noHype).toContain('• Volume: `100 HYPE`\n');
+  });
 });

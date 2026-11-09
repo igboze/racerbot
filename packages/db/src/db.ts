@@ -2211,6 +2211,15 @@ export interface VolumeStats {
   volumeTotalSolana: number;
   feesTotalSolana: number;
   tradesTotalSolana: number;
+  // HyperEVM and Elysium (Kleos): volume in HYPE, both chains trade against HYPE
+  volume24hHyperevm: number;
+  trades24hHyperevm: number;
+  volumeTotalHyperevm: number;
+  tradesTotalHyperevm: number;
+  volume24hElysium: number;
+  trades24hElysium: number;
+  volumeTotalElysium: number;
+  tradesTotalElysium: number;
   // Combined
   usersTotal: number;
   newUsers24h: number;
@@ -2280,7 +2289,27 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
 
-  // Overall 24h trade activity across all chains
+  // HyperEVM and Elysium fills: the fee is taken on buys only (sells record 0),
+  // so volume is the HYPE actually traded (input_amount: HYPE in on a buy, HYPE
+  // out on a sell). Rows still in wei (>= 1e9, see migration 065) are converted.
+  const evm = await db.query(
+    `SELECT
+       chain,
+       COALESCE(SUM(CASE WHEN input_amount >= 1e9 THEN input_amount / 1e18 ELSE input_amount END) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours'), 0)::float AS volume24,
+       COALESCE(SUM(CASE WHEN input_amount >= 1e9 THEN input_amount / 1e18 ELSE input_amount END), 0)::float AS volume_total,
+       COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
+       COUNT(*)::int AS trades_total
+     FROM fills
+     WHERE chain IN ('hyperevm', 'elysium')
+       AND side IN ('buy', 'sell')
+       AND COALESCE(input_amount, 0) > 0
+       AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')
+     GROUP BY chain`
+  );
+  const evmRow = (chain: string) =>
+    evm.rows.find((r: any) => r.chain === chain) ?? { volume24: 0, volume_total: 0, trades24: 0, trades_total: 0 };
+
+  // Overall 24h trade activity across all chains (EVM sells carry no fee, so they count by amount)
   const activity = await db.query(
     `SELECT
        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours' AND side = 'buy')::int AS buys24,
@@ -2288,7 +2317,8 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        COUNT(DISTINCT user_id) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS traders24
      FROM fills
      WHERE side IN ('buy', 'sell')
-       AND COALESCE(fee_paid::numeric, 0) > 0
+       AND (COALESCE(fee_paid::numeric, 0) > 0
+            OR (chain IN ('hyperevm', 'elysium') AND COALESCE(input_amount, 0) > 0))
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
 
@@ -2305,6 +2335,8 @@ export async function getVolumeStats(): Promise<VolumeStats> {
   const solr = solana.rows[0];
   const act = activity.rows[0];
   const ur = u.rows[0];
+  const hyper = evmRow('hyperevm');
+  const ely = evmRow('elysium');
 
   return {
     // NEAR
@@ -2338,6 +2370,15 @@ export async function getVolumeStats(): Promise<VolumeStats> {
     volumeTotalSolana:   solr.fees_total / 0.015,
     feesTotalSolana:     solr.fees_total,
     tradesTotalSolana:   solr.trades_total,
+    // HyperEVM and Elysium (HYPE)
+    volume24hHyperevm:   hyper.volume24,
+    trades24hHyperevm:   hyper.trades24,
+    volumeTotalHyperevm: hyper.volume_total,
+    tradesTotalHyperevm: hyper.trades_total,
+    volume24hElysium:    ely.volume24,
+    trades24hElysium:    ely.trades24,
+    volumeTotalElysium:  ely.volume_total,
+    tradesTotalElysium:  ely.trades_total,
     // Users
     usersTotal:          ur.total,
     newUsers24h:         ur.new24h,
