@@ -16,6 +16,7 @@ import {
   abortSwarmSession,
 } from '../swarmExecutor.js';
 import { verifiedUser } from './verifiedUser.js';
+import { isNearTokenAddress, NEAR_ONLY_MESSAGE } from '../nearOnly.js';
 
 const logger = createLogger('swarm-routes');
 
@@ -47,6 +48,10 @@ export function createSwarmRouter(): Router {
       const defaultToken = req.body?.tokenAddress;
       const stealthMode = req.body?.stealthMode !== false;
       const totalNear = Number(req.body?.totalNear);
+      if (defaultToken && !isNearTokenAddress(defaultToken)) {
+        res.status(400).json({ success: false, error: NEAR_ONLY_MESSAGE });
+        return;
+      }
 
       const balances = await getUserBalances(user.telegram_id, false, user).catch(() => null);
       const plan = await planSwarmSession({
@@ -56,6 +61,11 @@ export function createSwarmRouter(): Router {
         stealthModeOverride: stealthMode,
         totalNear: Number.isFinite(totalNear) && totalNear > 0 ? totalNear : null,
       });
+      // The prompt can name a token too: the plan's token must be a NEAR one before it is saved
+      if (!isNearTokenAddress(plan.tokenAddress)) {
+        res.status(400).json({ success: false, error: NEAR_ONLY_MESSAGE });
+        return;
+      }
 
       const session = await createAiSwarmSession({
         userId: user.id,

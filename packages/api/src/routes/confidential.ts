@@ -23,6 +23,7 @@ import {
 import { verifiedUser, unprovenWalletClaim } from './verifiedUser.js';
 import { buildRecoveryKit } from '../recoveryKit.js';
 import { generateQrBuffer, generateWalletDeepLink, getTokenByKey, SUPPORTED_CHAINS, unitsToRaw } from '../multichainDeposit.js';
+import { listWithdrawDestinations, quoteWithdrawToChain, withdrawToChain, type WithdrawRequest } from '../crossChainWithdraw.js';
 
 const logger = createLogger('confidential-routes');
 function nearToYocto(n: unknown): bigint | null {
@@ -245,6 +246,63 @@ export function registerConfidentialRoutes(router: Router): void {
       res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Withdrawal sent. It arrives in about 15 seconds.' });
     } catch (err: any) {
       res.status(400).json({ error: err?.message || 'Withdrawal failed' });
+    }
+  });
+
+  /**
+   * Withdraw to another chain (Solana or an EVM chain), from the private balance or the RacerBot wallet.
+   * `destinations` lists the chains and tokens, and the wallets the user signed in with to suggest.
+   */
+  router.get('/alpha/withdraw/destinations', async (req, res) => {
+    try {
+      const user = await authed(req, res);
+      if (!user) return;
+      res.json({
+        success: true,
+        destinations: listWithdrawDestinations(),
+        suggested: { evm: user.evm_address || null, solana: user.solana_address || null },
+        walletManaged: !isExternalWallet(user),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || 'Could not load withdrawal options' });
+    }
+  });
+
+  const withdrawRequest = (body: any): WithdrawRequest | null => {
+    const amountYocto = nearToYocto(body?.amountNear);
+    if (!amountYocto) return null;
+    return { amountYocto, chain: String(body?.chain || ''), symbol: String(body?.symbol || ''), address: String(body?.address || '') };
+  };
+
+  router.post('/alpha/withdraw/quote', async (req, res) => {
+    try {
+      const user = await authed(req, res);
+      if (!user) return;
+      const r = withdrawRequest(req.body);
+      if (!r) {
+        res.status(400).json({ error: 'Enter an amount to withdraw.' });
+        return;
+      }
+      res.json({ success: true, ...(await quoteWithdrawToChain(user, r)) });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Could not price this withdrawal' });
+    }
+  });
+
+  router.post('/alpha/withdraw/send', async (req, res) => {
+    try {
+      const user = await authed(req, res);
+      if (!user) return;
+      const r = withdrawRequest(req.body);
+      if (!r) {
+        res.status(400).json({ error: 'Enter an amount to withdraw.' });
+        return;
+      }
+      const source = req.body?.source === 'wallet' ? 'wallet' : 'private';
+      const result = await withdrawToChain(user, source, r);
+      res.json({ success: true, ...result, amountNear: toNear(r.amountYocto) });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message || 'Withdrawal failed', ...(err instanceof WalletNeedsNearError ? { code: err.code } : {}) });
     }
   });
 

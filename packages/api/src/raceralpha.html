@@ -2932,6 +2932,14 @@
     .pdep-pane[hidden] { display: none; }
     .pdep-from { font: 12px var(--font-mono); color: var(--color-text); word-break: break-all; }
     @media (max-width: 420px) { .pdep-sources { grid-template-columns: 1fr; } }
+    .xw-form { display: flex; flex-direction: column; gap: 10px; }
+    .xw-form > .conf-input { flex: none; }
+    .xw-sources { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .xw-form select.conf-input { font-family: var(--font-body, inherit); }
+    .xw-quote { min-height: 20px; }
+    .xw-quote b { color: var(--color-text); font-variant-numeric: tabular-nums; }
+    .xw-status[data-tone="ok"] { color: var(--color-primary); }
+    .xw-status[data-tone="warn"] { color: #F5B544; }
     @media (max-width: 767px) {
       .receipt-item summary {
         grid-template-columns: minmax(0, 1fr) auto 20px;
@@ -5669,6 +5677,7 @@
                   <input class="conf-input" id="conf-withdraw-amount" type="number" min="0.01" step="0.1" placeholder="Amount (NEAR)" aria-label="Withdraw amount in NEAR">
                   <input class="conf-input" id="conf-withdraw-to" type="text" placeholder="To (default: your wallet)" aria-label="Withdraw destination account">
                   <button type="button" class="receipts-btn" onclick="confWithdraw(this)">Withdraw</button>
+                  <button type="button" class="receipts-btn" onclick="openChainWithdrawModal('private')">To another chain</button>
                 </div>
                 <p class="conf-hint">Deposits arrive in about 20 seconds; withdrawals in about 15. For more privacy, use round amounts and wait a while between depositing and trading.</p>
               </div>
@@ -5844,6 +5853,31 @@
       </div>
       <div class="pdep" data-private-deposit></div>
       <p class="conf-hint" style="margin-top:12px;">Funding RaceFleet or regular (public) trades? Those use your public RacerBot wallet: <a href="/fleet#deposit" style="color:var(--color-primary);">deposit on the Fleet page</a>.</p>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modal-xchain-withdraw" onclick="if(event.target===this)closeChainWithdrawModal()">
+    <div class="modal-window" role="dialog" aria-modal="true" aria-labelledby="xw-title">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px;">
+        <h3 id="xw-title" style="font-family:var(--font-display); font-size:17px; font-weight:800; color:#fff; margin:0;">Withdraw to another chain</h3>
+        <button type="button" class="btn-secondary" onclick="closeChainWithdrawModal()" aria-label="Close" style="min-height:44px; min-width:44px; justify-content:center;">✕</button>
+      </div>
+      <div class="xw-form">
+        <div class="pdep-sources xw-sources" role="group" aria-label="Send from">
+          <button type="button" class="pdep-source" data-xw-src="private" aria-pressed="true">Private balance</button>
+          <button type="button" class="pdep-source" data-xw-src="wallet" aria-pressed="false">RacerBot wallet</button>
+        </div>
+        <div class="conf-row">
+          <select class="conf-input" id="xw-chain" aria-label="Chain to send to"></select>
+          <select class="conf-input" id="xw-token" aria-label="Token to receive"></select>
+        </div>
+        <input class="conf-input" id="xw-address" type="text" autocomplete="off" spellcheck="false" placeholder="Address on that chain" aria-label="Address to send to">
+        <input class="conf-input" id="xw-amount" type="number" min="0.1" step="0.1" placeholder="Amount (NEAR)" aria-label="Amount of NEAR to send">
+        <p class="conf-hint xw-quote" id="xw-quote" aria-live="polite">Pick a chain and enter an amount to see what arrives.</p>
+        <button type="button" class="btn-primary" id="xw-send" style="min-height:44px; justify-content:center;" onclick="sendChainWithdraw(this)">Withdraw</button>
+        <p class="conf-hint xw-status" id="xw-status" aria-live="polite"></p>
+        <p class="conf-hint">Sent through NEAR Intents. If the swap cannot complete, the NEAR comes back to the balance you sent from.</p>
+      </div>
     </div>
   </div>
 
@@ -6987,6 +7021,191 @@
       modal.classList.remove('open');
       modal.style.display = 'none';
       document.body.style.overflow = '';
+    }
+
+    // ── Withdraw to another chain (Solana or EVM) through NEAR Intents ──
+    const xw = { dests: null, suggested: {}, walletManaged: false, source: 'private', autoAddress: '', quoteTimer: null, pollTimer: null, armed: false };
+
+    async function openChainWithdrawModal(source) {
+      const modal = document.getElementById('modal-xchain-withdraw');
+      if (!modal) return;
+      if (!getAuthHeaders().Authorization) { openConnectModal(); return; }
+      modal.classList.add('open');
+      modal.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
+      xwSetStatus('');
+      try {
+        if (!xw.dests) {
+          const res = await fetch('/alpha/withdraw/destinations', { headers: getAuthHeaders() });
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || 'Could not load chains');
+          xw.dests = data.destinations;
+          xw.suggested = data.suggested || {};
+          xw.walletManaged = Boolean(data.walletManaged);
+          const chainSel = document.getElementById('xw-chain');
+          chainSel.innerHTML = '';
+          for (const d of xw.dests) {
+            const o = document.createElement('option');
+            o.value = d.chain;
+            o.textContent = `${d.icon ? d.icon + ' ' : ''}${d.name}`;
+            chainSel.append(o);
+          }
+          // Start on the chain of the wallet they signed in with
+          const start = xw.suggested.solana ? 'sol' : (xw.suggested.evm ? 'base' : 'sol');
+          if (xw.dests.some(d => d.chain === start)) chainSel.value = start;
+          chainSel.addEventListener('change', () => { xwFillTokens(); xwQueueQuote(); });
+          document.getElementById('xw-token').addEventListener('change', xwQueueQuote);
+          document.getElementById('xw-address').addEventListener('input', () => { xw.autoAddress = ''; xwQueueQuote(); });
+          document.getElementById('xw-amount').addEventListener('input', xwQueueQuote);
+          modal.querySelectorAll('[data-xw-src]').forEach(b => b.addEventListener('click', () => xwSelectSource(b.dataset.xwSrc)));
+          xwFillTokens();
+        }
+        const walletBtn = modal.querySelector('[data-xw-src="wallet"]');
+        if (walletBtn) walletBtn.hidden = !xw.walletManaged;
+        xwSelectSource(source === 'wallet' && xw.walletManaged ? 'wallet' : 'private');
+        xwQueueQuote();
+      } catch (err) {
+        xwSetStatus(`Could not load withdrawal options: ${err.message}`, 'warn');
+      }
+    }
+
+    function closeChainWithdrawModal() {
+      const modal = document.getElementById('modal-xchain-withdraw');
+      if (!modal) return;
+      modal.classList.remove('open');
+      modal.style.display = 'none';
+      document.body.style.overflow = '';
+      xwDisarm();
+    }
+
+    function xwSelectSource(src) {
+      xw.source = src;
+      document.querySelectorAll('#modal-xchain-withdraw [data-xw-src]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.xwSrc === src)));
+      xwDisarm();
+    }
+
+    function xwFillTokens() {
+      const chain = document.getElementById('xw-chain').value;
+      const dest = (xw.dests || []).find(d => d.chain === chain);
+      const tokenSel = document.getElementById('xw-token');
+      tokenSel.innerHTML = '';
+      for (const t of (dest?.tokens || [])) {
+        const o = document.createElement('option');
+        o.value = t.symbol;
+        o.textContent = t.symbol;
+        tokenSel.append(o);
+      }
+      // Prefill the wallet they signed in with, when it fits this chain and they have not typed their own
+      const addr = document.getElementById('xw-address');
+      const fit = dest?.addressKind === 'solana' ? xw.suggested.solana : (dest?.addressKind === 'evm' ? xw.suggested.evm : null);
+      if (!addr.value || addr.value === xw.autoAddress) {
+        addr.value = fit || '';
+        xw.autoAddress = fit || '';
+      }
+      addr.placeholder = dest?.addressKind === 'evm' ? 'EVM address (0x...)' : 'Solana address';
+    }
+
+    function xwRequest() {
+      return {
+        source: xw.source,
+        chain: document.getElementById('xw-chain').value,
+        symbol: document.getElementById('xw-token').value,
+        address: document.getElementById('xw-address').value.trim(),
+        amountNear: Number(document.getElementById('xw-amount').value),
+      };
+    }
+
+    function xwSetStatus(text, tone) {
+      const el = document.getElementById('xw-status');
+      if (!el) return;
+      el.textContent = text;
+      if (tone) el.dataset.tone = tone; else delete el.dataset.tone;
+    }
+
+    function xwDisarm() {
+      xw.armed = false;
+      const btn = document.getElementById('xw-send');
+      if (btn) btn.textContent = 'Withdraw';
+    }
+
+    function xwQueueQuote() {
+      xwDisarm();
+      clearTimeout(xw.quoteTimer);
+      xw.quoteTimer = setTimeout(xwQuote, 450);
+    }
+
+    async function xwQuote() {
+      const q = document.getElementById('xw-quote');
+      const r = xwRequest();
+      if (!(r.amountNear > 0) || !r.address) {
+        q.textContent = 'Pick a chain and enter an amount to see what arrives.';
+        return null;
+      }
+      q.textContent = 'Getting a price...';
+      try {
+        const res = await fetch('/alpha/withdraw/quote', { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(r) });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'No price');
+        const chainName = (xw.dests.find(d => d.chain === r.chain) || {}).name || r.chain;
+        const mins = data.timeEstimateSec ? ` · about ${Math.max(1, Math.round(data.timeEstimateSec / 60))} min` : '';
+        q.innerHTML = `You receive about <b>${escapeHtml(data.receive)} ${escapeHtml(data.symbol)}</b> on ${escapeHtml(chainName)} (at least ${escapeHtml(data.minReceive)})${mins}.`;
+        return data;
+      } catch (err) {
+        q.textContent = err.message;
+        return null;
+      }
+    }
+
+    async function sendChainWithdraw(btn) {
+      const r = xwRequest();
+      if (!(r.amountNear > 0)) { showToast('Enter an amount to withdraw.', 'error'); return; }
+      if (!r.address) { showToast('Enter the address to send to.', 'error'); return; }
+      // First click prices it and asks for a confirming click; the second one sends
+      if (!xw.armed) {
+        const quote = await xwQuote();
+        if (!quote) return;
+        xw.armed = true;
+        btn.textContent = `Confirm: send ${r.amountNear} NEAR`;
+        return;
+      }
+      xw.armed = false;
+      try {
+        const data = await confPost('/alpha/withdraw/send', r, btn, 'Sending...');
+        btn.textContent = 'Withdraw';
+        document.getElementById('xw-amount').value = '';
+        xwSetStatus(`Sent. ${data.receive} ${data.symbol} is on its way to ${r.address.slice(0, 6)}...${r.address.slice(-4)}.`, 'ok');
+        showToast('Withdrawal sent', 'success');
+        xwTrack(data.depositAddress, data.symbol);
+        if (r.source === 'private') loadConfidential();
+        else setTimeout(refreshUserBalance, 2500);
+      } catch (err) {
+        btn.textContent = 'Withdraw';
+        xwSetStatus(`Withdrawal failed: ${err.message} Nothing left your balance.`, 'warn');
+      }
+    }
+
+    /** Follow the payout until it lands or comes back */
+    function xwTrack(depositAddress, symbol) {
+      if (!depositAddress) return;
+      clearInterval(xw.pollTimer);
+      const started = Date.now();
+      xw.pollTimer = setInterval(async () => {
+        if (Date.now() - started > 15 * 60_000) { clearInterval(xw.pollTimer); return; }
+        try {
+          const res = await fetch(`/deposit/status?address=${encodeURIComponent(depositAddress)}`);
+          const data = await res.json();
+          const st = String(data.status || '').toUpperCase();
+          if (st === 'SUCCESS') {
+            clearInterval(xw.pollTimer);
+            xwSetStatus(`Arrived: your ${symbol} has been delivered.`, 'ok');
+          } else if (st === 'REFUNDED' || st === 'FAILED' || st === 'EXPIRED') {
+            clearInterval(xw.pollTimer);
+            xwSetStatus('The swap could not complete, so the NEAR is going back to the balance you sent from.', 'warn');
+          } else if (st === 'PROCESSING') {
+            xwSetStatus(`Swapping and sending your ${symbol}...`);
+          }
+        } catch { /* keep polling */ }
+      }, 5000);
     }
 
     async function confWithdraw(btn) {
@@ -11182,6 +11401,7 @@
                 <button type="button" class="btn-secondary" style="height:44px; min-height:44px; padding:0 12px; font-size:12.5px;" onclick="fundTradingWallet(this)">Fund from wallet</button>
                 <button type="button" class="btn-secondary" style="height:44px; min-height:44px; padding:0 12px; font-size:12.5px;" onclick="navigator.clipboard.writeText(document.getElementById('trading-wallet-address').textContent).then(() => showToast('Address copied', 'success'))">Copy</button>
               </div>
+              <button type="button" class="btn-secondary" style="height:44px; min-height:44px; justify-content:center; font-size:12.5px;" onclick="openChainWithdrawModal('wallet')">Withdraw to another chain</button>
               <span style="color:var(--color-text-subtle); font-size:12px;">Trades and private trading run from this wallet without wallet pop-ups. RacerBot keeps its key encrypted on the server; it is never sent to your browser.</span>`;
             const addrEl = document.getElementById('trading-wallet-address');
             if (addrEl) addrEl.textContent = data.address;
@@ -11512,6 +11732,11 @@
         const depositModal = document.getElementById('modal-deposit');
         if (depositModal && depositModal.style.display === 'flex') {
           closeDepositModal();
+          return;
+        }
+        const chainWithdrawModal = document.getElementById('modal-xchain-withdraw');
+        if (chainWithdrawModal && chainWithdrawModal.classList.contains('open')) {
+          closeChainWithdrawModal();
           return;
         }
         const mobileDrawer = document.getElementById('mobile-nav-drawer');

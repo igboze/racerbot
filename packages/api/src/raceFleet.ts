@@ -25,6 +25,7 @@ import {
   updateRaceFleetOrderStatus,
   renewRaceFleet,
   getDb,
+  getActiveWallet,
   recordRaceFleetFill,
   getRaceFleetFills,
   type RaceFleetRecord,
@@ -103,6 +104,15 @@ export async function hasActiveRaceFleet(userId: string): Promise<boolean> {
   }
 }
 
+/**
+ * The NEAR account that pays for a fleet: withdrawFunds signs from the active NEAR wallet (else the
+ * user's account), so balance checks must read that same account.
+ */
+async function fleetPayerAccount(user: UserRecord): Promise<string> {
+  const active = await getActiveWallet(user.id, 'near').catch(() => null);
+  return active?.address || user.subaccount_id;
+}
+
 async function resolveFleetUser(userOrTelegramId: number | string | UserRecord): Promise<UserRecord | null> {
   if (typeof userOrTelegramId === 'object' && userOrTelegramId && 'id' in userOrTelegramId) {
     return userOrTelegramId;
@@ -136,8 +146,9 @@ export async function deployRaceFleet(
   const clampedCount = Math.max(MIN_FLEET_WALLETS, Math.min(MAX_FLEET_WALLETS, walletCount));
   const near = getNear();
 
-  // 1. Verify User Balance has at least 2.0 NEAR
-  const balanceYocto = await near.getNearBalance(user.subaccount_id).catch(() => '0');
+  // 1. The wallet that pays the subscription must hold the fee plus a little for gas
+  const payer = await fleetPayerAccount(user);
+  const balanceYocto = await near.getNearBalance(payer).catch(() => '0');
   const balanceNear = Number(BigInt(balanceYocto || '0') / 10n ** 20n) / 10_000;
 
   if (balanceNear < RACEFLEET_MONTHLY_FEE_NEAR + 0.05) {
@@ -147,96 +158,102 @@ export async function deployRaceFleet(
     };
   }
 
-  // 2. Collect 2 NEAR Subscription Fee to Treasury
-  try {
-    const feeWithdrawal = await withdrawFunds(user, TREASURY_ACCOUNT_ID, RACEFLEET_MONTHLY_FEE_NEAR);
-    logger.info(`Paid RaceFleet subscription fee for user ${user.id}: tx ${feeWithdrawal.txHash}`);
-  } catch (payErr: any) {
-    return { success: false, reason: `Subscription payment failed: ${payErr?.message || payErr}` };
-  }
-
-  // 3. Generate Fleet Tag & Child Accounts
-  const fleetTag = generateRandomFleetTag();
-  const parentAccountName = RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
-
-  const walletKeys: {
-    accountId: string;
-    keyPair: KeyPair;
-    encryptedKey: string;
-    walletIndex: number;
-  }[] = [];
-
-  for (let i = 1; i <= clampedCount; i++) {
-    const prefix = generateRandomAccountPrefix();
-    const accountId = `${prefix}.${parentAccountName}`;
-    const keyPair = generateFleetKeyPair();
-    const encryptedKey = encrypt(keyPair.toString(), MASTER_KEY);
-    walletKeys.push({
-      accountId,
-      keyPair,
-      encryptedKey,
-      walletIndex: i,
-    });
-  }
-
-  // 4. Deploy Subaccounts on NEAR Mainnet via Parent Account
   if (!MAIN_WALLET_PRIVATE_KEY) {
     return { success: false, reason: 'Server configuration error: MAIN_WALLET_PRIVATE_KEY missing.' };
   }
 
+  // 2. Generate the fleet's accounts and keys
+  const fleetTag = generateRandomFleetTag();
+  const parentAccountName = RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
+  const walletKeys: { accountId: string; keyPair: KeyPair; encryptedKey: string }[] = [];
+  for (let i = 1; i <= clampedCount; i++) {
+    const keyPair = generateFleetKeyPair();
+    walletKeys.push({
+      accountId: `${generateRandomAccountPrefix()}.${parentAccountName}`,
+      keyPair,
+      encryptedKey: encrypt(keyPair.toString(), MASTER_KEY),
+    });
+  }
+
+  // 3. Create the accounts before charging anything: the fee is only taken for a fleet that exists.
+  // Each account is created on its own, so one failure never discards the ones that worked.
   const parentKeyPair = KeyPair.fromString(MAIN_WALLET_PRIVATE_KEY as any);
-  const initialStorageDeposit = nearUtils.format.parseNearAmount('0.00182')!;
+  const initialStorageDeposit = BigInt(nearUtils.format.parseNearAmount('0.00182')!);
+  const created: typeof walletKeys = [];
+  let lastCreateError = '';
 
   try {
     await connectWithNearRpcFailover(parentAccountName, parentKeyPair, async (parentAccount) => {
-      // Deploy all subaccounts in parallel batches of 5 to avoid RPC spam
-      const batchSize = 5;
-      for (let i = 0; i < walletKeys.length; i += batchSize) {
-        const batch = walletKeys.slice(i, i + batchSize);
-        await Promise.all(
-          batch.map(async (w) => {
-            await parentAccount.createAccount(
-              w.accountId,
-              w.keyPair.getPublicKey().toString(),
-              BigInt(initialStorageDeposit)
-            ).catch((err: any) => {
-              // If account already exists on-chain, proceed
-              if (!String(err?.message).includes('already exists')) {
-                throw err;
-              }
-            });
-          })
-        );
+      // One at a time: the parent account's key also signs executor transactions, and parallel
+      // transactions from one key collide on the nonce
+      for (const w of walletKeys) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            await parentAccount.createAccount(w.accountId, w.keyPair.getPublicKey().toString(), initialStorageDeposit);
+            created.push(w);
+            break;
+          } catch (err: any) {
+            const msg = String(err?.message || err);
+            if (msg.includes('already exists')) break; // a random name someone else holds: skip it
+            lastCreateError = msg;
+            if (attempt === 1) logger.warn(`Could not create fleet wallet ${w.accountId}: ${msg}`);
+          }
+        }
       }
     });
   } catch (deployErr: any) {
-    logger.error('Failed to create fleet subaccounts on-chain:', deployErr);
+    lastCreateError = deployErr?.message || String(deployErr);
+    logger.error('Fleet subaccount creation stopped early:', deployErr);
+  }
+
+  if (created.length === 0) {
     return {
       success: false,
-      reason: `Failed to deploy fleet subaccounts: ${deployErr?.message || deployErr}`,
+      reason: `Could not create your fleet wallets, so nothing was charged.${lastCreateError ? ` (${lastCreateError.slice(0, 120)})` : ' Try again in a moment.'}`,
     };
   }
 
-  // 5. Store in Database
-  const fleet = await upsertRaceFleet({
-    user_id: user.id,
-    name: fleetName,
-    fleet_tag: fleetTag,
-    wallet_count: clampedCount,
-    monthly_fee_near: RACEFLEET_MONTHLY_FEE_NEAR,
-    duration_days: 30,
-    auto_renew: true,
-  });
+  // 4. Collect the subscription fee. If it fails, remove the new accounts (their storage goes back
+  // to the parent account), so no wallet is left on-chain without a stored key.
+  try {
+    const feeWithdrawal = await withdrawFunds(user, TREASURY_ACCOUNT_ID, RACEFLEET_MONTHLY_FEE_NEAR);
+    logger.info(`Paid RaceFleet subscription fee for user ${user.id}: tx ${feeWithdrawal.txHash}`);
+  } catch (payErr: any) {
+    await removeFleetAccounts(created, parentAccountName);
+    return { success: false, reason: `Subscription payment failed, so no fleet was created: ${payErr?.message || payErr}` };
+  }
 
-  const wallets = await createRaceFleetWallets(
-    walletKeys.map((w) => ({
-      fleet_id: fleet.id,
+  // 5. Store the fleet with exactly the wallets that exist
+  let fleet: RaceFleetRecord;
+  let wallets: RaceFleetWalletRecord[];
+  try {
+    fleet = await upsertRaceFleet({
       user_id: user.id,
-      account_id: w.accountId,
-      wallet_index: w.walletIndex,
-      encrypted_private_key: w.encryptedKey,
-    }))
-  );
+      name: fleetName,
+      fleet_tag: fleetTag,
+      wallet_count: created.length,
+      monthly_fee_near: RACEFLEET_MONTHLY_FEE_NEAR,
+      duration_days: 30,
+      auto_renew: true,
+    });
+    wallets = await createRaceFleetWallets(
+      created.map((w, i) => ({
+        fleet_id: fleet.id,
+        user_id: user.id,
+        account_id: w.accountId,
+        wallet_index: i + 1,
+        encrypted_private_key: w.encryptedKey,
+      }))
+    );
+  } catch (dbErr: any) {
+    // The fee is paid and the accounts exist: log every account so the fleet can be restored
+    logger.error(`RaceFleet for user ${user.id} paid but not saved: ${dbErr?.message}. Accounts: ${created.map(w => w.accountId).join(', ')}`);
+    return { success: false, reason: 'Your fleet was created and paid for but could not be saved. Contact support; nothing is lost.' };
+  }
+
+  if (created.length < clampedCount) {
+    logger.warn(`RaceFleet ${fleet.id}: created ${created.length} of ${clampedCount} wallets`);
+  }
 
   logger.info(`Successfully deployed RaceFleet ${fleet.id} with ${wallets.length} wallets for user ${user.id}`);
 
@@ -247,6 +264,17 @@ export async function deployRaceFleet(
     fleet,
     wallets,
   };
+}
+
+/** Delete fleet accounts that will not be used, returning their storage deposit to the parent */
+async function removeFleetAccounts(accounts: { accountId: string; keyPair: KeyPair }[], beneficiary: string): Promise<void> {
+  for (const w of accounts) {
+    try {
+      await connectWithNearRpcFailover(w.accountId, w.keyPair, (account) => account.deleteAccount(beneficiary));
+    } catch (err: any) {
+      logger.warn(`Could not remove unused fleet wallet ${w.accountId}: ${err?.message || err}`);
+    }
+  }
 }
 
 // ── In-Memory Caches for High-Performance RaceFleet UI ────────────────────────
@@ -391,7 +419,7 @@ export async function distributeFundsToFleet(
   if (wallets.length === 0) return { success: false, reason: 'No wallets in fleet' };
 
   const near = getNear();
-  const userBalanceYocto = await near.getNearBalance(user.subaccount_id).catch(() => '0');
+  const userBalanceYocto = await near.getNearBalance(await fleetPayerAccount(user)).catch(() => '0');
   const userBalanceNear = Number(BigInt(userBalanceYocto || '0') / 10n ** 20n) / 10_000;
 
   if (userBalanceNear < totalNear + 0.05) {
@@ -404,17 +432,21 @@ export async function distributeFundsToFleet(
   const perWalletNear = totalNear / wallets.length;
   const perWalletFormatted = perWalletNear.toFixed(4);
 
-  // Send transfers from main wallet to each fleet wallet
-  const results = await Promise.allSettled(
-    wallets.map((w) =>
-      withdrawFunds(user, w.account_id, parseFloat(perWalletFormatted))
-    )
-  );
-
-  const successCount = results.filter((r) => r.status === 'fulfilled').length;
+  // One transfer at a time: they are all signed by the same key, so parallel ones collide on the nonce
+  let successCount = 0;
+  let lastError = '';
+  for (const w of wallets) {
+    try {
+      await withdrawFunds(user, w.account_id, parseFloat(perWalletFormatted));
+      successCount++;
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+      logger.warn(`Fleet funding to ${w.account_id} failed: ${lastError}`);
+    }
+  }
 
   if (successCount === 0) {
-    return { success: false, reason: 'Failed to disburse funds to fleet wallets.' };
+    return { success: false, reason: `Failed to disburse funds to fleet wallets. ${lastError}`.trim() };
   }
 
   invalidateFleetCache(fleet.id);
