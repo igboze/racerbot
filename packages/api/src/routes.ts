@@ -76,6 +76,7 @@ import {
 } from './multichainDeposit.js';
 import {
   getTokenInfo,
+  getCachedTokenInfo,
   getBatchTokenInfo,
   getFastTokenRoute,
   publishSwap,
@@ -7804,7 +7805,13 @@ export function setupRoutes(bot: Telegraf): void {
                   setTimeout(() => reject(new Error('timeout')), 2000)
                 ),
               ]);
-              const clean = String(rawBal || '0').replace(/["'\s]/g, '').split('.')[0] || '0';
+              if (rawBal === null || rawBal === undefined) {
+                return { isZero: false, rawBal: pos.quantity_held, verified: false };
+              }
+              const clean = String(rawBal).replace(/["'\s]/g, '').split('.')[0] || '';
+              if (!/^\d+$/.test(clean)) {
+                return { isZero: false, rawBal: pos.quantity_held, verified: false };
+              }
               let rawBig = 0n;
               try { rawBig = BigInt(clean); } catch { rawBig = 0n; }
               // Decimals-aware dust is handled later by the holdings dust filter;
@@ -7880,8 +7887,9 @@ export function setupRoutes(bot: Telegraf): void {
       ? await withTimeout(getHypeUsdPrice(), 3000, 'hype price timeout').catch(() => 0)
       : 0;
     const computedPositions = positions.map((pos, idx) => {
-      const info = infoMap.get(pos.token_address);
-      const rawSymbol = info?.symbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
+      const info = infoMap.get(pos.token_address) || infoMap.get(pos.token_address.toLowerCase()) || getCachedTokenInfo(pos.token_address) || undefined;
+      const validSymbol = info?.symbol && info.symbol !== '???' ? info.symbol : '';
+      const rawSymbol = validSymbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
       const displayLabel = sanitizeMd(rawSymbol);
       const currentPrice = info ? parseFloat(info.price) : 0;
       const posChain = getPositionChain(pos);
@@ -7897,7 +7905,7 @@ export function setupRoutes(bot: Telegraf): void {
           : isSuiPos
             ? (info?.sui_usd || 2.0)
             : isEvmPosH
-              ? (info?.hype_usd || liveHypeUsd || 25.0)
+              ? (info?.hype_usd || liveHypeUsd || 74.0)
               : (info?.near_usd || 4.3);
 
       let humanQuantity = 0;
@@ -7914,8 +7922,10 @@ export function setupRoutes(bot: Telegraf): void {
         humanQuantity = parseFloat(pos.quantity_held) || 0;
       }
 
+      const fallbackEntryPrice = parseFloat(pos.avg_entry_price) || 0;
+      const effectivePrice = currentPrice > 0 ? currentPrice : (fallbackEntryPrice > 0 ? fallbackEntryPrice : 0);
       const parsedInfoUsd = info?.price_usd ? parseFloat(info.price_usd) : 0;
-      const tokenPriceUsd = parsedInfoUsd > 0 ? parsedInfoUsd : (currentPrice * nativeUsdRate);
+      const tokenPriceUsd = parsedInfoUsd > 0 ? parsedInfoUsd : (effectivePrice * nativeUsdRate);
       const tokenValueUsd = humanQuantity * tokenPriceUsd;
 
       // Dust filter:
@@ -8017,7 +8027,7 @@ export function setupRoutes(bot: Telegraf): void {
           emoji = '⚪';
         }
         pnlDisplay = `${pnlPctNum >= 0 ? '+' : ''}${pnlPctNum.toFixed(1)}%`;
-      } else if (currentPrice > 0 && entryPrice <= 0) {
+      } else if (currentPrice > 0 || entryPrice > 0) {
         pnlDisplay = '+0.0%';
         emoji = '⚪';
       } else {

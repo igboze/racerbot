@@ -1,5 +1,5 @@
 import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
-import { getTokenInfo, isSuiToken, isStarknetToken, getNearUsdPrice, getSuiUsdPrice, getHypeUsdPrice } from './wallet.js';
+import { getTokenInfo, getCachedTokenInfo, isSuiToken, isStarknetToken, getNearUsdPrice, getSuiUsdPrice, getHypeUsdPrice } from './wallet.js';
 import { getSolUsdPrice, isValidEvmAddress, isSolanaToken, evmStoredAmount } from '@racerbot/shared';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
@@ -91,9 +91,13 @@ export async function generatePNLCardData(
     // Get token info. Live price reads can flake (RPC timeout) — retry once
     // before accepting a zero-price render; getTokenInfo itself falls back to
     // the last known DB price when discovery fails.
-    let tokenInfo     = await getTokenInfo(position.token_address, true).catch(() => null);
+    const cachedInfo  = getCachedTokenInfo(position.token_address);
+    let tokenInfo     = await getTokenInfo(position.token_address, true).catch(() => cachedInfo);
     if (!tokenInfo || parseFloat(tokenInfo.price || '0') <= 0) {
-      tokenInfo = await getTokenInfo(position.token_address, true).catch(() => tokenInfo);
+      tokenInfo = await getTokenInfo(position.token_address, true).catch(() => tokenInfo || cachedInfo);
+    }
+    if ((!tokenInfo || parseFloat(tokenInfo.price || '0') <= 0) && cachedInfo && parseFloat(cachedInfo.price || '0') > 0) {
+      tokenInfo = { ...cachedInfo, ...(tokenInfo || {}), price: cachedInfo.price, price_usd: cachedInfo.price_usd, symbol: (tokenInfo?.symbol && tokenInfo.symbol !== '???' ? tokenInfo.symbol : cachedInfo.symbol) };
     }
     const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
     const isSolanaPos  = position.chain === 'solana' || tokenInfo?.chain === 'solana' || isSolanaToken(position.token_address);

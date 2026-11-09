@@ -20,7 +20,7 @@ vi.mock('@racerbot/shared', async (importActual) => ({
   quoteMontra: (...args: any[]) => quoteMontra(...args),
 }));
 
-const { lookupKleosToken, lookupMontraToken, getHypeUsdPrice, getTokenInfo } = await import('./wallet.js');
+const { lookupKleosToken, lookupMontraToken, getHypeUsdPrice, getTokenInfo, getBatchTokenInfo } = await import('./wallet.js');
 
 const KSOCKS = '0xd8C9bd555DEcc4Ae694E6C3e492Ef9DD96d2979d';
 
@@ -140,6 +140,31 @@ describe('Kleos (Elysium mainnet) tokens', () => {
     const info = await lookupMontraToken(HYPEPE, coin);
     expect(info).toMatchObject({ chain: 'elysium', venue: 'montra', launchpad: 'Montra', symbol: 'HYPEPE', tradeable: true, buy_tax_pct: 1, sell_tax_pct: 1 });
     expect(info!.market_cap).toBeCloseTo(500);
+  });
+
+  it('preserves token symbol and positive price on Holdings Refresh (getBatchTokenInfo with forceRefresh=true) even across address casing or RPC failure', async () => {
+    getErc20TokenInfo.mockResolvedValue({ address: KSOCKS, name: 'kSocks', symbol: 'KSOCKS', decimals: 18, totalSupply: (10n ** 27n).toString() });
+    const initial = await getTokenInfo(KSOCKS, true);
+    expect(parseFloat(initial.price)).toBeGreaterThan(0);
+
+    // 1. Refresh with lowercase address: refreshes live price and returns under requested key
+    const refreshedMap = await getBatchTokenInfo([KSOCKS.toLowerCase()], true);
+    const refreshed = refreshedMap.get(KSOCKS.toLowerCase());
+    expect(refreshed).toBeDefined();
+    expect(refreshed!.symbol).toBe('KSOCKS');
+    expect(parseFloat(refreshed!.price)).toBeGreaterThan(0);
+
+    // 2. Refresh when live network calls fail: falls back to cached info instead of blanking out or zeroing price
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))));
+    getErc20TokenInfo.mockRejectedValue(new Error('rpc timeout'));
+    resolveKleosRoute.mockRejectedValue(new Error('rpc timeout'));
+    getRonsPadLaunch.mockRejectedValue(new Error('rpc timeout'));
+
+    const fallbackMap = await getBatchTokenInfo([KSOCKS.toLowerCase()], true);
+    const fallback = fallbackMap.get(KSOCKS.toLowerCase());
+    expect(fallback).toBeDefined();
+    expect(fallback!.symbol).toBe('KSOCKS');
+    expect(parseFloat(fallback!.price)).toBeGreaterThan(0);
   });
 });
 

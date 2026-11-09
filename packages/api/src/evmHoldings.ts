@@ -10,7 +10,7 @@
  */
 import { ethers } from 'ethers';
 import { createLogger, getEvmProvider, listKleosBoardCoins, listMontraTokens, type EvmChain } from '@racerbot/shared';
-import { createPosition, getDb, getOpenPositions, getUserById, type UserRecord } from '@racerbot/db';
+import { createPosition, getDb, getOpenPositions, getUserById, upsertTokenCache, type UserRecord } from '@racerbot/db';
 import { notifyTokenDeposit } from './notify.js';
 
 const logger = createLogger('evm-holdings');
@@ -63,6 +63,16 @@ export async function trackEvmHolding(p: {
     avg_entry_price: (p.priceHype > 0 ? p.priceHype : 0).toString(),
   });
   await db.query('UPDATE positions SET is_external_deposit = TRUE, external_deposit_detected_at = NOW() WHERE id = $1', [position.id]).catch(() => {});
+  if (p.symbol || p.name || p.priceHype > 0) {
+    upsertTokenCache({
+      token_address: token,
+      chain: p.chain,
+      name: p.name,
+      symbol: p.symbol,
+      decimals: p.decimals,
+      last_price: p.priceHype > 0 ? p.priceHype : undefined,
+    } as any).catch(() => {});
+  }
   logger.info(`Tracking ${p.chain} holding ${token} for user ${p.user.id}: ${human}`);
 
   if (p.notify && p.user.telegram_id) {

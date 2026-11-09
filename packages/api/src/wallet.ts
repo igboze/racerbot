@@ -384,11 +384,42 @@ export async function warmTokenInfoCache(): Promise<void> {
 }
 
 export function getCachedTokenInfo(tokenAddress: string): TokenInfoResult | null {
-  const entry = tokenInfoCache.get(tokenAddress);
+  if (!tokenAddress) return null;
+  const entry = tokenInfoCache.get(tokenAddress) ?? tokenInfoCache.get(tokenAddress.toLowerCase());
   if (entry && entry.expiresAt > Date.now()) {
     return entry.data;
   }
   return entry ? entry.data : null;
+}
+
+function mergeTokenInfoWithFallback(primary: TokenInfoResult, fallback?: TokenInfoResult | null): TokenInfoResult {
+  if (!fallback) return primary;
+  const primaryPrice = parseFloat(primary.price || '0');
+  const fallbackPrice = parseFloat(fallback.price || '0');
+  const useFallbackPrice = !(primaryPrice > 0) && fallbackPrice > 0;
+
+  const primarySymbol = primary.symbol && primary.symbol !== '???' && primary.symbol !== 'UNKNOWN' ? primary.symbol : '';
+  const fallbackSymbol = fallback.symbol && fallback.symbol !== '???' && fallback.symbol !== 'UNKNOWN' ? fallback.symbol : '';
+  const primaryName = primary.name && primary.name !== 'Unknown' ? primary.name : '';
+  const fallbackName = fallback.name && fallback.name !== 'Unknown' ? fallback.name : '';
+
+  return {
+    ...fallback,
+    ...primary,
+    symbol: primarySymbol || fallbackSymbol || primary.symbol || fallback.symbol || '',
+    name: primaryName || fallbackName || primary.name || fallback.name || '',
+    decimals: primary.decimals ?? fallback.decimals ?? 18,
+    total_supply: primary.total_supply && primary.total_supply !== '0' ? primary.total_supply : (fallback.total_supply || '0'),
+    price: useFallbackPrice ? fallback.price : primary.price,
+    price_usd: useFallbackPrice
+      ? (parseFloat(fallback.price_usd || '0') > 0 ? fallback.price_usd : primary.price_usd)
+      : (parseFloat(primary.price_usd || '0') > 0 ? primary.price_usd : fallback.price_usd),
+    market_cap: useFallbackPrice ? fallback.market_cap : (primary.market_cap > 0 ? primary.market_cap : fallback.market_cap),
+    market_cap_usd: useFallbackPrice ? fallback.market_cap_usd : (primary.market_cap_usd > 0 ? primary.market_cap_usd : fallback.market_cap_usd),
+    liquidity: parseFloat(primary.liquidity || '0') > 0 ? primary.liquidity : fallback.liquidity,
+    liquidity_usd: parseFloat(primary.liquidity_usd || '0') > 0 ? primary.liquidity_usd : fallback.liquidity_usd,
+    venue: primary.venue && primary.venue !== 'unknown' ? primary.venue : fallback.venue,
+  };
 }
 
 export async function getBatchTokenInfo(
@@ -398,53 +429,77 @@ export async function getBatchTokenInfo(
   const result = new Map<string, TokenInfoResult>();
   if (!tokenAddresses || tokenAddresses.length === 0) return result;
 
-  const missing: string[] = [];
+  // Always snapshot in-memory cached token info first so a refresh timeout or a null last_price
+  // in token_cache can never blank out a token's symbol, name, or price.
+  const fallbackMap = new Map<string, TokenInfoResult>();
+  const missingFromMem: string[] = [];
+
   for (const addr of tokenAddresses) {
-    if (!forceRefresh) {
-      const cached = getCachedTokenInfo(addr);
-      if (cached) {
+    const cached = getCachedTokenInfo(addr);
+    if (cached) {
+      fallbackMap.set(addr, cached);
+      if (
+        !forceRefresh &&
+        parseFloat(cached.price || '0') > 0 &&
+        cached.symbol &&
+        cached.symbol !== '???'
+      ) {
         result.set(addr, cached);
         continue;
       }
     }
-    missing.push(addr);
+    missingFromMem.push(addr);
   }
 
-  if (missing.length === 0) return result;
+  if (!forceRefresh && missingFromMem.length === 0) return result;
 
-  // Batch query token_cache in DB for all missing tokens
+  // Batch query token_cache in DB (case-insensitive for 0x addresses) to populate fallbacks and warm cache
+  const dbQueryAddrs = forceRefresh ? tokenAddresses : missingFromMem;
   try {
     const db = await getDb();
+    const lowerAddrs = dbQueryAddrs.map((a) => a.toLowerCase());
     const rows = await db.query(
       `SELECT token_address, symbol, name, decimals, total_supply, last_price, last_liquidity, venue, chain, dcl_pool_id, rhea_pool_id, bonding_phase, bonding_progress_pct, buy_tax_pct, sell_tax_pct
        FROM token_cache
-       WHERE token_address = ANY($1)`,
-      [missing]
+       WHERE token_address = ANY($1) OR LOWER(token_address) = ANY($2)`,
+      [dbQueryAddrs, lowerAddrs]
     ).then((r: any) => r.rows);
 
-    const nearUsdLive = await getNearUsdPrice().catch(() => 0);
-    const solUsdLive = rows.some((r: any) => r.chain === 'solana') ? await getSolUsdPrice().catch(() => 0) : 0;
+    const [nearUsdLive, solUsdLive, suiUsdLive, hypeUsdLive] = await Promise.all([
+      getNearUsdPrice().catch(() => 0),
+      rows.some((r: any) => r.chain === 'solana') ? getSolUsdPrice().catch(() => 0) : Promise.resolve(0),
+      rows.some((r: any) => r.chain === 'sui') ? getSuiUsdPrice().catch(() => 2.0) : Promise.resolve(0),
+      rows.some((r: any) => r.chain === 'hyperevm' || r.chain === 'elysium') ? getHypeUsdPrice().catch(() => 74.0) : Promise.resolve(0),
+    ]);
 
     for (const row of rows) {
-      // Cached prices are stored in the token's native unit (NEAR, SUI, SOL...).
-      const nearUsd = row.chain === 'solana' ? solUsdLive : nearUsdLive;
+      const chain = (row.chain as any) || 'near';
+      const nativeUsd = chain === 'solana'
+        ? solUsdLive
+        : (chain === 'hyperevm' || chain === 'elysium')
+          ? hypeUsdLive
+          : chain === 'sui'
+            ? suiUsdLive
+            : chain === 'starknet'
+              ? 0.12
+              : nearUsdLive;
       const lastPrice = parseFloat(row.last_price || '0');
       const supply = parseFloat(row.total_supply || '0') / Math.pow(10, row.decimals || 18);
       const mcap = lastPrice > 0 && supply > 0 ? lastPrice * supply : 0;
-      const tokenData: TokenInfoResult = {
+      const dbTokenData: TokenInfoResult = {
         address: row.token_address,
-        chain: (row.chain as any) || 'near',
+        chain,
         name: row.name ?? '',
         symbol: row.symbol ?? '',
         decimals: row.decimals ?? 18,
         total_supply: row.total_supply ?? '0',
         price: formatRawPriceString(lastPrice),
-        price_usd: nearUsd > 0 ? formatRawUsdString(lastPrice * nearUsd) : '0',
+        price_usd: nativeUsd > 0 && lastPrice > 0 ? formatRawUsdString(lastPrice * nativeUsd) : '0',
         liquidity: row.last_liquidity?.toString() ?? '0',
-        liquidity_usd: nearUsd > 0 ? (parseFloat(row.last_liquidity || '0') * nearUsd).toFixed(2) : '0',
+        liquidity_usd: nativeUsd > 0 ? (parseFloat(row.last_liquidity || '0') * nativeUsd).toFixed(2) : '0',
         market_cap: mcap,
-        market_cap_usd: nearUsd > 0 ? mcap * nearUsd : 0,
-        near_usd: nearUsd,
+        market_cap_usd: nativeUsd > 0 ? mcap * nearUsdLive : 0,
+        near_usd: nativeUsd,
         venue: (row.venue as any) ?? 'unknown',
         rhea_pool_id: row.rhea_pool_id != null ? Number(row.rhea_pool_id) : null,
         bonding_phase: (row.bonding_phase as any) ?? null,
@@ -453,31 +508,78 @@ export async function getBatchTokenInfo(
         tradeable: isTradableVenue(row.venue),
         buy_tax_pct: row.buy_tax_pct != null ? Number(row.buy_tax_pct) : undefined,
         sell_tax_pct: row.sell_tax_pct != null ? Number(row.sell_tax_pct) : undefined,
-        ...(row.chain === 'solana' ? { sol_usd: solUsdLive } : {}),
+        ...(chain === 'solana' ? { sol_usd: solUsdLive } : {}),
+        ...(chain === 'sui' ? { sui_usd: suiUsdLive } : {}),
+        ...(chain === 'hyperevm' || chain === 'elysium' ? { hype_usd: hypeUsdLive } : {}),
+        ...(chain === 'starknet' ? { strk_usd: 0.12 } : {}),
       };
-      tokenInfoCache.set(row.token_address, { data: tokenData, expiresAt: Date.now() + 30_000 });
-      result.set(row.token_address, tokenData);
+      dbTokenData.market_cap_usd = nativeUsd > 0 ? mcap * nativeUsd : 0;
+
+      const rowAddrLower = String(row.token_address || '').toLowerCase();
+      for (const reqAddr of tokenAddresses) {
+        if (reqAddr === row.token_address || reqAddr.toLowerCase() === rowAddrLower) {
+          const merged = mergeTokenInfoWithFallback(dbTokenData, fallbackMap.get(reqAddr));
+          fallbackMap.set(reqAddr, merged);
+          if (parseFloat(merged.price || '0') > 0) {
+            tokenInfoCache.set(reqAddr, { data: merged, expiresAt: Date.now() + 30_000 });
+            if (reqAddr.startsWith('0x')) {
+              tokenInfoCache.set(reqAddr.toLowerCase(), { data: merged, expiresAt: Date.now() + 30_000 });
+            }
+            if (!forceRefresh) {
+              result.set(reqAddr, merged);
+            }
+          }
+        }
+      }
     }
   } catch (err: any) {
     console.warn('[API] getBatchTokenInfo DB query failed:', err.message);
   }
 
-  // Any tokens still missing from DB cache can be fetched with a short bounded timeout
-  const stillMissing = missing.filter((addr) => !result.has(addr));
-  if (stillMissing.length > 0) {
+  // Fetch live token info for all tokens on forceRefresh, or any tokens still missing a positive price
+  const toFetch = forceRefresh
+    ? tokenAddresses
+    : missingFromMem.filter((addr) => {
+        const existing = result.get(addr);
+        return !existing || !(parseFloat(existing.price || '0') > 0);
+      });
+
+  if (toFetch.length > 0) {
+    const timeoutMs = forceRefresh ? 4500 : 3000;
     await Promise.allSettled(
-      stillMissing.slice(0, 10).map(async (addr) => {
+      toFetch.slice(0, 16).map(async (addr) => {
         try {
           const info = await Promise.race([
-            getTokenInfo(addr, false),
+            getTokenInfo(addr, forceRefresh),
             new Promise<TokenInfoResult | null>((_, reject) =>
-              setTimeout(() => reject(new Error('timeout')), 1500)
+              setTimeout(() => reject(new Error('timeout')), timeoutMs)
             ),
           ]);
-          if (info) result.set(addr, info);
+          if (info) {
+            const merged = mergeTokenInfoWithFallback(info, fallbackMap.get(addr));
+            result.set(addr, merged);
+            if (parseFloat(merged.price || '0') > 0) {
+              tokenInfoCache.set(addr, { data: merged, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+              if (addr.startsWith('0x')) {
+                tokenInfoCache.set(addr.toLowerCase(), { data: merged, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+              }
+            }
+            return;
+          }
         } catch { }
+        const fallback = fallbackMap.get(addr);
+        if (fallback && !result.has(addr)) {
+          result.set(addr, fallback);
+        }
       })
     );
+  }
+
+  // Ensure any remaining tokens with fallback metadata/price are returned
+  for (const addr of tokenAddresses) {
+    if (!result.has(addr) && fallbackMap.has(addr)) {
+      result.set(addr, fallbackMap.get(addr)!);
+    }
   }
 
   return result;
@@ -734,15 +836,29 @@ export async function resolveTokenKey(raw: string): Promise<string> {
   return fromDb;
 }
 
-/** Saves an EVM token's identity to the token cache, so its short key still resolves after a restart */
+/** Saves an EVM token's identity and latest price to the token cache, so its short key and holdings PnL still resolve after a restart */
 function rememberEvmToken(info: TokenInfoResult): void {
+  if (info.address) {
+    tokenInfoCache.set(info.address, { data: info, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+    tokenInfoCache.set(info.address.toLowerCase(), { data: info, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+  }
+  const lastPrice = parseFloat(info.price || '0');
+  const lastLiq = parseFloat(info.liquidity || '0');
   upsertTokenCache({
     token_address: info.address,
     chain: info.chain as any,
     name: info.name,
     symbol: info.symbol,
     decimals: info.decimals,
+    total_supply: info.total_supply && info.total_supply !== '0' ? info.total_supply : undefined,
     venue: info.venue as any,
+    bonding_phase: (info.bonding_phase as any) ?? undefined,
+    bonding_progress_pct: info.bonding_progress_pct ?? undefined,
+    last_price: Number.isFinite(lastPrice) && lastPrice > 0 ? lastPrice : undefined,
+    last_liquidity: Number.isFinite(lastLiq) && lastLiq > 0 ? lastLiq : undefined,
+    buy_tax_pct: info.buy_tax_pct,
+    sell_tax_pct: info.sell_tax_pct,
+    icon: info.icon,
   } as any).catch(() => { });
 }
 
@@ -1093,9 +1209,9 @@ export async function lookupKleosToken(address: string, boardCoin?: any): Promis
   } else if (!coin) {
     // Not on the Kleos board: a coin launched in the last minute, or a token from another Elysium launchpad.
     // A Kleos router that quotes it proves it is Kleos's; otherwise say plainly that it can't be traded here.
-    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address, undefined, { allowUniV4: false }).then(() => true).catch(() => false);
+    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address).then(() => true).catch(() => false);
     if (!routed) {
-      noRouteReason = 'RacerBot could not find a HYPE pool for this Elysium token, so it can’t be bought here yet.';
+      noRouteReason = 'RacerBot could not find a HYPE pool for this Elysium token yet, so it cannot be bought here right now.';
     }
   }
   return {
@@ -1985,7 +2101,21 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       };
 
       tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + 10000 });
+      tokenInfoCache.set(tokenAddress.toLowerCase(), { data: result, expiresAt: Date.now() + 10000 });
       tokenInfoCache.set(canonicalAddr, { data: result, expiresAt: Date.now() + 10000 });
+      tokenInfoCache.set(canonicalAddr.toLowerCase(), { data: result, expiresAt: Date.now() + 10000 });
+      upsertTokenCache({
+        token_address: canonicalAddr,
+        chain: 'starknet',
+        name: tokenName,
+        symbol: tokenSymbol,
+        decimals: meta.decimals,
+        total_supply: rawTotalSupply,
+        venue: resolvedVenue,
+        bonding_phase: launchpadInfo.bondingPhase === 'bonding_curve' ? 'prebonded' : 'bonded',
+        last_price: priceNativeNum > 0 ? priceNativeNum : undefined,
+        last_liquidity: liqNativeNum > 0 ? liqNativeNum : undefined,
+      } as any).catch(() => { });
       return result;
     }
 
@@ -2284,10 +2414,14 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         totalSupply = fetchedSupply;
         tokenMetaCache.set(tokenAddress, { ...meta, totalSupply, icon: meta.icon });
       } catch {
-        // If RPC metadata fetch fails, fall back to DB cache data if available
+        // If RPC metadata fetch fails, fall back to DB cache or in-memory tokenInfoCache if available
+        const prevCached = getCachedTokenInfo(tokenAddress);
         if (dbCache && dbCache.name) {
           meta = { name: dbCache.name ?? 'Unknown', symbol: dbCache.symbol ?? '???', decimals: dbCache.decimals ?? 18, icon: dbCache.icon || undefined };
           totalSupply = dbCache.total_supply ?? '0';
+        } else if (prevCached && prevCached.symbol && prevCached.symbol !== '???') {
+          meta = { name: prevCached.name || 'Unknown', symbol: prevCached.symbol, decimals: prevCached.decimals ?? 18, icon: prevCached.icon };
+          totalSupply = prevCached.total_supply ?? '0';
         } else {
           // Last resort: return a minimal result so the caller can still identify the token
           return {
@@ -2839,24 +2973,24 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
     const tax = launchpadTaxPct != null
       ? { buyTaxPct: launchpadTaxPct, sellTaxPct: launchpadTaxPct }
       : (intearPoolFee != null || rheaCandidate?.poolFee != null)
-      ? await getDexTax({
-        venue,
-        bonding_phase: bondingPhase,
-        dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
-        rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
-        pool_fee: rheaCandidate?.poolFee ?? intearPoolFee,
-        chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
-      })
-      : (dbCache && dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined && (venue === dbCache.venue))
-        ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
-        : await getDexTax({
+        ? await getDexTax({
           venue,
           bonding_phase: bondingPhase,
           dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
           rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
           pool_fee: rheaCandidate?.poolFee ?? intearPoolFee,
           chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
-        });
+        })
+        : (dbCache && dbCache.buy_tax_pct !== null && dbCache.buy_tax_pct !== undefined && dbCache.sell_tax_pct !== null && dbCache.sell_tax_pct !== undefined && (venue === dbCache.venue))
+          ? { buyTaxPct: Number(dbCache.buy_tax_pct), sellTaxPct: Number(dbCache.sell_tax_pct) }
+          : await getDexTax({
+            venue,
+            bonding_phase: bondingPhase,
+            dcl_pool_id: dclPoolId ?? rheaCandidate?.dclPoolId,
+            rhea_pool_id: rheaPoolId ?? rheaCandidate?.rheaPoolId,
+            pool_fee: rheaCandidate?.poolFee ?? intearPoolFee,
+            chain: isSuiToken(tokenAddress) ? 'sui' : 'near',
+          });
 
     const result: TokenInfoResult = {
       address: tokenAddress,
@@ -3752,12 +3886,11 @@ export async function getUserBalances(
         user.evm_address
           ? withTimeout(getUserEvmBalances(user), 2500, null as any)
           : Promise.resolve(null),
-        // Live HYPE price (Hyperliquid mid, cached); the last known price if it can't be read
-        withTimeout(getHypeUsdPrice(), 3000, 0),
+        withTimeout(getHypeUsdPrice(), 2500, 74.0),
       ]);
-      const hypePrice = hypeUsdRes.status === 'fulfilled' && hypeUsdRes.value > 0 ? hypeUsdRes.value : await getHypeUsdPrice().catch(() => 74.0);
       const solLamports: bigint | null = solRes.status === 'fulfilled' && solRes.value ? solRes.value.lamports : null;
       const solPrice = solUsdRes.status === 'fulfilled' ? solUsdRes.value : 150;
+      const hypePrice = hypeUsdRes.status === 'fulfilled' && hypeUsdRes.value > 0 ? hypeUsdRes.value : 74.0;
 
       if (nativeRes.status === 'fulfilled') {
         nativeNearYocto = nativeRes.value;
@@ -3902,7 +4035,7 @@ export async function getTradeSpendableNear(telegramId: number): Promise<number>
 
   // If user has USDC but low native NEAR gas, trigger background gas refuel so trade is ready
   if (nativeNear < 0.025 && BigInt(usdcRaw || '0') > 0n && nearAccountForTrade) {
-    refuelNearGasIfNeeded(nearAccountForTrade, BigInt(nativeNearYocto)).catch(() => {});
+    refuelNearGasIfNeeded(nearAccountForTrade, BigInt(nativeNearYocto)).catch(() => { });
   }
 
   tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
