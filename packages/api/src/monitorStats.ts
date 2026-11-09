@@ -102,22 +102,45 @@ export function formatReasons(topReasons: Array<[string, number]>, max = 3): str
 
 // ── Daily volume update formatting ──────────────────────────────────────────
 
-export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number, suiUsd = 0, strkUsd = 0, solUsd = 0): string {
-  const nearFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  const nearUsdFmt = (nearAmt: number) =>
-    nearUsd > 0 ? ` (~$${(nearAmt * nearUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
-  const suiFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  const suiUsdFmt = (suiAmt: number) =>
-    suiUsd > 0 ? ` (~$${(suiAmt * suiUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
-  const strkFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  const strkUsdFmt = (strkAmt: number) =>
-    strkUsd > 0 ? ` (~$${(strkAmt * strkUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
-  const solFmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  const solUsdFmt = (solAmt: number) =>
-    solUsd > 0 ? ` (~$${(solAmt * solUsd).toLocaleString('en-US', { maximumFractionDigits: 0 })})` : '';
+/**
+ * Admin volume report: every chain in its own coin, then all chains together
+ * in USD (the only unit they share). A chain whose price can't be fetched is
+ * left out of the USD total, and the report says so.
+ * HyperEVM and Elysium both trade against HYPE, so `hypeUsd` prices both.
+ */
+export function buildVolumeUpdateText(
+  s: VolumeStats,
+  nearUsd: number,
+  suiUsd = 0,
+  strkUsd = 0,
+  solUsd = 0,
+  hypeUsd = 0,
+): string {
+  const amt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const usd = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  const approx = (n: number, price: number) => (price > 0 ? ` (~${usd(n * price)})` : '');
 
-  const total24hTrades = s.trades24h + s.trades24hSui + (s.trades24hStarknet || 0) + (s.trades24hSolana || 0);
-  const totalTrades = s.tradesTotal + s.tradesTotalSui + (s.tradesTotalStarknet || 0) + (s.tradesTotalSolana || 0);
+  const chains = [
+    { name: 'NEAR', head: '〽️ *NEAR — 24h*', unit: 'NEAR', price: nearUsd, v24: s.volume24hNear, t24: s.trades24h, vAll: s.volumeTotalNear, tAll: s.tradesTotal },
+    { name: 'SUI', head: '🔵 *SUI — 24h*', unit: 'SUI', price: suiUsd, v24: s.volume24hSui, t24: s.trades24hSui, vAll: s.volumeTotalSui, tAll: s.tradesTotalSui },
+    { name: 'Starknet', head: '⚡ *Starknet — 24h*', unit: 'STRK', price: strkUsd, v24: s.volume24hStarknet || 0, t24: s.trades24hStarknet || 0, vAll: s.volumeTotalStarknet || 0, tAll: s.tradesTotalStarknet || 0 },
+    { name: 'Solana', head: '🟣 *Solana — 24h*', unit: 'SOL', price: solUsd, v24: s.volume24hSolana || 0, t24: s.trades24hSolana || 0, vAll: s.volumeTotalSolana || 0, tAll: s.tradesTotalSolana || 0 },
+    { name: 'HyperEVM', head: '🟢 *HyperEVM — 24h*', unit: 'HYPE', price: hypeUsd, v24: s.volume24hHyperevm || 0, t24: s.trades24hHyperevm || 0, vAll: s.volumeTotalHyperevm || 0, tAll: s.tradesTotalHyperevm || 0 },
+    { name: 'Elysium', head: '🏛 *Elysium (Kleos) — 24h*', unit: 'HYPE', price: hypeUsd, v24: s.volume24hElysium || 0, t24: s.trades24hElysium || 0, vAll: s.volumeTotalElysium || 0, tAll: s.tradesTotalElysium || 0 },
+  ];
+
+  const total24hTrades = chains.reduce((n, c) => n + c.t24, 0);
+  const totalTrades = chains.reduce((n, c) => n + c.tAll, 0);
+  const usd24h = chains.reduce((n, c) => n + (c.price > 0 ? c.v24 * c.price : 0), 0);
+  const usdAll = chains.reduce((n, c) => n + (c.price > 0 ? c.vAll * c.price : 0), 0);
+  const unpriced = chains.filter(c => !(c.price > 0) && (c.v24 > 0 || c.vAll > 0)).map(c => c.name);
+
+  const perChain = chains.map(c =>
+    `${c.head}\n` +
+    `• Volume: \`${amt(c.v24)} ${c.unit}\`${approx(c.v24, c.price)}\n` +
+    `• Trades: \`${c.t24}\`\n\n`,
+  ).join('');
+  const allTime = chains.map(c => `• ${c.name} volume: \`${amt(c.vAll)} ${c.unit}\`${approx(c.vAll, c.price)}\n`).join('');
 
   return (
     `📊 *RacerBot Daily Report*\n\n` +
@@ -130,27 +153,16 @@ export function buildVolumeUpdateText(s: VolumeStats, nearUsd: number, suiUsd = 
     `• Total trades: \`${total24hTrades}\` (${s.buys24h} buys / ${s.sells24h} sells)\n` +
     `• Active traders: \`${s.activeTraders24h}\`\n\n` +
 
-    `〽️ *NEAR — 24h*\n` +
-    `• Volume: \`${nearFmt(s.volume24hNear)} NEAR\`${nearUsdFmt(s.volume24hNear)}\n` +
-    `• Trades: \`${s.trades24h}\`\n\n` +
+    `💰 *All chains together (USD)*\n` +
+    `• 24h volume: \`${usd(usd24h)}\`\n` +
+    `• All-time volume: \`${usd(usdAll)}\`\n` +
+    (unpriced.length ? `• _No price right now for ${unpriced.join(', ')}: not in these totals_\n` : '') +
+    `\n` +
 
-    `🔵 *SUI — 24h*\n` +
-    `• Volume: \`${suiFmt(s.volume24hSui)} SUI\`${suiUsdFmt(s.volume24hSui)}\n` +
-    `• Trades: \`${s.trades24hSui}\`\n\n` +
-
-    `⚡ *Starknet — 24h*\n` +
-    `• Volume: \`${strkFmt(s.volume24hStarknet || 0)} STRK\`${strkUsdFmt(s.volume24hStarknet || 0)}\n` +
-    `• Trades: \`${s.trades24hStarknet || 0}\`\n\n` +
-
-    `🟣 *Solana — 24h*\n` +
-    `• Volume: \`${solFmt(s.volume24hSolana || 0)} SOL\`${solUsdFmt(s.volume24hSolana || 0)}\n` +
-    `• Trades: \`${s.trades24hSolana || 0}\`\n\n` +
+    perChain +
 
     `📈 *All Time*\n` +
-    `• NEAR volume: \`${nearFmt(s.volumeTotalNear)} NEAR\`${nearUsdFmt(s.volumeTotalNear)}\n` +
-    `• SUI volume: \`${suiFmt(s.volumeTotalSui)} SUI\`${suiUsdFmt(s.volumeTotalSui)}\n` +
-    `• Starknet volume: \`${strkFmt(s.volumeTotalStarknet || 0)} STRK\`${strkUsdFmt(s.volumeTotalStarknet || 0)}\n` +
-    `• Solana volume: \`${solFmt(s.volumeTotalSolana || 0)} SOL\`${solUsdFmt(s.volumeTotalSolana || 0)}\n` +
+    allTime +
     `• Total trades: \`${totalTrades.toLocaleString('en-US')}\``
   );
 }
