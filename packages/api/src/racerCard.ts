@@ -34,7 +34,15 @@ import {
   type RacerFill,
   type RacerProfile,
 } from './racerRank.js';
-import { generateRacerCardImage, generateRacerCardOgImage, type RacerCardImageData } from './racerCardImageGenerator.js';
+import {
+  CARD_H,
+  CARD_W,
+  LEVEL_COLORS,
+  generateRacerCardImage,
+  generateRacerCardOgImage,
+  levelNumber,
+  type RacerCardImageData,
+} from './racerCardImageGenerator.js';
 
 /**
  * Anyone with a NEAR fill before this moment is a Founding Racer. Placeholder
@@ -317,6 +325,10 @@ export function racerCardPageHtml(data: RacerCardImageData, rankParam: string): 
   const cardImage = `${base}/c/${c}/card.png${q}`;
   const bot = data.referralLink;
   const alt = `NEAR Racer Card: ${rank}`;
+  const level = levelNumber(data.levelLabel);
+  const accent = LEVEL_COLORS[level - 1];
+  // Dark text on the silver and gold buttons, light on purple
+  const ink = level === 1 ? '#F6FBFC' : '#111726';
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -328,6 +340,8 @@ export function racerCardPageHtml(data: RacerCardImageData, rankParam: string): 
 <meta property="og:title" content="${escHtml(title)}">
 <meta property="og:description" content="${escHtml(desc)}">
 <meta property="og:image" content="${escHtml(previewImage)}">
+<meta property="og:image:secure_url" content="${escHtml(previewImage)}">
+<meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="${escHtml(alt)}">
@@ -337,13 +351,14 @@ export function racerCardPageHtml(data: RacerCardImageData, rankParam: string): 
 <meta name="twitter:description" content="${escHtml(desc)}">
 <meta name="twitter:image" content="${escHtml(previewImage)}">
 <meta name="twitter:image:alt" content="${escHtml(alt)}">
+<link rel="canonical" href="${escHtml(page)}">
 <style>
-body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:#07090f;color:#fff;font-family:system-ui,sans-serif;padding:16px;box-sizing:border-box}
-img{width:min(100%,420px);height:auto;border-radius:18px}
-a{background:#2ee6c9;color:#06221f;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:999px}
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:#111726;color:#F6FBFC;font-family:system-ui,sans-serif;padding:16px;box-sizing:border-box}
+img{width:min(100%,420px,calc((100vh - 120px) * 2 / 3));height:auto;aspect-ratio:2/3}
+a{background:${accent};color:${ink};font-weight:700;text-decoration:none;padding:14px 28px;border-radius:999px}
 </style>
 </head><body>
-<img src="${escHtml(cardImage)}" alt="${escHtml(alt)}">
+<img src="${escHtml(cardImage)}" alt="${escHtml(alt)}" width="${CARD_W}" height="${CARD_H}">
 <a href="${escHtml(bot)}">Get your Racer Card</a>
 <script>setTimeout(function () { location.replace(${JSON.stringify(bot).replace(/</g, '\\u003c')}); }, 1500);</script>
 </body></html>`;
