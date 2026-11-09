@@ -7875,6 +7875,10 @@ export function setupRoutes(bot: Telegraf): void {
 
     // Calculate total portfolio USD across all positions
     let totalPortfolioValueUsd = 0;
+    // Live HYPE price for HyperEVM / Elysium bags (token info carries no HYPE rate of its own)
+    const liveHypeUsd = positions.some(p => getPositionChain(p) === 'hyperevm' || getPositionChain(p) === 'elysium')
+      ? await withTimeout(getHypeUsdPrice(), 3000, 'hype price timeout').catch(() => 0)
+      : 0;
     const computedPositions = positions.map((pos, idx) => {
       const info = infoMap.get(pos.token_address);
       const rawSymbol = info?.symbol || (pos.token_address.length > 14 ? pos.token_address.slice(0, 12) + '...' : pos.token_address);
@@ -7893,7 +7897,7 @@ export function setupRoutes(bot: Telegraf): void {
           : isSuiPos
             ? (info?.sui_usd || 2.0)
             : isEvmPosH
-              ? (info?.hype_usd || 25.0)
+              ? (info?.hype_usd || liveHypeUsd || 25.0)
               : (info?.near_usd || 4.3);
 
       let humanQuantity = 0;

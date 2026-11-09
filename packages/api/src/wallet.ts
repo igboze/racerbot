@@ -3498,7 +3498,7 @@ export async function getUserBalances(
         withTimeout(getStrkUsdPrice(), 2500, 0.40),
         withTimeout(getEthUsdPrice(), 2500, 2600.0),
       ]);
-      const [solRes, solUsdRes, evmBalRes] = await Promise.allSettled([
+      const [solRes, solUsdRes, evmBalRes, hypeUsdRes] = await Promise.allSettled([
         solanaAddress
           ? withTimeout(getSolanaBalance(solanaAddress, forceRefresh), 3000, null as any)
           : Promise.resolve(null),
@@ -3506,7 +3506,10 @@ export async function getUserBalances(
         user.evm_address
           ? withTimeout(getUserEvmBalances(user), 2500, null as any)
           : Promise.resolve(null),
+        // Live HYPE price (Hyperliquid mid, cached a minute); the last known price if it can't be read
+        withTimeout(getHypeUsdPrice(), 3000, 0),
       ]);
+      const hypePrice = hypeUsdRes.status === 'fulfilled' && hypeUsdRes.value > 0 ? hypeUsdRes.value : await getHypeUsdPrice().catch(() => 0);
       const solLamports: bigint | null = solRes.status === 'fulfilled' && solRes.value ? solRes.value.lamports : null;
       const solPrice = solUsdRes.status === 'fulfilled' ? solUsdRes.value : 150;
 
@@ -3582,7 +3585,7 @@ export async function getUserBalances(
         evmAddress: user.evm_address ?? undefined,
         hyperevmBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.hyperevm.formatted : '0.0000',
         elysiumBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.elysium.formatted : '0.0000',
-        hypeUsd: 25.0,
+        hypeUsd: hypePrice,
       };
 
       balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 30_000 });

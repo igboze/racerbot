@@ -204,17 +204,76 @@ export function getEvmChainId(chain: EvmChain, isTestnet = false): number {
   return isTestnet ? ELYSIUM_TESTNET_CHAIN_ID : ELYSIUM_MAINNET_CHAIN_ID;
 }
 
+/** Elysium mainnet RPCs, tried in order: the configured one(s) first, then Kinetiq's and Kleos's public nodes */
+export const ELYSIUM_MAINNET_BACKUP_RPCS = ['https://rpc.elysium.kinetiq.xyz', 'https://rpc.thekleos.xyz/'];
+
+export function getElysiumMainnetRpcUrls(): string[] {
+  const configured = (process.env.ELYSIUM_MAINNET_RPC_URL || '').split(',').map(u => u.trim()).filter(Boolean);
+  return [...new Set([...configured, ...ELYSIUM_MAINNET_BACKUP_RPCS])];
+}
+
+/**
+ * A JSON-RPC provider that moves a request to the next RPC when one cannot answer (timeout, rate limit,
+ * 5xx, connection error). An RPC's own answer, including a revert or a refused transaction, is final, so a
+ * call is never retried into a different result. Re-sending a signed transaction is safe: it has one hash.
+ */
+export class FailoverJsonRpcProvider extends ethers.JsonRpcProvider {
+  private readonly backends: ethers.JsonRpcProvider[];
+  private preferred = 0;
+
+  constructor(urls: string[], network: ethers.Network, options: ethers.JsonRpcApiProviderOptions) {
+    super(urls[0], network, options);
+    this.backends = urls.map(url => new ethers.JsonRpcProvider(url, network, { ...options, batchMaxCount: 1 }));
+  }
+
+  override async _send(payload: ethers.JsonRpcPayload | ethers.JsonRpcPayload[]): Promise<ethers.JsonRpcResult[]> {
+    let lastErr: unknown;
+    for (let i = 0; i < this.backends.length; i++) {
+      const at = (this.preferred + i) % this.backends.length;
+      try {
+        const results = await withRpcTimeout(this.backends[at]._send(payload), ELYSIUM_RPC_TIMEOUT_MS);
+        if (!results.some(isTransientRpcError)) {
+          this.preferred = at; // stick with an RPC that answers
+          return results;
+        }
+        lastErr = new Error(`RPC ${at} is busy`);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  }
+}
+
+const ELYSIUM_RPC_TIMEOUT_MS = Number(process.env.ELYSIUM_RPC_TIMEOUT_MS || 12_000);
+
+function withRpcTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Elysium RPC timed out after ${ms} ms`)), ms);
+    promise.then(v => { clearTimeout(timer); resolve(v); }, e => { clearTimeout(timer); reject(e); });
+  });
+}
+
+/** An RPC-level error that says the node is overloaded or unavailable, not that the request itself is wrong */
+function isTransientRpcError(result: any): boolean {
+  const err = result?.error;
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  return err.code === -32005 || err.code === 429 || msg.includes('rate limit') || msg.includes('too many requests') ||
+    msg.includes('timeout') || msg.includes('timed out') || msg.includes('unavailable') || msg.includes('overloaded');
+}
+
 export function getEvmProvider(chain: EvmChain, isTestnet = false): ethers.JsonRpcProvider {
   const chainId = getEvmChainId(chain, isTestnet);
   const existing = providerCache.get(chainId);
   if (existing) return existing;
 
-  const url = getEvmRpcUrl(chain, isTestnet);
   const network = new ethers.Network(chain, chainId);
-  const provider = new ethers.JsonRpcProvider(url, network, {
-    staticNetwork: network,
-    batchMaxCount: 50,
-  });
+  const options = { staticNetwork: network, batchMaxCount: 50 };
+  // Elysium mainnet is young and its public RPCs get busy: fail over between them
+  const provider = chain === 'elysium' && !isTestnet
+    ? new FailoverJsonRpcProvider(getElysiumMainnetRpcUrls(), network, options)
+    : new ethers.JsonRpcProvider(getEvmRpcUrl(chain, isTestnet), network, options);
 
   providerCache.set(chainId, provider);
   return provider;
