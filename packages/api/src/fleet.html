@@ -914,6 +914,8 @@
                     <span>PLANNED BY</span>
                     <span id="swarm-planner" style="color:var(--color-primary); text-align:right;">-</span>
                   </div>
+                  <!-- Plain-language proof line: was the AI plan made inside a verified NEAR AI TEE? -->
+                  <div id="swarm-planner-proof" hidden style="font-family:var(--font-sans); font-size:12px; line-height:1.45; margin-top:6px; padding:8px 10px; border-radius:6px;"></div>
                   <div style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle); margin-top:4px; display:flex; justify-content:space-between; gap:12px;">
                     <span>TRADES FROM</span>
                     <span id="swarm-route" style="color:var(--color-text); text-align:right;">Your RacerBot wallet</span>
@@ -2109,6 +2111,45 @@
       }
     }
 
+    /** Says in plain words whether the plan came from a verified NEAR AI TEE, and if not, why */
+    function renderSwarmPlannerProof(planner) {
+      const el = document.getElementById('swarm-planner-proof');
+      if (!el) return;
+      el.hidden = false;
+      el.textContent = '';
+      const source = planner && planner.source;
+      const tee = planner && planner.tee;
+      let tone;
+      if (source === 'near_ai_tee' && tee && tee.verified) {
+        tone = 'ok';
+        const checked = tee.attestedAt ? new Date(tee.attestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        const signer = String(tee.signer || '');
+        el.append("✓ Made by NEAR AI inside a verified secure enclave (TEE). We checked Intel's and NVIDIA's hardware proofs for that enclave, and its signature on this exact answer, so we know the answer came from there unchanged.");
+        const meta = document.createElement('div');
+        meta.style.cssText = 'font-family:var(--font-mono); font-size:10.5px; color:var(--color-text-subtle); margin-top:4px; word-break:break-all;';
+        meta.textContent = `Enclave key ${signer.slice(0, 10)}…${signer.slice(-6)}${checked ? ' · hardware checked ' + checked : ''}`;
+        meta.title = signer;
+        el.append(meta);
+      } else if (source === 'rules' && /not verified/i.test(String(planner.label || ''))) {
+        tone = 'warn';
+        el.textContent = "NEAR AI's private enclave could not be verified just now, so no AI was used. Racer's built-in planner made this plan instead.";
+      } else if (source === 'near_ai' || source === 'openai') {
+        tone = 'warn';
+        el.textContent = 'This plan was made before Racer checked AI enclaves, so it is not verified.';
+      } else {
+        tone = 'neutral';
+        el.textContent = "Made by Racer's built-in planner. No AI was used.";
+      }
+      const styles = {
+        ok: ['rgba(52, 211, 153, 0.10)', 'rgba(52, 211, 153, 0.35)', '#34D399'],
+        warn: ['rgba(240, 173, 78, 0.10)', 'rgba(240, 173, 78, 0.35)', 'var(--color-text)'],
+        neutral: ['var(--color-surface)', 'var(--color-border)', 'var(--color-text-muted)'],
+      }[tone];
+      el.style.background = styles[0];
+      el.style.border = '1px solid ' + styles[1];
+      el.style.color = styles[2];
+    }
+
     function renderSwarmPlan(plan) {
       document.getElementById('swarm-plan-preview').style.display = 'block';
       const strategyName = plan.strategyTitle || (plan.strategy || 'TWAP Accumulation').replace(/_/g, ' ').toUpperCase();
@@ -2128,7 +2169,10 @@
       document.getElementById('swarm-plan-stealth-badge').textContent = badgeHtml;
       document.getElementById('swarm-plan-reasoning').textContent = plan.reasoning || plan.analysis || '';
       document.getElementById('swarm-planner').textContent = (plan.planner && plan.planner.label) || 'Unknown planner';
-      document.getElementById('swarm-plan-source').textContent = plan.planner && plan.planner.source !== 'rules' ? 'AI plan' : 'Rule-based plan';
+      const teeVerified = Boolean(plan.planner && plan.planner.source === 'near_ai_tee' && plan.planner.tee && plan.planner.tee.verified);
+      const legacyAi = Boolean(plan.planner && (plan.planner.source === 'near_ai' || plan.planner.source === 'openai'));
+      document.getElementById('swarm-plan-source').textContent = teeVerified ? 'AI plan · verified private AI' : legacyAi ? 'AI plan · not verified' : 'Rule-based plan';
+      renderSwarmPlannerProof(plan.planner);
       document.getElementById('swarm-route').textContent = plan.stealthMode ? 'Confidential executors' : 'Your RacerBot wallet';
 
       const tranchesList = document.getElementById('swarm-tranches-list');

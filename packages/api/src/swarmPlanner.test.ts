@@ -5,25 +5,28 @@ vi.mock('./wallet.js', () => ({
 }));
 vi.mock('@racerbot/db', () => ({ getDb: async () => null }));
 
-const { planSwarmSession } = await import('./nearAiSwarm.js');
+const { planSwarmSession, setSwarmTeeDepsForTests } = await import('./nearAiSwarm.js');
+const { resetTeeCache } = await import('./nearAiTee.js');
+const { fakeNearAiTee } = await import('./__fixtures__/nearAiTeeFake.js');
 
 const balances = { nativeNearFormatted: '50' } as any;
 const TOKEN = 'hoot-8ecf65.launchpad.justhoot.near';
 
-function modelAnswers(content: unknown, status = 200) {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-    choices: [{ message: { content: typeof content === 'string' ? content : JSON.stringify(content) } }],
-  }), { status })));
+/** The model answers from a NEAR AI TEE we can attest (or one link of the proof is broken) */
+function modelAnswers(content: unknown, brk?: Parameters<typeof fakeNearAiTee>[0]['break']) {
+  const fake = fakeNearAiTee({ content, break: brk });
+  setSwarmTeeDepsForTests(fake.deps);
+  return fake;
 }
 
 describe('swarm planner with NEAR AI', () => {
   beforeEach(() => {
-    vi.stubEnv('NEAR_AI_TEST_LIVE', '1');
     vi.stubEnv('NEAR_AI_API_KEY', 'test-key');
+    resetTeeCache();
   });
   afterEach(() => {
     vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
+    setSwarmTeeDepsForTests(undefined);
   });
 
   const aiPlan = {
@@ -35,7 +38,7 @@ describe('swarm planner with NEAR AI', () => {
   it('keeps exits the model invented as suggestions, never as armed triggers', async () => {
     modelAnswers(aiPlan);
     const plan = await planSwarmSession({ prompt: `buy 3 NEAR of ${TOKEN} in 3 parts`, userBalances: balances });
-    expect(plan.planner.source).toBe('near_ai');
+    expect(plan.planner.source).toBe('near_ai_tee');
     expect(plan.exitTriggers).toEqual([]);
     expect(plan.exitTrigger).toBeNull();
     expect(plan.suggestedExitTriggers).toHaveLength(1);
@@ -52,20 +55,44 @@ describe('swarm planner with NEAR AI', () => {
   it('reads a model answer wrapped in a ```json fence', async () => {
     modelAnswers('```json\n' + JSON.stringify(aiPlan) + '\n```');
     const plan = await planSwarmSession({ prompt: `buy 3 NEAR of ${TOKEN}`, userBalances: balances });
-    expect(plan.planner.source).toBe('near_ai');
+    expect(plan.planner.source).toBe('near_ai_tee');
     expect(plan.strategy).toBe('twap_dca');
   });
 
-  it('says so when NEAR AI is configured but does not answer', async () => {
-    modelAnswers({}, 503);
+  it('labels a verified plan with the model and the TEE that signed it', async () => {
+    const fake = modelAnswers(aiPlan);
     const plan = await planSwarmSession({ prompt: `buy 3 NEAR of ${TOKEN}`, userBalances: balances });
-    expect(plan.planner).toMatchObject({ source: 'rules', label: 'Racer rule planner (NEAR AI did not answer)' });
+    expect(plan.planner).toMatchObject({
+      source: 'near_ai_tee',
+      label: 'NEAR AI TEE · deepseek-ai/DeepSeek-V4.1-Flash-1017 · verified',
+      tee: { verified: true, signer: fake.teeAddress },
+    });
   });
 
-  it('a plain rule planner label when no model is configured', async () => {
+  it('says so when NEAR AI is configured but does not answer', async () => {
+    modelAnswers({}, 'model-down');
+    const plan = await planSwarmSession({ prompt: `buy 3 NEAR of ${TOKEN}`, userBalances: balances });
+    expect(plan.planner.source).toBe('rules');
+    expect(plan.planner.label).toBe('Racer rule planner (NEAR AI TEE not verified: NEAR AI answered 503)');
+  });
+
+  it('throws away an AI answer whose TEE proof does not check out', async () => {
+    for (const brk of ['tampered-response', 'other-signer', 'gpu-fail', 'wrong-nonce'] as const) {
+      resetTeeCache();
+      modelAnswers({ ...aiPlan, strategy: 'liquidity_sweep' }, brk);
+      const plan = await planSwarmSession({ prompt: `buy 3 NEAR of ${TOKEN}`, userBalances: balances });
+      expect(plan.planner.source).toBe('rules');
+      expect(plan.planner.label).toContain('NEAR AI TEE not verified');
+      expect(plan.strategy).not.toBe('liquidity_sweep');
+    }
+  });
+
+  it('a plain rule planner label when no model is configured, and never asks OpenAI', async () => {
     vi.stubEnv('NEAR_AI_API_KEY', '');
-    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-should-not-be-used');
+    const fake = modelAnswers({});
     const plan = await planSwarmSession({ prompt: `buy 3 NEAR of ${TOKEN}`, userBalances: balances });
     expect(plan.planner.label).toBe('Racer rule planner');
+    expect(fake.calls).toHaveLength(0);
   });
 });

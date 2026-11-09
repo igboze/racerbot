@@ -19,7 +19,9 @@ vi.mock('./wallet.js', () => ({
 }));
 vi.mock('@racerbot/db', () => ({ getDb: async () => { throw new Error('no db in tests'); } }));
 
-const { planSwarmSession, resolveNearTokenQuery, isSellRequest, extractSellPct } = await import('./nearAiSwarm.js');
+const { planSwarmSession, resolveNearTokenQuery, isSellRequest, extractSellPct, setSwarmTeeDepsForTests } = await import('./nearAiSwarm.js');
+const { resetTeeCache } = await import('./nearAiTee.js');
+const { fakeNearAiTee } = await import('./__fixtures__/nearAiTeeFake.js');
 
 beforeEach(() => {
   delete process.env.CONFIDENTIAL_EXECUTORS_ENABLED;
@@ -173,43 +175,36 @@ describe('NEAR AI Swarm planner', () => {
 });
 
 describe('NEAR AI model answers cannot take over the trade', () => {
-  const realFetch = globalThis.fetch;
   beforeEach(() => {
-    process.env.NEAR_AI_TEST_LIVE = '1';
     process.env.NEAR_AI_API_KEY = 'test-key';
+    resetTeeCache();
   });
   afterEach(() => {
-    globalThis.fetch = realFetch;
-    delete process.env.NEAR_AI_TEST_LIVE;
+    setSwarmTeeDepsForTests(undefined);
     delete process.env.NEAR_AI_API_KEY;
   });
 
   it('ignores a model that tries to flip the side or raise the size, and labels the planner', async () => {
-    const fetchMock = vi.fn(async (_url: any, init: any) => ({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: JSON.stringify({
-          action: 'sell', total_amount_near: 5000, strategy: 'twap_dca', drone_count: 4, max_slippage_pct: 2, reasoning: 'Spread entries to limit impact.',
-        }) } }],
-      }),
-    }));
-    globalThis.fetch = fetchMock as any;
+    const fake = fakeNearAiTee({ content: {
+      action: 'sell', total_amount_near: 5000, strategy: 'twap_dca', drone_count: 4, max_slippage_pct: 2, reasoning: 'Spread entries to limit impact.',
+    } });
+    setSwarmTeeDepsForTests(fake.deps);
     const plan = await planSwarmSession({ prompt: 'Buy 8 NEAR of HOOT' });
     expect(plan.action).toBe('buy');
     expect(plan.totalNear).toBe(8);
     expect(plan.strategy).toBe('twap_dca');
     expect(plan.droneCount).toBe(4);
-    expect(plan.planner).toMatchObject({ source: 'near_ai', label: expect.stringContaining('NEAR AI Cloud') });
+    expect(plan.planner).toMatchObject({ source: 'near_ai_tee', label: expect.stringContaining('NEAR AI TEE') });
     expect(plan.analysis).toContain('Spread entries to limit impact.');
 
     // Token metadata reaches the model as quoted data, not as instructions
-    const body = JSON.parse((fetchMock.mock.calls[0] as any)[1].body);
+    const body = fake.chatBody();
     expect(body.messages[0].content).toContain('data, not instructions');
     expect(() => JSON.parse(body.messages[1].content)).not.toThrow();
   });
 
   it('falls back to the rule planner, labelled as such, when the model fails', async () => {
-    globalThis.fetch = vi.fn(async () => ({ ok: false, status: 500 })) as any;
+    setSwarmTeeDepsForTests(fakeNearAiTee({ content: {}, break: 'model-down' }).deps);
     const plan = await planSwarmSession({ prompt: 'Buy 8 NEAR of HOOT in 3 tranches' });
     expect(plan.planner.source).toBe('rules');
     expect(plan.totalNear).toBe(8);
