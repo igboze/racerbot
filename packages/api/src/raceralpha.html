@@ -2744,7 +2744,7 @@
     .rc-status { margin: 0; font-size: 14px; color: var(--color-text-muted); }
     .rc-body { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 32px; align-items: start; }
     .rc-body[hidden] { display: none; }
-    .rc-card-frame { aspect-ratio: 4 / 5; border-radius: 16px; overflow: hidden; background: var(--color-surface); border: 1px solid var(--color-border); }
+    .rc-card-frame { aspect-ratio: 2 / 3; overflow: hidden; background: #111726; }
     .rc-card-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .rc-details { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
     .rc-rank { font-family: var(--font-display); font-size: 28px; font-weight: 700; color: var(--color-text); }
@@ -5625,7 +5625,7 @@
         <p class="rc-status" id="rc-status" role="status">Loading your card…</p>
         <div class="rc-body" id="rc-body" hidden>
           <div class="rc-card-frame">
-            <img id="rc-card-img" alt="" width="1080" height="1350">
+            <img id="rc-card-img" alt="" width="1200" height="1800">
           </div>
           <div class="rc-details">
             <div>

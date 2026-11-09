@@ -45,7 +45,8 @@ vi.mock('@racerbot/db', () => ({
     return true;
   }),
 }));
-vi.mock('./racerCardImageGenerator.js', () => ({
+vi.mock('./racerCardImageGenerator.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./racerCardImageGenerator.js')>()),
   generateRacerCardImage: vi.fn(async () => Buffer.from('png')),
   generateRacerCardOgImage: vi.fn(async () => Buffer.from('preview-png')),
 }));
@@ -379,6 +380,7 @@ describe('sharing with the card image', () => {
     expect(res.headers['Content-Type']).toContain('text/html');
     const html: string = res.body;
     expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+    expect(html).toContain('<meta property="og:image:type" content="image/png">');
     expect(html).toContain('<meta property="og:image" content="https://racer.example/c/SPEEDY/preview.png?r=8">');
     expect(html).toContain('<meta name="twitter:image" content="https://racer.example/c/SPEEDY/preview.png?r=8">');
     expect(html).toContain('Circuit Racer II on RacerBot');
@@ -419,7 +421,7 @@ describe('sharing with the card image', () => {
 });
 
 describe('card image', () => {
-  it('renders a 1080x1350 PNG (Legend, the busiest tier)', async () => {
+  it('renders the 1200x1800 design card and a 1200x630 preview', async () => {
     const { generateRacerCardImage: real, generateRacerCardOgImage: realPreview } = await vi.importActual<typeof import('./racerCardImageGenerator.js')>('./racerCardImageGenerator.js');
     for (const tierIndex of [6]) {
       const png = await real({
@@ -429,8 +431,8 @@ describe('card image', () => {
       });
       expect(png).not.toBeNull();
       expect(png!.subarray(1, 4).toString()).toBe('PNG');
-      expect(png!.readUInt32BE(16)).toBe(1080);
-      expect(png!.readUInt32BE(20)).toBe(1350);
+      expect(png!.readUInt32BE(16)).toBe(1200);
+      expect(png!.readUInt32BE(20)).toBe(1800);
       // Landscape link preview for X / Telegram
       const preview = await realPreview({
         rankTitle: 'Legend', levelLabel: 'II', tierIndex, tierCount: 7, finish: 'holo', topPercent: 8,
@@ -441,4 +443,19 @@ describe('card image', () => {
       expect(preview!.readUInt32BE(20)).toBe(630);
     }
   }, 90_000);
+
+  it('has design artwork for every rank and level', async () => {
+    const { racerCardArtName } = await vi.importActual<typeof import('./racerCardImageGenerator.js')>('./racerCardImageGenerator.js');
+    const { resolveAsset } = await import('./pnlCardImageGenerator.js');
+    const names = new Set<string>();
+    for (let tier = 0; tier < 7; tier++) {
+      for (const level of ['I', 'II', 'III']) {
+        const name = racerCardArtName(tier, level);
+        names.add(name);
+        expect(resolveAsset(name), name).not.toBeNull();
+      }
+    }
+    expect(names.size).toBe(21);
+    expect(racerCardArtName(2, 'II')).toBe('racer-cards/circuit-racer-2.jpg');
+  });
 });

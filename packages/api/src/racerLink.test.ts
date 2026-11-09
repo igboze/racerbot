@@ -73,7 +73,8 @@ vi.mock('@racerbot/db', () => ({
     return 'linked';
   }),
 }));
-vi.mock('./racerCardImageGenerator.js', () => ({
+vi.mock('./racerCardImageGenerator.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./racerCardImageGenerator.js')>()),
   generateRacerCardImage: vi.fn(async () => Buffer.from('png')),
   generateRacerCardOgImage: vi.fn(async () => Buffer.from('preview-png')),
 }));
