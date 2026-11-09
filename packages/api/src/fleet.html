@@ -523,6 +523,7 @@
       }
     }
   </script>
+  <link rel="stylesheet" href="/assets/racer-trade-terminal.css">
 </head>
 <body>
   <!-- Shared Shell Header -->
@@ -550,24 +551,25 @@
       </button>
     </div>
   </header>
-  <!-- Hero & Cockpit Section -->
-    <section class="fleet-hero" style="padding: 32px 0 20px; border-bottom: 1px solid var(--color-border);">
-    <div class="container">
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px;">
-        <div>
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-            <h1 style="font-size:32px; font-weight:700; color:var(--color-text); margin:0;">RacerFleet</h1>
-            <span class="badge" style="background:var(--color-surface-2); border:1px solid var(--color-border); color:var(--color-text-2); font-size:11px; padding:3px 8px; border-radius:4px;">NEAR Mainnet</span>
-          </div>
-          <p style="font-size:15px; color:var(--color-text-2); margin:0;">Manage multiple wallets in one click.</p>
+  <!-- Fleet trading terminal -->
+  <main class="terminal-container tt tt-fleet" id="fleet-terminal" data-mobile-tab="trade" aria-labelledby="fleet-heading">
+    <!-- Title bar: what Fleet is, live fleet stats, deploy and key export -->
+    <div class="tt-titlebar">
+      <div class="tt-title">
+        <h1 id="fleet-heading" class="tt-h1">Fleet <span class="tt-tag">NEAR mainnet</span></h1>
+        <span class="tt-title-sub">Trade one token from several wallets at once. Big orders split up, so they move the price less and are harder to front-run.</span>
+      </div>
+      <div class="tt-fleet-head-right">
+        <div class="tt-metrics" aria-label="Fleet stats">
+          <div class="tt-metric"><span class="tt-metric-lbl">Your fleet</span><span class="tt-metric-val" id="hud-fleet-tag">—</span><span class="tt-metric-sub" id="hud-fleet-wallets">No fleet yet</span></div>
+          <div class="tt-metric"><span class="tt-metric-lbl">Total balance</span><span class="tt-metric-val tt-cyan" id="hud-total-near">—</span><span class="tt-metric-sub" id="hud-total-usd">$0.00</span></div>
+          <div class="tt-metric"><span class="tt-metric-lbl">Status</span><span class="tt-metric-val"><span id="hud-status-badge" class="badge-status offline">NOT SET UP</span></span></div>
         </div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <button class="btn btn-primary" onclick="openDeployModal()">Deploy fleet</button>
+        <div class="tt-fleet-actions">
+          <button type="button" class="tt-link-btn" onclick="fetchFleetStatus(true)" title="Refresh balances">↻ Refresh</button>
           <div class="dropdown" style="position:relative;">
-            <button class="btn btn-secondary" onclick="toggleSecurityMenu()" aria-label="Security options" style="padding:0 12px;">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
-            </button>
-            <div id="security-dropdown" class="card" style="display:none; position:absolute; right:0; top:48px; width:220px; z-index:100; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,0.4);">
+            <button type="button" class="tt-link-btn" onclick="toggleSecurityMenu()" aria-label="More options">•••</button>
+            <div id="security-dropdown" class="card" style="display:none; position:absolute; right:0; top:40px; width:220px; z-index:100; padding:8px; box-shadow:0 8px 24px rgba(0,0,0,0.4);">
               <button class="btn btn-ghost" onclick="openExportModal(); toggleSecurityMenu();" style="width:100%; justify-content:flex-start; font-size:13px; color:var(--color-error); padding:8px 12px; height:auto;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-1-1l-3 3m-1 4a6 6 0 1 1-6-6c1.3 0 2.5.4 3.5 1.1l7.5-7.5"></path></svg>
                 <span>Export private keys</span>
@@ -577,274 +579,243 @@
         </div>
       </div>
     </div>
-  </section>
 
-  <!-- RacerFleet Quick-Start Guide for New Users -->
-  <div class="terminal-container" style="padding-top:16px;">
-    <div style="background:linear-gradient(135deg, rgba(106, 204, 220, 0.08) 0%, rgba(22, 27, 44, 0.95) 100%); border:1px solid rgba(106, 204, 220, 0.25); border-radius:var(--radius-lg); padding:16px 20px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span class="live-dot" style="background:var(--color-primary);"></span>
-          <span style="font-weight:700; font-size:13px; color:var(--color-text); letter-spacing:0.3px;">⚡ HOW RACERFLEET MULTI-WALLET SWARMS WORK</span>
-        </div>
-        <button type="button" onclick="this.closest('.terminal-container').style.display='none'" style="background:transparent; border:none; color:var(--color-text-subtle); font-size:12px; cursor:pointer; padding:4px 8px;">Dismiss ✕</button>
-      </div>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
-        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:12px 14px;">
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
-            <span style="background:rgba(106,204,220,0.15); color:var(--color-primary); font-family:var(--font-mono); font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">1</span>
-            <span style="font-size:13px; font-weight:700; color:var(--color-text);">Deploy Child Subaccounts</span>
-          </div>
-          <p style="font-size:12px; color:var(--color-text-muted); margin:0; line-height:1.4;">
-            Create 3 to 10 disposable child accounts under <code>racerbot.near</code> with 1 click. Each wallet has independent keys, zero linked history, and trades autonomously.
-          </p>
-        </div>
-        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:12px 14px;">
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
-            <span style="background:rgba(106,204,220,0.15); color:var(--color-primary); font-family:var(--font-mono); font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">2</span>
-            <span style="font-size:13px; font-weight:700; color:var(--color-text);">Anti-MEV Jitter Swarm</span>
-          </div>
-          <p style="font-size:12px; color:var(--color-text-muted); margin:0; line-height:1.4;">
-            Bundle buys distribute size across multiple subaccounts with randomized millisecond delays. Sniper bots and sandwich MEV extractors cannot front-run your orders.
-          </p>
-        </div>
-        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; padding:12px 14px;">
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
-            <span style="background:rgba(106,204,220,0.15); color:var(--color-primary); font-family:var(--font-mono); font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;">3</span>
-            <span style="font-size:13px; font-weight:700; color:var(--color-text);">1-Click Capital Sweep</span>
-          </div>
-          <p style="font-size:12px; color:var(--color-text-muted); margin:0; line-height:1.4;">
-            When trading is complete, sweep all remaining NEAR and token balances back to your primary wallet in a single atomic transaction. No funds left behind.
-          </p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Fleet HUD Dashboard -->
-  <div class="terminal-container" style="padding-top:24px;">
-    <div class="hud-grid">
-      <div class="hud-card">
-        <div class="hud-label">Fleet Tag</div>
-        <div class="hud-val" id="hud-fleet-tag">—</div>
-        <div class="hud-sub" id="hud-fleet-wallets">No fleet deployed</div>
-      </div>
-      <div class="hud-card">
-        <div class="hud-label">Total NEAR Balance</div>
-        <div class="hud-val cyan" id="hud-total-near">—</div>
-        <div class="hud-sub" id="hud-total-usd">$0.00 USD</div>
-      </div>
-      <div class="hud-card">
-        <div class="hud-label">Fleet Status</div>
-        <div class="hud-val" style="font-size:16px;"><span id="hud-status-badge" class="badge-status offline">UNCONFIGURED</span></div>
-        <div class="hud-sub">NEAR Mainnet</div>
-      </div>
-      <div class="hud-card">
-        <div class="hud-label">Quick Actions</div>
-        <div style="display:flex;gap:8px;margin-top:4px;">
-          <button class="btn btn-primary btn-sm" onclick="openDeployModal()" style="flex:1;">Deploy</button>
-          <button class="btn btn-secondary btn-sm" onclick="fetchFleetStatus(true)" style="flex:1;">Refresh</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Main Terminal Body -->
-  <main class="terminal-container" style="padding-top:20px; padding-bottom:64px;">
-    <!-- Empty State Onboarding Callout when 0 subaccounts deployed -->
-    <div id="fleet-empty-state-banner" style="display:none; background:var(--color-surface-card); border:1px solid rgba(106, 204, 220, 0.3); border-radius:var(--radius-lg); padding:24px; margin-bottom:20px; text-align:center;">
-      <div style="width:48px; height:48px; border-radius:50%; background:rgba(106, 204, 220, 0.15); display:inline-flex; align-items:center; justify-content:center; margin-bottom:12px;">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6ACCDC" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-      </div>
-      <h3 style="font-size:18px; font-weight:700; color:var(--color-text); margin:0 0 6px;">No Subaccount Fleet Deployed Yet</h3>
-      <p style="font-size:13px; color:var(--color-text-2); max-width:540px; margin:0 auto 16px;">
-        Deploy your first fleet of disposable child accounts from <code>racerbot.near</code> to start multi-wallet coordinated trading, anti-MEV jitter execution, and stealth distribution.
-      </p>
-      <button class="btn btn-primary" onclick="openDeployModal()" style="min-height:44px; padding:0 24px; font-weight:700;">
-        ⚡ Deploy 5-Wallet Fleet (1-Click)
-      </button>
+    <!-- Phone: switch between trading and your wallets -->
+    <div class="tt-mtabs" role="tablist" aria-label="Fleet sections">
+      <button type="button" role="tab" class="mobile-term-tab active" id="fleet-mtab-trade" onclick="fleetMobileTab('trade')">Trade</button>
+      <button type="button" role="tab" class="mobile-term-tab" id="fleet-mtab-positions" onclick="fleetMobileTab('positions')">My wallets</button>
     </div>
 
-    <div class="terminal-split">
-      <!-- Left Column: Coordinated Multi-Wallet Terminal -->
-      <div>
-        <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-lg); overflow:hidden;">
-          <div class="tab-bar">
-            <button class="tab-btn active" id="tab-btn-buy" onclick="switchTab('buy')">
-              <span>Coordinated Bundle Buy</span>
-            </button>
-            <button class="tab-btn" id="tab-btn-sell" onclick="switchTab('sell')">
-              <span>Coordinated Bundle Sell</span>
-            </button>
-            <button class="tab-btn" id="tab-btn-ops" onclick="switchTab('ops')">
-              <span>Capital Management</span>
-            </button>
-            <button class="tab-btn" id="tab-btn-swarm" onclick="switchTab('swarm')">
-              <span>AI Swarm</span>
-              <span style="font-size:10px; background:rgba(106,204,220,0.15); color:var(--color-primary); padding:2px 6px; border-radius:4px; font-weight:700;">NEAR AI</span>
-            </button>
-          </div>
-
-          <div style="padding:20px;">
-            <!-- TAB 1: BUNDLE BUY -->
-            <div id="tab-content-buy">
-              <div class="form-group">
-                <div class="form-label">
-                  <span>TARGET TOKEN CONTRACT</span>
-                  <span id="token-verified-badge" style="color:var(--color-primary); font-size:11px;">VERIFIED FT</span>
-                </div>
-                <input type="text" id="buy-token-input" class="terminal-input" placeholder="e.g. blackdragon.tkn.near" value="blackdragon.tkn.near" oninput="updateBuyCalculation()" />
-                <div class="chips-row">
-                  <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); align-self:center;">QUICK:</span>
-                  <button type="button" class="token-chip" onclick="setBuyToken('blackdragon.tkn.near')">BLACKDRAGON</button>
-                  <button type="button" class="token-chip" onclick="setBuyToken('wrap.near')">NEAR</button>
-                  <button type="button" class="token-chip" onclick="setBuyToken('lonk.tkn.near')">LONK</button>
-                  <button type="button" class="token-chip" onclick="setBuyToken('shitzu.tkn.near')">SHITZU</button>
-                  <button type="button" class="token-chip" onclick="setBuyToken('usdt.tether-token.near')">USDT</button>
-                </div>
+    <div class="tt-grid">
+      <!-- CENTRE: token chart, recent swaps, holdings and wallets -->
+      <div class="tt-center">
+        <div class="tt-panel tt-chart" id="fleet-token-telemetry-card">
+          <div class="tt-chart-head">
+            <div>
+              <span class="tt-panel-title tt-small">Price chart</span>
+              <div id="fleet-target-token-label" class="tt-mono tt-small-text tt-ellipsis">blackdragon.tkn.near</div>
+            </div>
+            <div class="tt-links">
+              <div class="tt-seg" role="group" aria-label="Chart style">
+                <button type="button" class="tt-seg-btn active" data-chart="dex" onclick="setFleetChartMode('dex')">Candles</button>
+                <button type="button" class="tt-seg-btn" data-chart="line" onclick="setFleetChartMode('line')">Simple line</button>
               </div>
+              <button type="button" class="tt-link-btn" id="btn-fleet-dex" onclick="openFleetExternalChart()">DexScreener ↗</button>
+              <button type="button" class="tt-link-btn" id="btn-fleet-bubble" onclick="openFleetBubbleMap()">Holders map ↗</button>
+            </div>
+          </div>
+          <div class="tt-fleet-chart" data-mode="dex">
+            <iframe id="fleet-dex-frame" src="" title="Token price chart" loading="lazy"></iframe>
+            <svg id="fleet-chart-svg" style="width:100%; height:100%;" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="fleetChartGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#6ACCDC" stop-opacity="0.35"/>
+                  <stop offset="100%" stop-color="#6ACCDC" stop-opacity="0.0"/>
+                </linearGradient>
+              </defs>
+              <path id="fleet-chart-area" d="" fill="url(#fleetChartGrad)"/>
+              <path id="fleet-chart-line" d="" fill="none" stroke="#6ACCDC" stroke-width="2"/>
+            </svg>
+            <div id="fleet-chart-watermark" style="position:absolute; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle); pointer-events:none;">
+              Live Price Action
+            </div>
+          </div>
+          <div class="tt-caller-swaps-head" style="margin-top:12px;">
+            <span class="tt-panel-title tt-small">Recent trades of this token</span>
+            <span id="fleet-txns-count" class="tt-mono tt-small-text">Live</span>
+          </div>
+          <div id="fleet-token-txns-container" class="tt-fleet-txns">
+            <div class="tt-empty-inline">Loading recent trades…</div>
+          </div>
+        </div>
 
-              <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
-                <div>
-                  <div class="form-label"><span>NEAR PER SUBACCOUNT</span></div>
-                  <input type="number" id="buy-amount-input" class="terminal-input" value="1.0" step="0.1" min="0.1" oninput="updateBuyCalculation()" />
-                  <div class="chips-row">
-                    <button type="button" class="amt-chip" onclick="setBuyAmount(0.5)">0.5</button>
-                    <button type="button" class="amt-chip active" onclick="setBuyAmount(1.0)">1.0</button>
-                    <button type="button" class="amt-chip" onclick="setBuyAmount(2.5)">2.5</button>
-                    <button type="button" class="amt-chip" onclick="setBuyAmount(5.0)">5.0</button>
-                  </div>
-                </div>
+        <div class="tt-panel tt-activity" id="tt-activity">
+          <div class="tt-subtabs" role="tablist" aria-label="Your fleet">
+            <button type="button" role="tab" class="tt-subtab active" data-tt-sub="holdings" aria-selected="true" onclick="ttSwitchActivity('holdings')">Holdings</button>
+            <button type="button" role="tab" class="tt-subtab" data-tt-sub="wallets" aria-selected="false" onclick="ttSwitchActivity('wallets')">Wallets</button>
+          </div>
+          <div class="tt-subpanel" data-tt-panel="holdings">
+            <p class="tt-hint">Every token your fleet wallets hold, added up.</p>
+            <div id="fleet-holdings-container">
+              <div class="tt-empty-inline">Checking your fleet's balances…</div>
+            </div>
+          </div>
+          <div class="tt-subpanel" data-tt-panel="wallets" hidden>
+            <p class="tt-hint">Each fleet wallet is a separate NEAR account that only you control. Export the keys from the ••• menu.</p>
+            <div class="tt-table-scroll">
+      <table class="fleet-table">
+        <thead>
+          <tr>
+            <th style="width:60px;">#</th>
+            <th>SUBACCOUNT ADDRESS</th>
+            <th>NEAR BALANCE</th>
+            <th>STATUS</th>
+            <th>EXPLORER</th>
+            <th>ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="fleet-wallets-tbody">
+          <tr>
+            <td colspan="6" style="text-align:center; padding:32px; color:var(--color-text-subtle);">
+              Loading subaccounts telemetry...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+            </div>
+            <a href="/bubblemap" class="tt-link-btn" style="align-self:flex-start; display:inline-flex; align-items:center; text-decoration:none;">See how wallets connect on Bubble Map ↗</a>
+          </div>
+        </div>
+      </div>
 
-                <div>
-                  <div class="form-label"><span>SLIPPAGE TOLERANCE</span></div>
-                  <select id="buy-slippage" class="terminal-input" style="cursor:pointer;" onchange="updateBuyCalculation()">
-                    <option value="1.0">1.0% (Tight)</option>
-                    <option value="3.0" selected>3.0% (Standard)</option>
-                    <option value="5.0">5.0% (Fast)</option>
-                    <option value="10.0">10.0% (Degen)</option>
-                  </select>
-                  <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-top:8px;">
-                    Maximum price movement accepted for this swap.
-                  </div>
-                </div>
+      <!-- RIGHT: getting started and the order panel -->
+      <aside class="tt-order" id="tt-order" aria-label="Order panel">
+        <div class="tt-panel tt-account" id="fleet-steps" aria-live="polite">
+          <ol class="aas-steps tt-steps tt-steps-4" aria-label="Getting started">
+            <li data-step="connect"><span class="aas-num">1</span>Sign in</li>
+            <li data-step="deploy"><span class="aas-num">2</span>Create</li>
+            <li data-step="fund"><span class="aas-num">3</span>Fund</li>
+            <li data-step="trade"><span class="aas-num">4</span>Trade</li>
+          </ol>
+          <div class="tt-account-text">
+            <div class="aas-title" id="fleet-steps-title">Sign in to start</div>
+            <div class="aas-sub" id="fleet-steps-sub">Use Telegram or any Solana, EVM or NEAR wallet. Signing in is free and sends no transaction.</div>
+          </div>
+          <div class="aas-actions" id="fleet-steps-actions"></div>
+        </div>
+
+        <div class="tt-panel tt-ticket">
+          <div class="tt-seg tt-seg-wide tt-seg-4" role="group" aria-label="What do you want to do">
+            <button type="button" class="tt-seg-btn active" id="tab-btn-buy" onclick="switchTab('buy')">Buy</button>
+            <button type="button" class="tt-seg-btn" id="tab-btn-sell" onclick="switchTab('sell')">Sell</button>
+            <button type="button" class="tt-seg-btn" id="tab-btn-ops" onclick="switchTab('ops')">Move funds</button>
+            <button type="button" class="tt-seg-btn" id="tab-btn-swarm" onclick="switchTab('swarm')">AI Swarm</button>
+          </div>
+
+          <!-- BUY with every fleet wallet -->
+          <div id="tab-content-buy" class="tt-dispatch">
+            <p class="tt-hint">Every wallet in your fleet buys the same amount, one after another.</p>
+            <div class="tt-field">
+              <div class="tt-field-head">
+                <label for="buy-token-input">Token to buy</label>
+                <span id="token-verified-badge" class="tt-tag">NEAR TOKEN</span>
               </div>
+              <input type="text" id="buy-token-input" class="terminal-input tt-text-input" placeholder="Token address, e.g. blackdragon.tkn.near" value="blackdragon.tkn.near" oninput="updateBuyCalculation()" />
+              <div class="tt-scroll-row tt-wrap" aria-label="Popular tokens">
+                <button type="button" class="token-chip" onclick="setBuyToken('blackdragon.tkn.near')">BLACKDRAGON</button>
+                <button type="button" class="token-chip" onclick="setBuyToken('lonk.tkn.near')">LONK</button>
+                <button type="button" class="token-chip" onclick="setBuyToken('shitzu.tkn.near')">SHITZU</button>
+                <button type="button" class="token-chip" onclick="setBuyToken('wrap.near')">wNEAR</button>
+                <button type="button" class="token-chip" onclick="setBuyToken('usdt.tether-token.near')">USDT</button>
+              </div>
+            </div>
 
-              <div class="form-group">
-                <div class="form-label">
-                  <span>DELAY BETWEEN WALLET ACTIONS</span>
-                  <span id="jitter-val" style="color:var(--color-primary);">400ms</span>
+            <div class="tt-field">
+              <div class="tt-field-head"><label for="buy-amount-input">NEAR per wallet</label></div>
+              <div class="tt-input-wrap">
+                <input type="number" id="buy-amount-input" inputmode="decimal" value="1.0" step="0.1" min="0.1" oninput="updateBuyCalculation()" />
+                <span class="tt-unit">NEAR</span>
+              </div>
+              <div class="tt-chips alpha-preset-chips">
+                <button type="button" class="amt-chip" onclick="setBuyAmount(0.5)">0.5</button>
+                <button type="button" class="amt-chip active" onclick="setBuyAmount(1.0)">1.0</button>
+                <button type="button" class="amt-chip" onclick="setBuyAmount(2.5)">2.5</button>
+                <button type="button" class="amt-chip" onclick="setBuyAmount(5.0)">5.0</button>
+              </div>
+            </div>
+
+            <div class="tt-summary">
+              <div class="tt-summary-row"><span>Wallets buying</span><b class="tt-mono" id="calc-wallet-count">5 Subaccounts</b></div>
+              <div class="tt-summary-row"><span>Total you spend</span><b class="tt-mono" id="calc-total-near">5.00 NEAR</b></div>
+              <div class="tt-summary-row"><span>Fee (1.5%)</span><b class="tt-mono" id="calc-fee-near">0.075 NEAR</b></div>
+              <div class="tt-summary-row"><span>Goes into the token</span><b class="tt-mono tt-cyan" id="calc-net-near">4.925 NEAR</b></div>
+              <details class="tt-settings">
+                <summary><span>Max price move (slippage)</span><b class="tt-mono" id="tt-fleet-slip-summary">3%</b></summary>
+                <select id="buy-slippage" class="terminal-input" onchange="updateBuyCalculation(); document.getElementById('tt-fleet-slip-summary').textContent = parseFloat(this.value) + '%';">
+                  <option value="1.0">1% (careful)</option>
+                  <option value="3.0" selected>3% (recommended)</option>
+                  <option value="5.0">5% (fast-moving tokens)</option>
+                  <option value="10.0">10% (very new tokens)</option>
+                </select>
+                <div class="tt-field-head" style="margin-top:10px;">
+                  <label for="buy-jitter">Pause between wallets</label>
+                  <b class="tt-mono" id="jitter-val">400ms</b>
                 </div>
                 <input type="range" id="buy-jitter" min="0" max="2500" step="100" value="400" style="width:100%; accent-color:var(--color-primary);" oninput="document.getElementById('jitter-val').textContent = this.value + 'ms'" />
-                <div style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-top:4px;">
-                  Sets the time spacing between sequential wallet actions.
-                </div>
-              </div>
-
-              <!-- Order Summary HUD -->
-              <div class="calc-box">
-                <div class="calc-row">
-                  <span>Wallets Firing:</span>
-                  <span class="calc-val" id="calc-wallet-count">5 Subaccounts</span>
-                </div>
-                <div class="calc-row">
-                  <span>Total Capital Committed:</span>
-                  <span class="calc-val" id="calc-total-near">5.00 NEAR</span>
-                </div>
-                <div class="calc-row">
-                  <span>Platform Fee (1.5%):</span>
-                  <span class="calc-val" id="calc-fee-near">0.075 NEAR</span>
-                </div>
-                <div class="calc-row" style="border-top:1px dashed var(--color-border); padding-top:4px; margin-top:4px;">
-                  <span>Net Token Purchase:</span>
-                  <span class="calc-val" style="color: var(--color-primary);" id="calc-net-near">4.925 NEAR</span>
-                </div>
-              </div>
-
-              <button class="btn btn-primary" id="btn-exec-buy" style="width:100%; height:48px; font-size:14px;" onclick="executeBundleBuy()">
-                <span>Execute Coordinated Bundle Buy</span>
-              </button>
-
-              <div id="buy-stream" class="action-stream"></div>
+                <p class="tt-hint">A short random pause between wallets makes the buys look unrelated.</p>
+              </details>
             </div>
 
-            <!-- TAB 2: BUNDLE SELL -->
-            <div id="tab-content-sell" style="display:none;">
-              <div class="form-group">
-                <div class="form-label"><span>SELECT TOKEN TO SELL</span></div>
-                <input type="text" id="sell-token-input" class="terminal-input" placeholder="e.g. blackdragon.tkn.near" value="blackdragon.tkn.near" />
-                <div class="chips-row">
-                  <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle); align-self:center;">FROM FLEET:</span>
-                  <button type="button" class="token-chip" onclick="document.getElementById('sell-token-input').value = 'blackdragon.tkn.near'">BLACKDRAGON</button>
-                  <button type="button" class="token-chip" onclick="document.getElementById('sell-token-input').value = 'wrap.near'">WRAP.NEAR</button>
-                </div>
-              </div>
+            <button type="button" class="btn btn-primary tt-cta" id="btn-exec-buy" onclick="executeBundleBuy()">
+              <span>Buy with every fleet wallet</span>
+            </button>
+            <p class="tt-hint tt-center-text">You confirm before anything is spent.</p>
+            <div id="buy-stream" class="action-stream"></div>
+          </div>
 
-              <div class="form-group">
-                <div class="form-label"><span>EXIT PERCENTAGE ACROSS ALL WALLETS</span></div>
-                <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:8px;">
-                  <button type="button" class="btn btn-secondary btn-sm" onclick="setSellPct(25)">25%</button>
-                  <button type="button" class="btn btn-secondary btn-sm" onclick="setSellPct(50)">50%</button>
-                  <button type="button" class="btn btn-secondary btn-sm" onclick="setSellPct(75)">75%</button>
-                  <button type="button" class="btn btn-primary btn-sm" style="background:var(--color-danger); border-color:var(--color-danger);" onclick="setSellPct(100)">100% (LIQUIDATE)</button>
-                </div>
-                <input type="hidden" id="sell-pct-val" value="100" />
-                <div style="font-size:12px; font-family:var(--font-mono); color:var(--color-text-subtle); margin-top:8px;">
-                  Target Exit: <b id="sell-pct-display" style="color:var(--color-text);">100%</b> of held tokens in each wallet.
-                </div>
+          <!-- SELL from every fleet wallet -->
+          <div id="tab-content-sell" class="tt-dispatch" style="display:none;">
+            <p class="tt-hint">Every wallet sells the same share of what it holds.</p>
+            <div class="tt-field">
+              <div class="tt-field-head"><label for="sell-token-input">Token to sell</label></div>
+              <input type="text" id="sell-token-input" class="terminal-input tt-text-input" placeholder="Token address, e.g. blackdragon.tkn.near" value="blackdragon.tkn.near" />
+              <div class="tt-scroll-row tt-wrap" aria-label="Tokens">
+                <button type="button" class="token-chip" onclick="document.getElementById('sell-token-input').value = 'blackdragon.tkn.near'">BLACKDRAGON</button>
+                <button type="button" class="token-chip" onclick="document.getElementById('sell-token-input').value = 'wrap.near'">wNEAR</button>
               </div>
+            </div>
 
-              <div class="form-group">
-                <div class="form-label"><span>SLIPPAGE TOLERANCE</span></div>
-                <select id="sell-slippage" class="terminal-input">
-                  <option value="1.0">1.0%</option>
-                  <option value="3.0" selected>3.0% (Standard)</option>
-                  <option value="5.0">5.0%</option>
+            <div class="tt-field">
+              <div class="tt-field-head"><span class="tt-label">How much to sell</span><b class="tt-mono" id="sell-pct-display">100%</b></div>
+              <div class="tt-slip">
+                <button type="button" class="slip-chip" onclick="setSellPct(25)">25%</button>
+                <button type="button" class="slip-chip" onclick="setSellPct(50)">50%</button>
+                <button type="button" class="slip-chip" onclick="setSellPct(75)">75%</button>
+                <button type="button" class="slip-chip active" onclick="setSellPct(100)">All</button>
+              </div>
+              <input type="hidden" id="sell-pct-val" value="100" />
+            </div>
+
+            <div class="tt-summary">
+              <details class="tt-settings">
+                <summary><span>Max price move (slippage)</span><b class="tt-mono" id="tt-fleet-sell-slip-summary">3%</b></summary>
+                <select id="sell-slippage" class="terminal-input" onchange="document.getElementById('tt-fleet-sell-slip-summary').textContent = parseFloat(this.value) + '%';">
+                  <option value="1.0">1% (careful)</option>
+                  <option value="3.0" selected>3% (recommended)</option>
+                  <option value="5.0">5% (fast-moving tokens)</option>
                 </select>
-              </div>
-
-              <button class="btn btn-primary" id="btn-exec-sell" style="width:100%; height:48px; font-size:14px; background:var(--color-danger); border-color:var(--color-danger);" onclick="executeBundleSell()">
-                <span>Execute Coordinated Fleet Exit</span>
-              </button>
-
-              <div id="sell-stream" class="action-stream"></div>
+              </details>
             </div>
 
-            <!-- TAB 3: CAPITAL OPERATIONS -->
-            <div id="tab-content-ops" style="display:none;">
-              <div style="margin-bottom:24px;">
-                <h3 style="font-family:var(--font-display); font-size:16px; margin:0 0 8px; color:var(--color-text);">
-                  Disburse Capital to Fleet
-                </h3>
-                <p style="font-size:13px; color:var(--color-text-muted); margin:0 0 14px; line-height:1.5;">
-                  Evenly splits NEAR from your primary account to every subaccount in your fleet with 1 transaction.
-                </p>
-                <div style="display:flex; gap:10px;">
-                  <input type="number" id="ops-disburse-amt" class="terminal-input" placeholder="Total NEAR to split" value="5.0" step="0.5" min="0.5" />
-                  <button class="btn btn-primary" style="white-space:nowrap; padding:0 24px;" onclick="executeDisburseFunds()">
-                    <span>Disburse Evenly</span>
-                  </button>
-                </div>
-              </div>
+            <button type="button" class="btn btn-primary tt-cta tt-cta-sell" id="btn-exec-sell" onclick="executeBundleSell()">
+              <span>Sell from every fleet wallet</span>
+            </button>
+            <p class="tt-hint tt-center-text">You confirm before anything is sold.</p>
+            <div id="sell-stream" class="action-stream"></div>
+          </div>
 
-              <hr style="border:none; border-top:1px solid var(--color-border); margin:24px 0;" />
-
-              <div>
-                <h3 style="font-family:var(--font-display); font-size:16px; margin:0 0 8px; color:var(--color-racer-gold);">
-                  Synchronized Capital Sweep
-                </h3>
-                <p style="font-size:13px; color:var(--color-text-muted); margin:0 0 14px; line-height:1.5;">
-                  Sweeps 100% of all liquid NEAR from all fleet subaccounts back into your primary account. Leaves storage deposit intact.
-                </p>
-                <button class="btn btn-sweep" style="width:100%; height:44px; font-weight:700;" onclick="executeSweepFunds()">
-                  <span>Sweep All Fleet Funds to Main Wallet</span>
-                </button>
+          <!-- MOVE FUNDS between your main account and the fleet -->
+          <div id="tab-content-ops" class="tt-dispatch" style="display:none;">
+            <div class="tt-field">
+              <div class="tt-field-head"><label for="ops-disburse-amt">Send NEAR to your fleet</label></div>
+              <p class="tt-hint">Splits NEAR from your RacerBot account evenly across every fleet wallet, in one go.</p>
+              <div class="tt-input-wrap">
+                <input type="number" id="ops-disburse-amt" inputmode="decimal" placeholder="Total NEAR to split" value="5.0" step="0.5" min="0.5" />
+                <span class="tt-unit">NEAR</span>
               </div>
+              <button type="button" class="btn btn-primary tt-cta" onclick="executeDisburseFunds()"><span>Split across my fleet</span></button>
+              <button type="button" class="btn btn-secondary" style="min-height:44px; width:100%;" onclick="openDepositModal()">Add NEAR to my RacerBot account</button>
+            </div>
+            <div class="tt-divider"></div>
+            <div class="tt-field">
+              <div class="tt-field-head"><span class="tt-label">Bring everything back</span></div>
+              <p class="tt-hint">Moves all spare NEAR from every fleet wallet back to your RacerBot account. A tiny amount stays in each wallet to keep it open.</p>
+              <button type="button" class="btn btn-sweep" style="width:100%; min-height:44px; font-weight:700;" onclick="executeSweepFunds()"><span>Return all NEAR to my account</span></button>
             </div>
           </div>
-        
-            <!-- TAB 4: AI SWARM (planned with NEAR AI) -->
-            <div id="tab-content-swarm" style="display:none;">
+
+          <!-- AI SWARM (planned with NEAR AI) -->
+            <div id="tab-content-swarm" class="tt-dispatch" style="display:none;">
               <!-- How the swarm works -->
               <div style="background:rgba(106, 204, 220, 0.06); border:1px solid rgba(106, 204, 220, 0.25); border-radius:var(--radius-md); padding:12px 14px; margin-bottom:18px;">
                 <div style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-primary); letter-spacing:0.5px;">
@@ -858,7 +829,7 @@
               <!-- Step 1: Prompt & Strategy -->
               <div class="form-group">
                 <div class="form-label">
-                  <span>SWARM INTENT / NATURAL LANGUAGE PROMPT</span>
+                  <span>Describe what you want</span>
                 </div>
                 <textarea id="swarm-prompt-input" class="terminal-input" style="height:76px; padding:10px 14px; font-family:var(--font-sans); font-size:13px; line-height:1.4; resize:none;" placeholder="Describe your swarm strategy for any token, e.g.: Accumulate 10 NEAR of LONK (or SWEAT, REF, HOOT) in 5 tranches staggered over 15 minutes"></textarea>
                 
@@ -872,9 +843,9 @@
               </div>
 
               <!-- Configuration Grid -->
-              <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+              <div class="form-group tt-swarm-grid">
                 <div>
-                  <div class="form-label"><span>TARGET TOKEN CONTRACT / SYMBOL</span></div>
+                  <div class="form-label"><span>Token</span></div>
                   <input type="text" id="swarm-token-input" class="terminal-input" placeholder="Any token address, symbol, or launchpad contract" value="" oninput="renderFleetTokenTelemetry(this.value)" />
                   <div class="chips-row" style="margin-top:6px; flex-wrap:wrap; gap:4px;">
                     <button type="button" class="token-chip" onclick="setSwarmToken('hoot-8ecf65.launchpad.justhoot.near')">HOOT</button>
@@ -889,7 +860,7 @@
                 </div>
 
                 <div>
-                  <div class="form-label"><span>TOTAL NEAR CAPITAL</span></div>
+                  <div class="form-label"><span>Total NEAR</span></div>
                   <input type="number" id="swarm-total-near" class="terminal-input" value="10.0" step="1.0" min="0.5" />
                   <div class="chips-row" style="margin-top:6px;">
                     <button type="button" class="amt-chip" onclick="document.getElementById('swarm-total-near').value='2.5'">2.5</button>
@@ -953,7 +924,7 @@
                 <div style="display:flex; gap:10px;">
                   <button class="btn btn-secondary" style="flex:1; height:44px;" onclick="cancelSwarmPlan()">Modify Plan</button>
                   <button class="btn btn-primary" id="btn-swarm-launch" style="flex:2; height:44px; font-weight:700;" onclick="launchSwarmSession()">
-                    <span>Authorize & Launch Swarm</span>
+                    <span>Start swarm</span>
                   </button>
                 </div>
               </div>
@@ -963,7 +934,7 @@
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                   <div style="display:flex; align-items:center; gap:8px;">
                     <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--color-primary); animation:pulse 1.5s infinite;"></span>
-                    <span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-text);">SWARM RADAR TELEMETRY</span>
+                    <span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-text);">Swarm progress</span>
                   </div>
                   <span id="swarm-session-status-badge" class="badge-status active">IN FLIGHT</span>
                 </div>
@@ -985,130 +956,12 @@
                 <!-- Control Actions -->
                 <div style="display:flex; gap:10px;">
                   <button class="btn btn-secondary btn-sm" id="btn-swarm-pause" onclick="pauseSwarmSession()" style="flex:1;">Pause Swarm</button>
-                  <button class="btn btn-secondary btn-sm" id="btn-swarm-abort" onclick="abortSwarmSession()" style="flex:1; color:var(--color-danger); border-color:rgba(239,68,68,0.3);">Abort Mission</button>
+                  <button class="btn btn-secondary btn-sm" id="btn-swarm-abort" onclick="abortSwarmSession()" style="flex:1; color:var(--color-danger); border-color:rgba(239,68,68,0.3);">Stop swarm</button>
                 </div>
               </div>
             </div>
-</div>
-      </div>
-
-      <!-- Right Column: Live Fleet Analytics & Telemetry -->
-      <div>
-        <!-- Portfolio Holdings Card -->
-        <div style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-lg); padding:20px; margin-bottom:24px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-            <div style="font-family:var(--font-display); font-size:16px; font-weight:700; color:var(--color-text);">
-              Consolidated Holdings
-            </div>
-            <button class="btn btn-ghost btn-sm" onclick="fetchFleetStatus(true)" style="font-family:var(--font-mono); font-size:11px;">
-              <span>↻ Refresh</span>
-            </button>
-          </div>
-
-          <div id="fleet-holdings-container">
-            <div style="text-align:center; padding:32px 16px; color:var(--color-text-subtle); font-family:var(--font-mono); font-size:12px;">
-              Querying on-chain balances across fleet subaccounts...
-            </div>
-          </div>
         </div>
-
-        <!-- Fleet Selected Token Live Chart & Transactions Card -->
-        <div id="fleet-token-telemetry-card" style="background:var(--color-surface-card); border:1px solid var(--color-border); border-radius:var(--radius-lg); padding:20px; margin-bottom:24px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-            <div>
-              <div style="font-family:var(--font-display); font-size:16px; font-weight:700; color:var(--color-text);">
-                Target Token Telemetry
-              </div>
-              <div id="fleet-target-token-label" style="font-family:var(--font-mono); font-size:11px; color:var(--color-primary); margin-top:2px;">
-                blackdragon.tkn.near
-              </div>
-            </div>
-            <div style="display:flex; gap:6px;">
-              <button class="btn btn-secondary btn-sm" id="btn-fleet-dex" onclick="openFleetExternalChart()" style="font-size:11px; padding:3px 8px; height:26px;">Dex ↗</button>
-              <button class="btn btn-secondary btn-sm" id="btn-fleet-bubble" onclick="openFleetBubbleMap()" style="font-size:11px; padding:3px 8px; height:26px;">Bubble ↗</button>
-            </div>
-          </div>
-
-          <!-- Chart Box -->
-          <div style="width:100%; height:160px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:center; align-items:center;">
-            <svg id="fleet-chart-svg" style="width:100%; height:100%;" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="fleetChartGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#6ACCDC" stop-opacity="0.35"/>
-                  <stop offset="100%" stop-color="#6ACCDC" stop-opacity="0.0"/>
-                </linearGradient>
-              </defs>
-              <path id="fleet-chart-area" d="" fill="url(#fleetChartGrad)"/>
-              <path id="fleet-chart-line" d="" fill="none" stroke="#6ACCDC" stroke-width="2"/>
-            </svg>
-            <div id="fleet-chart-watermark" style="position:absolute; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle); pointer-events:none;">
-              Live Price Action
-            </div>
-          </div>
-
-          <!-- Recent Activity -->
-          <div style="margin-top:14px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-              <span style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-muted); text-transform:uppercase;">Recent Swaps</span>
-              <span id="fleet-txns-count" style="font-family:var(--font-mono); font-size:10px; color:var(--color-text-subtle);">Live Stream</span>
-            </div>
-            <div id="fleet-token-txns-container" style="display:flex; flex-direction:column; gap:6px; max-height:150px; overflow-y:auto;">
-              <div style="text-align:center; padding:12px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Tracking coordinated fleet activity...</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Wallet management information -->
-        <div style="background:var(--color-surface); border:1px solid var(--color-border); border-radius:var(--radius-lg); padding:18px;">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-            <span style="color:var(--color-primary); font-weight:700;">[SECURE]</span>
-            <span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-text);">
-              Wallet operations
-            </span>
-          </div>
-          <p style="font-size:12px; color:var(--color-text-muted); margin:0 0 10px; line-height:1.6;">
-            • Each wallet is managed as a separate account.<br />
-            • Holdings are queried from the configured NEAR data providers.<br />
-            • Action spacing can be adjusted before submitting a coordinated operation.<br />
-            • Review wallet selection, amounts, and fees before confirming.
-          </p>
-          <a href="/bubblemap" class="btn btn-secondary btn-sm" style="width:100%; text-align:center;">
-            <span>Inspect Clusters on RacerBubble ↗</span>
-          </a>
-        </div>
-      </div>
-    </div>
-
-    <!-- Subaccounts Matrix Table -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-      <h2 style="font-family:var(--font-display); font-size:20px; font-weight:800; color:var(--color-text); margin:0; text-transform:uppercase;">
-        Fleet Subaccounts Matrix
-      </h2>
-      <span style="font-family:var(--font-mono); font-size:12px; color:var(--color-text-subtle);">
-        WALLET BALANCES
-      </span>
-    </div>
-
-    <div class="fleet-table-wrap">
-      <table class="fleet-table">
-        <thead>
-          <tr>
-            <th style="width:60px;">#</th>
-            <th>SUBACCOUNT ADDRESS</th>
-            <th>NEAR BALANCE</th>
-            <th>STATUS</th>
-            <th>EXPLORER</th>
-            <th>ACTIONS</th>
-          </tr>
-        </thead>
-        <tbody id="fleet-wallets-tbody">
-          <tr>
-            <td colspan="6" style="text-align:center; padding:32px; color:var(--color-text-subtle);">
-              Loading subaccounts telemetry...
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      </aside>
     </div>
   </main>
 
@@ -1586,6 +1439,14 @@
       fetchFleetStatus();
       updateBuyCalculation();
       updateConnectUI();
+      renderFleetSteps();
+      // Show the chart and recent trades for the token in the buy box straight away
+      renderFleetTokenTelemetry(document.getElementById('buy-token-input')?.value || 'blackdragon.tkn.near');
+      let telemetryDebounce = null;
+      document.getElementById('buy-token-input')?.addEventListener('input', (e) => {
+        clearTimeout(telemetryDebounce);
+        telemetryDebounce = setTimeout(() => renderFleetTokenTelemetry(e.target.value), 600);
+      });
       // Polling every 15 seconds
       setInterval(() => {
         if (!document.hidden) fetchFleetStatus(true);
@@ -1618,6 +1479,9 @@
     async function renderFleetTokenTelemetry(token) {
       if (!token) return;
       const cleanToken = token.trim();
+      const dexFrame = document.getElementById('fleet-dex-frame');
+      const dexUrl = 'https://dexscreener.com/near/' + encodeURIComponent(cleanToken) + '?embed=1&theme=dark&trades=0&info=0';
+      if (dexFrame && dexFrame.src !== dexUrl) dexFrame.src = dexUrl;
       const labelEl = document.getElementById('fleet-target-token-label');
       const watermarkEl = document.getElementById('fleet-chart-watermark');
       const areaEl = document.getElementById('fleet-chart-area');
@@ -1729,6 +1593,9 @@
     function setSellPct(pct) {
       document.getElementById('sell-pct-val').value = pct;
       document.getElementById('sell-pct-display').textContent = pct + '%';
+      document.querySelectorAll('#tab-content-sell .slip-chip').forEach(c => {
+        c.classList.toggle('active', (parseInt(c.textContent, 10) || 100) === pct);
+      });
     }
 
     function updateBuyCalculation() {
@@ -1757,7 +1624,9 @@
         const res = await fetch('/api/fleet/status', { headers: fleetAuthHeader() });
         if (res.status === 401) {
           fleetMainAccount = null;
-          document.getElementById('hud-fleet-tag').textContent = 'Sign in to see your fleet';
+          document.getElementById('hud-fleet-tag').textContent = 'Not signed in';
+          fleetSignedIn = false;
+          document.getElementById('fleet-holdings-container').innerHTML = '<div class="tt-empty-inline">Sign in to see what your fleet holds.</div>';
           document.getElementById('fleet-wallets-tbody').innerHTML = `
             <tr><td colspan="6" style="text-align:center; padding:32px; font-size:14px; color:var(--color-text);">
               Sign in with Telegram, or connect your wallet (Solana, EVM or NEAR) and approve the free sign-in message, to see your RacerFleet.
@@ -1767,6 +1636,7 @@
         if (!res.ok) throw new Error('Status failed');
         const data = await res.json();
         fleetMainAccount = (data.user && data.user.subaccountId) || null;
+        fleetSignedIn = true;
         // Racer Alpha links public deposits here (/fleet#deposit)
         if (fleetMainAccount && location.hash === '#deposit') {
           history.replaceState(null, '', location.pathname + location.search);
@@ -1785,6 +1655,7 @@
           document.getElementById('hud-status-badge').textContent = 'ACTIVE';
           document.getElementById('hud-status-badge').className = 'badge-status active';
           document.getElementById('hud-total-near').textContent = balances.totalNearFormatted || '0.00';
+          fleetTotalNear = parseFloat(String(balances.totalNearFormatted || '0').replace(/[^0-9.]/g, '')) || 0;
           const rawFleetUsd = String(balances.totalNearUsd || '0.00').replace(/^\$/, '');
           document.getElementById('hud-total-usd').textContent = `$${rawFleetUsd}`;
 
@@ -1793,25 +1664,28 @@
           updateBuyCalculation();
         } else {
           // Fallback view when no fleet is active yet
-          document.getElementById('hud-fleet-tag').textContent = 'No Fleet Deployed';
-          document.getElementById('hud-status-badge').textContent = 'UNCONFIGURED';
+          currentFleet = null;
+          document.getElementById('hud-fleet-tag').textContent = 'None yet';
+          document.getElementById('hud-status-badge').textContent = 'NOT SET UP';
           document.getElementById('hud-status-badge').className = 'badge-status offline';
           document.getElementById('fleet-wallets-tbody').innerHTML = `
             <tr>
               <td colspan="6" style="text-align:center; padding:32px;">
-                <div style="font-size:14px; color:var(--color-text); margin-bottom:8px;">You don't have an active RacerFleet squadron.</div>
-                <button class="btn btn-primary btn-sm" onclick="openDeployModal()">Deploy 5-Wallet Squadron (2.0 NEAR)</button>
+                <div style="font-size:14px; color:var(--color-text); margin-bottom:8px;">You don't have a fleet yet.</div>
+                <button class="btn btn-primary btn-sm" onclick="openDeployModal()">Create a 5-wallet fleet (2.0 NEAR)</button>
               </td>
             </tr>
           `;
           document.getElementById('fleet-holdings-container').innerHTML = `
             <div style="text-align:center; padding:24px; color:var(--color-text-subtle); font-size:13px;">
-              Deploy your RacerFleet to begin coordinated multi-wallet trading.
+              Create a fleet to see its holdings here.
             </div>
           `;
         }
       } catch (err) {
         if (!silent) console.warn('[Fleet] Status fetch error:', err);
+      } finally {
+        renderFleetSteps();
       }
     }
 
@@ -1902,6 +1776,7 @@
 
     // ── Execute Actions ───────────────────────────────────────────────────────
     async function executeBundleBuy() {
+      if (!fleetGuardTrade()) return;
       const token = document.getElementById('buy-token-input')?.value?.trim();
       const amount = parseFloat(document.getElementById('buy-amount-input')?.value);
       const slippage = parseFloat(document.getElementById('buy-slippage')?.value) || 3.0;
@@ -1954,6 +1829,7 @@
     }
 
     async function executeBundleSell() {
+      if (!fleetGuardTrade()) return;
       const token = document.getElementById('sell-token-input')?.value?.trim();
       const pct = parseFloat(document.getElementById('sell-pct-val')?.value) || 100;
       const slippage = parseFloat(document.getElementById('sell-slippage')?.value) || 3.0;
@@ -2619,6 +2495,75 @@
         if (unlinkedDiv) unlinkedDiv.style.display = 'block';
         if (linkedDiv) linkedDiv.style.display = 'none';
       }
+    }
+
+    // ── Trading terminal: getting-started steps, phone tabs, activity tabs ──────
+    let fleetSignedIn = false;
+    let fleetTotalNear = 0;
+
+    /** Where a new user stands (sign in, create, fund, trade) and the one button that moves them on */
+    function renderFleetSteps() {
+      const box = document.getElementById('fleet-steps');
+      if (!box) return;
+      const authed = fleetSignedIn || Boolean(fleetAuthHeader().Authorization);
+      const step = !authed ? 'connect' : !currentFleet ? 'deploy' : fleetTotalNear > 0 ? 'trade' : 'fund';
+      const order = ['connect', 'deploy', 'fund', 'trade'];
+      const cur = order.indexOf(step);
+      const check = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+      box.querySelectorAll('.aas-steps li').forEach(li => {
+        const i = order.indexOf(li.dataset.step);
+        li.dataset.state = i < cur ? 'done' : i === cur ? 'current' : 'todo';
+        li.querySelector('.aas-num').innerHTML = i < cur ? check : String(i + 1);
+        if (i === cur) li.setAttribute('aria-current', 'step'); else li.removeAttribute('aria-current');
+      });
+      const copy = {
+        connect: ['Sign in to start', 'Use Telegram or any Solana, EVM or NEAR wallet. Signing in is free and sends no transaction.', 'Sign in', () => openConnectModal()],
+        deploy: ['Create your fleet', 'A fleet is a set of fresh wallets that only you control. Creating 5 costs 2 NEAR, paid from your RacerBot account.', 'Create fleet', () => openDeployModal()],
+        fund: ['Add NEAR to your fleet', 'Send NEAR to your RacerBot account, then split it across your fleet wallets.', 'Add funds', () => openDepositModal()],
+        trade: ['Ready to trade', `Your fleet holds ${fleetTotalNear.toFixed(2)} NEAR. Pick a token and buy with every wallet at once.`, 'Add funds', () => openDepositModal()],
+      }[step];
+      document.getElementById('fleet-steps-title').textContent = copy[0];
+      document.getElementById('fleet-steps-sub').textContent = copy[1];
+      const actions = document.getElementById('fleet-steps-actions');
+      actions.innerHTML = '';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = step === 'trade' ? 'btn btn-secondary' : 'btn btn-primary';
+      b.textContent = copy[2];
+      b.addEventListener('click', copy[3]);
+      actions.append(b);
+      // The buy button says what is missing instead of failing
+      const buyLbl = document.querySelector('#btn-exec-buy span');
+      if (buyLbl) buyLbl.textContent = step === 'connect' ? 'Sign in to trade' : step === 'deploy' ? 'Create a fleet to trade' : 'Buy with every fleet wallet';
+    }
+
+    /** Before a fleet buy can run, send a new user to the step they are missing */
+    function fleetGuardTrade() {
+      const authed = fleetSignedIn || Boolean(fleetAuthHeader().Authorization);
+      if (!authed) { openConnectModal(); return false; }
+      if (!currentFleet) { openDeployModal(); return false; }
+      return true;
+    }
+
+    /** Candles (DexScreener) or the simple price line */
+    function setFleetChartMode(mode) {
+      const box = document.querySelector('.tt-fleet-chart');
+      if (box) box.dataset.mode = mode;
+      document.querySelectorAll('[data-chart]').forEach(b => b.classList.toggle('active', b.dataset.chart === mode));
+    }
+
+    function fleetMobileTab(tab) {
+      document.getElementById('fleet-terminal')?.setAttribute('data-mobile-tab', tab);
+      document.querySelectorAll('#fleet-terminal .tt-mtabs .mobile-term-tab').forEach(b => b.classList.toggle('active', b.id === 'fleet-mtab-' + tab));
+    }
+
+    function ttSwitchActivity(key) {
+      document.querySelectorAll('#tt-activity .tt-subtab').forEach(b => {
+        const on = b.dataset.ttSub === key;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      document.querySelectorAll('#tt-activity .tt-subpanel').forEach(p => { p.hidden = p.dataset.ttPanel !== key; });
     }
 
     window.addEventListener('racer:auth-changed', () => { updateConnectUI(); fetchFleetStatus(true); });

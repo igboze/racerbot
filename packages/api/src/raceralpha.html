@@ -3867,70 +3867,6 @@
         flex-shrink: 0;
       }
 
-      /* Seamless Mobile Experience: Responsive terminal tabs (< 768px) */
-      @media (max-width: 767px) {
-        .alpha-main-layout {
-          display: flex !important;
-          flex-direction: column !important;
-          gap: 12px !important;
-        }
-
-        /* TAB 1: CHART & TRADE (Mobile View) */
-        .terminal-view-container[data-mobile-tab="trade"] .alpha-screener-col {
-          display: flex !important;
-          width: 100% !important;
-        }
-        .terminal-view-container[data-mobile-tab="trade"] #alpha-token-center-stage {
-          display: block !important;
-        }
-        .terminal-view-container[data-mobile-tab="trade"] #alpha-screener-view {
-          display: none !important;
-        }
-        .terminal-view-container[data-mobile-tab="trade"] .alpha-chart-viewport {
-          height: 230px !important;
-        }
-        .terminal-view-container[data-mobile-tab="trade"] .alpha-view-switch-strip {
-          display: none !important;
-        }
-        .terminal-view-container[data-mobile-tab="trade"] .alpha-trade-col {
-          display: flex !important;
-          width: 100% !important;
-        }
-        .terminal-view-container[data-mobile-tab="trade"] .alpha-bottom-row {
-          display: none !important;
-        }
-
-        /* TAB 2: TOKEN SCREENER (Mobile View) */
-        .terminal-view-container[data-mobile-tab="screener"] .alpha-screener-col {
-          display: flex !important;
-          width: 100% !important;
-        }
-        .terminal-view-container[data-mobile-tab="screener"] #alpha-token-center-stage {
-          display: none !important;
-        }
-        .terminal-view-container[data-mobile-tab="screener"] #alpha-screener-view {
-          display: block !important;
-        }
-        .terminal-view-container[data-mobile-tab="screener"] .alpha-trade-col {
-          display: none !important;
-        }
-        .terminal-view-container[data-mobile-tab="screener"] .alpha-bottom-row {
-          display: none !important;
-        }
-
-        /* TAB 3: POSITIONS (Mobile View) */
-        .terminal-view-container[data-mobile-tab="positions"] .alpha-bottom-row {
-          display: block !important;
-          width: 100% !important;
-        }
-        .terminal-view-container[data-mobile-tab="positions"] .alpha-screener-col {
-          display: none !important;
-        }
-        .terminal-view-container[data-mobile-tab="positions"] .alpha-trade-col {
-          display: none !important;
-        }
-      }
-
       /* Top strip metrics wrapping on mobile in FeedLoop style */
       .alpha-top-strip {
         padding: 12px 14px;
@@ -4164,6 +4100,7 @@
 .racer-toast.error { background: rgba(255, 107, 115, 0.15); color: #ff6b73; border: 1px solid rgba(255, 107, 115, 0.4); }
 </style>
 
+  <link rel="stylesheet" href="/assets/racer-trade-terminal.css">
 </head>
 <body>
 
@@ -4491,244 +4428,62 @@
       </section>
 
       <!-- VIEW 3: Confidential Terminal & Racer Alpha Trading Console -->
-      <section id="view-terminal" class="terminal-view-container" data-mobile-tab="trade">
-        <!-- Top Racer Alpha Header & Market Ticker Strip -->
-        <div class="alpha-top-strip">
-          <div class="alpha-top-left">
-            <div class="alpha-logo-badge">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="color:var(--color-text);"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-              <span>Private trading console</span>
-            </div>
+      <section id="view-terminal" class="terminal-view-container tt" data-mobile-tab="trade" aria-labelledby="tt-heading">
+        <!-- Trading terminal: title bar with live market stats -->
+        <div class="tt-titlebar">
+          <div class="tt-title">
+            <h2 id="tt-heading">Trade</h2>
+            <span class="tt-title-sub">Buy and sell NEAR tokens privately. Your wallet never shows up in the trade.</span>
           </div>
-          
-          <div class="alpha-top-metrics">
-            <div class="alpha-metric-item">
-              <span class="alpha-m-label">NEAR / USD</span>
-              <span class="alpha-m-val" id="alpha-near-usd" style="color:var(--color-text);">--</span>
-            </div>
-            <div class="alpha-metric-divider"></div>
-            <div class="alpha-metric-item">
-              <span class="alpha-m-label">24H LAUNCHPAD VOL</span>
-              <span class="alpha-m-val" id="alpha-24h-vol">--</span>
-            </div>
-            <div class="alpha-metric-divider"></div>
-            <div class="alpha-metric-item">
-              <span class="alpha-m-label">ACTIVE ALPHA CALLERS</span>
-              <span class="alpha-m-val" style="color:var(--color-racer-cyan);" id="alpha-active-traders-count">--</span>
-            </div>
+          <div class="tt-metrics" aria-label="Market stats">
+            <div class="tt-metric"><span class="tt-metric-lbl">NEAR price</span><span class="tt-metric-val" id="alpha-near-usd">--</span></div>
+            <div class="tt-metric"><span class="tt-metric-lbl">24h launchpad volume</span><span class="tt-metric-val" id="alpha-24h-vol">--</span></div>
+            <div class="tt-metric"><span class="tt-metric-lbl">Alpha callers</span><span class="tt-metric-val" id="alpha-active-traders-count">--</span></div>
           </div>
         </div>
 
-        <!-- Account strip: connect, fund, trade -->
-        <div class="alpha-account-strip" id="alpha-account-strip" aria-live="polite">
-          <ol class="aas-steps" aria-label="Getting started">
-            <li data-step="connect"><span class="aas-num">1</span>Connect</li>
-            <li data-step="fund"><span class="aas-num">2</span>Fund</li>
-            <li data-step="trade"><span class="aas-num">3</span>Trade</li>
-          </ol>
-          <div>
-            <div class="aas-title" id="aas-title">Connect a wallet to start</div>
-            <div class="aas-sub" id="aas-sub">Solana, EVM or NEAR wallet, or your Telegram account.</div>
-          </div>
-          <div class="aas-actions" id="aas-actions"></div>
-        </div>
-
-        <!-- Mobile Terminal Navigation Tabs (Visible only on mobile devices) -->
-        <div class="mobile-terminal-tabs" id="mobile-terminal-tabs" role="tablist">
-          <button type="button" class="mobile-term-tab active" id="term-tab-trade" onclick="switchMobileTerminalTab('trade')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-            <span>Swap &amp; Trade</span>
+        <!-- Phone: switch between trading, the token list and your activity -->
+        <div class="mobile-terminal-tabs tt-mtabs" id="mobile-terminal-tabs" role="tablist" aria-label="Console sections">
+          <button type="button" role="tab" class="mobile-term-tab active" id="term-tab-trade" onclick="switchMobileTerminalTab('trade')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            <span>Trade</span>
           </button>
-          <button type="button" class="mobile-term-tab" id="term-tab-screener" onclick="switchMobileTerminalTab('screener')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <span>Token Screener</span>
+          <button type="button" role="tab" class="mobile-term-tab" id="term-tab-screener" onclick="switchMobileTerminalTab('screener')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <span>Tokens</span>
           </button>
-          <button type="button" class="mobile-term-tab" id="term-tab-positions" onclick="switchMobileTerminalTab('positions')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
-            <span>Positions</span>
+          <button type="button" role="tab" class="mobile-term-tab" id="term-tab-positions" onclick="switchMobileTerminalTab('positions')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+            <span>Activity</span>
           </button>
         </div>
 
-        <!-- Racer Alpha Ultra-Compact Quick Start Helper Bar -->
-        <div class="alpha-quickstart-banner" id="alpha-quickstart-banner">
-          <div class="quickstart-header">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <span class="live-dot" style="background:var(--color-primary); width:6px; height:6px;"></span>
-              <span style="font-weight:700; font-size:11.5px; color:var(--color-primary); letter-spacing:0.3px;">QUICK START:</span>
-              <div class="quickstart-steps-inline">
-                <span class="qs-step-pill"><span class="qs-step-num">1</span> Select Token</span>
-                <span class="qs-arrow">➔</span>
-                <span class="qs-step-pill"><span class="qs-step-num">2</span> Track Real-Time Swaps</span>
-                <span class="qs-arrow">➔</span>
-                <span class="qs-step-pill"><span class="qs-step-num">3</span> 1-Click Stealth Trade</span>
+        <div class="tt-grid">
+          <!-- LEFT: token list -->
+          <aside class="tt-panel tt-markets" id="alpha-screener-view" aria-labelledby="tt-markets-title">
+            <div class="tt-panel-head">
+              <div>
+                <h3 class="tt-panel-title" id="tt-markets-title">Tokens</h3>
+                <p class="tt-panel-sub">Tap a token to see its chart and trade it.</p>
               </div>
+              <span class="tt-count" id="screener-pill-count" title="Tokens shown">0</span>
             </div>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <button type="button" class="qs-toggle-btn" onclick="toggleAlphaQuickstartDrawer()" id="qs-drawer-toggle">Guide ▾</button>
-              <button type="button" onclick="dismissAlphaQuickstart()" style="background:transparent; border:none; color:var(--color-text-subtle); font-size:12px; cursor:pointer; padding:2px 6px;" title="Dismiss">✕</button>
+            <div class="alpha-search-wrap tt-search">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input type="text" id="alpha-search-input" placeholder="Search name, symbol or address" aria-label="Search tokens" oninput="handleRacerAlphaSearch(this.value)">
             </div>
-          </div>
-          <div class="quickstart-drawer" id="alpha-quickstart-drawer" style="display:none;">
-            <div class="qs-drawer-item"><b>1. Select Token:</b> Click any row in the screener or search by name. The center displays live candles and DEX trades.</div>
-            <div class="qs-drawer-item"><b>2. Track Activity:</b> Watch incoming whale buys, sells, and volume flow before entering a position.</div>
-            <div class="qs-drawer-item"><b>3. Stealth Trade:</b> Buy in 1 click with disposable executors. Your wallet never appears on-chain.</div>
-          </div>
-        </div>
-
-        <!-- Racer Alpha Main Grid: Screener Matrix (Left) + Interactive Trade Panel (Right) -->
-        <div class="alpha-main-layout">
-          <!-- Left Column: Center Stage (Chart & Activity) + Token Screener -->
-          <div class="alpha-screener-col">
-            <!-- View Toggle Header Bar: Token Chart & Trades vs Screener Matrix -->
-            <div class="alpha-view-switch-strip">
-              <div class="alpha-view-pills-wrap">
-                <button type="button" class="alpha-view-pill-btn active" id="btn-view-chart" onclick="switchAlphaMainView('chart')">
-                  <span class="pulse-dot" style="background:#34D399; width:6px; height:6px; border-radius:50%; display:inline-block;"></span>
-                  <span id="center-view-chart-label">Token Chart &amp; Swaps</span>
-                </button>
-                <button type="button" class="alpha-view-pill-btn" id="btn-view-screener" onclick="switchAlphaMainView('screener')">
-                  <span>All Markets Screener</span>
-                  <span class="alpha-token-count-chip" id="screener-pill-count">0</span>
-                </button>
-              </div>
-              <div style="display:flex; align-items:center; gap:8px;">
-                <button type="button" class="btn btn-secondary btn-sm" onclick="switchAlphaMainView('screener')" style="font-size:11px; padding:4px 10px; height:28px;">
-                  <span>Browse Other Tokens ⇅</span>
-                </button>
-              </div>
+            <div class="tt-scroll-row" aria-label="Quick filters">
+                <button type="button" class="alpha-preset-pill active" onclick="setAlphaPreset('all', this)">All</button>
+                <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('new_launches', this)">⚡ New</button>
+                <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('top_volume', this)">🔥 Most traded</button>
+                <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('top_gainers', this)">🚀 Top gainers</button>
+                <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('micro_cap', this)">💎 Under $50K</button>
+                <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('graduating', this)">⏳ Almost graduated</button>
             </div>
-
-            <!-- CENTER STAGE 1: Selected Token Chart, Depth & Live Swaps Feed -->
-            <div id="alpha-token-center-stage">
-              <!-- Center Token Spotlight Bar -->
-              <div class="alpha-center-spotlight">
-                <div class="alpha-center-header-row">
-                  <div class="alpha-center-token-info">
-                    <div id="center-spotlight-avatar" style="width:40px; height:40px; border-radius:50%; overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--color-surface-2);"></div>
-                    <div>
-                      <div style="display:flex; align-items:center; gap:8px;">
-                        <span id="center-spotlight-symbol" style="font-size:18px; font-weight:800; color:var(--color-text); letter-spacing:0.5px;">BLACKDRAGON</span>
-                        <span id="center-spotlight-venue" class="spotlight-venue-badge alpha-venue-badge ref">Ref Finance DEX</span>
-                        <span class="live-pulse-badge"><span class="pulse-dot"></span> LIVE</span>
-                      </div>
-                      <div style="display:flex; align-items:center; gap:10px; margin-top:2px;">
-                        <span id="center-spotlight-name" style="font-size:12px; color:var(--color-text-muted);">Black Dragon</span>
-                        <span style="color:var(--color-border);">|</span>
-                        <span id="center-spotlight-contract" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle);">blackdragon.tkn.near</span>
-                        <button type="button" class="copy-contract-btn" onclick="copySelectedContract()" title="Copy Contract Address">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div style="display:flex; align-items:center; gap:8px;">
-                    <button type="button" class="btn btn-secondary btn-sm" id="center-btn-dex" onclick="openTokenExternalChart()" style="font-size:11px; padding:4px 10px; height:28px;">DexScreener ↗</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="center-btn-bubble" onclick="openTokenBubbleMap()" style="font-size:11px; padding:4px 10px; height:28px;">Bubble Map ↗</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="center-btn-nearblocks" onclick="openTokenNearBlocks()" style="font-size:11px; padding:4px 10px; height:28px;">Explorer ↗</button>
-                  </div>
-                </div>
-
-                <!-- Stats Strip -->
-                <div class="alpha-center-stats-strip">
-                  <div class="alpha-stat-box">
-                    <span class="alpha-stat-box-lbl">PRICE USD</span>
-                    <span class="alpha-stat-box-val" id="center-stat-price">$0.00</span>
-                  </div>
-                  <div class="alpha-stat-box">
-                    <span class="alpha-stat-box-lbl">24H CHANGE</span>
-                    <span class="alpha-stat-box-val" id="center-stat-change" style="color:var(--color-primary);">0.00%</span>
-                  </div>
-                  <div class="alpha-stat-box">
-                    <span class="alpha-stat-box-lbl">24H VOLUME</span>
-                    <span class="alpha-stat-box-val" id="center-stat-vol">$0.00</span>
-                  </div>
-                  <div class="alpha-stat-box">
-                    <span class="alpha-stat-box-lbl">MARKET CAP</span>
-                    <span class="alpha-stat-box-val" id="center-stat-mcap">$0.00</span>
-                  </div>
-                  <div class="alpha-stat-box">
-                    <span class="alpha-stat-box-lbl">LIQUIDITY</span>
-                    <span class="alpha-stat-box-val" id="center-stat-liq">Pool Verified</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Main Center Chart Viewport -->
-              <div class="alpha-center-chart-box">
-                <div class="alpha-chart-controls">
-                  <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--color-primary); text-transform:uppercase;">INTERACTIVE CANDLESTICK / PRICE ACTION</span>
-                    <span class="live-pulse-badge" style="font-size:10px; padding:2px 6px;"><span class="pulse-dot"></span> REAL-TIME</span>
-                  </div>
-                  <div style="display:flex; align-items:center; gap:6px;">
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-mode-dex" onclick="setCenterChartMode('dex')" style="font-size:11px; padding:3px 8px; height:26px; background:var(--color-surface-2);">DexScreener Embed</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="btn-chart-mode-svg" onclick="setCenterChartMode('svg')" style="font-size:11px; padding:3px 8px; height:26px;">Racer Speed Area</button>
-                  </div>
-                </div>
-
-                <div class="alpha-chart-viewport" id="center-chart-viewport">
-                  <!-- DexScreener Embed iframe -->
-                  <iframe id="center-dexscreener-frame" src="" style="width:100%; height:100%; border:none; display:block;" title="Token Chart" loading="lazy"></iframe>
-                  
-                  <!-- Fallback / Alternative SVG Speed Area Chart -->
-                  <div id="center-svg-chart-box" style="width:100%; height:100%; position:absolute; top:0; left:0; display:none; flex-direction:column; justify-content:center; align-items:center;">
-                    <svg id="center-chart-svg" style="width:100%; height:100%;" preserveAspectRatio="none">
-                      <defs>
-                        <linearGradient id="centerChartGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stop-color="#6ACCDC" stop-opacity="0.35"/>
-                          <stop offset="100%" stop-color="#6ACCDC" stop-opacity="0.0"/>
-                        </linearGradient>
-                      </defs>
-                      <path id="center-chart-area" d="" fill="url(#centerChartGrad)"/>
-                      <path id="center-chart-line" d="" fill="none" stroke="#6ACCDC" stroke-width="2.5"/>
-                    </svg>
-                    <div id="center-chart-watermark" style="position:absolute; font-family:var(--font-mono); font-size:12px; color:var(--color-text-subtle); pointer-events:none;">
-                      Rendering high-frequency price curve...
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Live Token Swaps & Real-time Trades Feed -->
-              <div class="alpha-center-activity-box">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                  <div style="display:flex; align-items:center; gap:8px;">
-                    <span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-text); text-transform:uppercase;">LIVE TOKEN ACTIVITY &amp; SWAPS</span>
-                    <span id="center-activity-count-badge" style="font-size:10px; font-family:var(--font-mono); background:rgba(106,204,220,0.15); color:var(--color-primary); padding:2px 8px; border-radius:9999px;">Syncing...</span>
-                  </div>
-                  <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-subtle);">Auto-updates every 8s • On-chain DEX Swaps</span>
-                </div>
-
-                <div style="overflow-x:auto; margin-top:8px;">
-                  <table class="alpha-swaps-table">
-                    <thead>
-                      <tr>
-                        <th>TIME</th>
-                        <th>SIDE</th>
-                        <th>AMOUNT</th>
-                        <th>VALUE ($ / Ⓝ)</th>
-                        <th>PRICE</th>
-                        <th>MAKER</th>
-                        <th style="text-align:right;">TX</th>
-                      </tr>
-                    </thead>
-                    <tbody id="center-swaps-tbody">
-                      <tr>
-                        <td colspan="7" style="text-align:center; padding:24px; color:var(--color-text-subtle);">
-                          Fetching live on-chain swaps for selected token...
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-
-            <!-- CENTER STAGE 2: Token Screener & Market Discovery (Collapsible/Switchable) -->
-            <div id="alpha-screener-view" style="display:none;">
-            <!-- Screener Controls & Category Pills -->
-            <div class="alpha-controls-bar">
-              <div class="alpha-category-pills">
+            <details class="tt-more">
+              <summary>More filters <span class="tt-more-hint">launchpad, size, age, sort</span></summary>
+              <div class="tt-more-body">
+                <div class="tt-scroll-row tt-wrap" aria-label="Launchpad">
                 <button type="button" class="alpha-cat-pill active" onclick="setAlphaCategory('all', this)">
                   <span>All Tokens</span>
                 </button>
@@ -4753,29 +4508,11 @@
                 <button type="button" class="alpha-cat-pill" onclick="setAlphaCategory('intear', this)">
                   <span>InTear</span>
                 </button>
-              </div>
-
-              <!-- Discovery Presets -->
-              <div class="alpha-preset-row">
-                <span class="alpha-filter-label">PRESET:</span>
-                <div class="alpha-preset-pills">
-                  <button type="button" class="alpha-preset-pill active" onclick="setAlphaPreset('all', this)">All Markets</button>
-                  <button type="button" class="alpha-preset-pill glow-green" onclick="setAlphaPreset('new_launches', this)">
-                    <span class="live-dot-pulse"></span>
-                    <span>⚡ New Launches</span>
-                  </button>
-                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('top_volume', this)">🔥 Top Volume</button>
-                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('top_gainers', this)">🚀 Top Gainers</button>
-                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('micro_cap', this)">💎 Micro Gems (&lt;$50K)</button>
-                  <button type="button" class="alpha-preset-pill" onclick="setAlphaPreset('graduating', this)">⏳ Near Graduation (&gt;60%)</button>
                 </div>
-              </div>
-
-              <!-- Filter Toggles & Metric Selectors -->
               <div class="alpha-filter-toggles-bar">
                 <!-- Market Cap Filter -->
                 <div class="alpha-filter-select-wrap">
-                  <span class="alpha-filter-label">MCAP:</span>
+                  <span class="alpha-filter-label">Market cap</span>
                   <select id="alpha-mcap-select" onchange="handleRacerAlphaMcap(this.value)">
                     <option value="all">All MCaps</option>
                     <option value="micro">&lt; $25K (Micro)</option>
@@ -4787,7 +4524,7 @@
 
                 <!-- Volume Filter -->
                 <div class="alpha-filter-select-wrap">
-                  <span class="alpha-filter-label">VOL:</span>
+                  <span class="alpha-filter-label">Volume</span>
                   <select id="alpha-volume-select" onchange="handleRacerAlphaVolume(this.value)">
                     <option value="all">All Volumes</option>
                     <option value="high">&gt; $50K (High)</option>
@@ -4798,7 +4535,7 @@
 
                 <!-- Launch Time / Age Filter -->
                 <div class="alpha-filter-select-wrap">
-                  <span class="alpha-filter-label">AGE / LAUNCH:</span>
+                  <span class="alpha-filter-label">Launched</span>
                   <select id="alpha-time-select" onchange="handleRacerAlphaTime(this.value)">
                     <option value="all">Any Time</option>
                     <option value="1h">⚡ Last 1h (Fresh)</option>
@@ -4810,7 +4547,7 @@
 
                 <!-- Sort Toggle -->
                 <div class="alpha-filter-select-wrap">
-                  <span class="alpha-filter-label">SORT:</span>
+                  <span class="alpha-filter-label">Sort</span>
                   <select id="alpha-sort-select" onchange="handleRacerAlphaSort(this.value)">
                     <option value="volume">Volume 24h ↓</option>
                     <option value="volume_asc">Volume 24h ↑</option>
@@ -4828,27 +4565,16 @@
                   <span>✕ Clear</span>
                 </button>
               </div>
-
-              <!-- Search Bar & Active Summary Strip -->
-              <div class="alpha-search-sort-row" style="margin-top:-2px;">
-                <div class="alpha-search-wrap" style="flex:1;">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                  <input type="text" id="alpha-search-input" placeholder="Search tokens by symbol, name, or contract address..." oninput="handleRacerAlphaSearch(this.value)">
-                </div>
               </div>
-
-              <!-- Filter Status Summary Strip -->
-              <div class="alpha-filter-status-strip">
+            </details>
+            <div class="alpha-filter-status-strip tt-status">
                 <div class="alpha-status-tags" id="alpha-active-filter-tags">
                   <span style="color:var(--color-text-subtle);">Active Filter:</span>
                   <span class="alpha-status-tag" id="alpha-status-preset-tag">All Markets</span>
                 </div>
                 <div id="alpha-token-count-display">Showing 0 tokens</div>
-              </div>
             </div>
-
-            <!-- Racer Alpha Token Table -->
-            <div class="alpha-table-container">
+            <div class="alpha-table-container tt-token-list">
               <table class="alpha-table">
                 <thead>
                   <tr>
@@ -4869,92 +4595,217 @@
                 </tbody>
               </table>
             </div>
-          </div>
-          </div>
+          </aside>
 
-          <!-- Right Column: Interactive Trade & Confidential Dispatch Panel -->
-          <div class="alpha-trade-col">
-            <!-- Selected Token Spotlight Card -->
-            <div class="alpha-token-spotlight" id="alpha-selected-token-card">
-              <div class="spotlight-top">
-                <div class="spotlight-avatar" id="spotlight-avatar">NFT</div>
-                <div class="spotlight-info">
-                  <div class="spotlight-sym-row">
-                    <span class="spotlight-sym" id="spotlight-symbol">BLACKDRAGON</span>
-                    <span class="spotlight-venue-badge alpha-venue-badge ref" id="spotlight-venue">Ref Finance DEX</span>
-                    <span class="live-pulse-badge" id="spotlight-live-badge"><span class="pulse-dot"></span> LIVE</span>
+          <!-- CENTRE: selected token, chart, activity -->
+          <div class="tt-center" id="alpha-token-center-stage">
+            <div class="tt-panel tt-tokenbar">
+              <div class="tt-tokenbar-id">
+                <div id="center-spotlight-avatar" class="tt-avatar"></div>
+                <div class="tt-tokenbar-names">
+                  <div class="tt-tokenbar-symrow">
+                    <span id="center-spotlight-symbol" class="tt-sym">Loading…</span>
+                    <span id="center-spotlight-venue" class="tt-venue"></span>
+                    <span class="live-pulse-badge"><span class="pulse-dot"></span> LIVE</span>
                   </div>
-                  <div class="spotlight-name" id="spotlight-name">Black Dragon</div>
-                  <div class="spotlight-contract-row">
-                    <span class="spotlight-contract" id="spotlight-contract">blackdragon.tkn.near</span>
-                    <button type="button" class="copy-contract-btn" onclick="copySelectedContract()" title="Copy Contract Address">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  <div class="tt-tokenbar-sub">
+                    <span id="center-spotlight-name">Picking a popular token for you</span>
+                    <span class="tt-dot" aria-hidden="true">·</span>
+                    <span id="center-spotlight-contract" class="tt-mono tt-ellipsis"></span>
+                    <button type="button" class="copy-contract-btn" onclick="copySelectedContract()" title="Copy token address" aria-label="Copy token address">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                   </div>
                 </div>
               </div>
+              <dl class="tt-stats">
+                <div><dt>Price</dt><dd id="center-stat-price">--</dd></div>
+                <div><dt>24h change</dt><dd id="center-stat-change">--</dd></div>
+                <div><dt>24h volume</dt><dd id="center-stat-vol">--</dd></div>
+                <div><dt>Market cap</dt><dd id="center-stat-mcap">--</dd></div>
+                <div class="tt-stat-liq"><dt>Liquidity</dt><dd id="center-stat-liq">Pool verified</dd></div>
+              </dl>
+              <div class="tt-links">
+                <button type="button" class="tt-link-btn" id="center-btn-dex" onclick="openTokenExternalChart()">DexScreener ↗</button>
+                <button type="button" class="tt-link-btn" id="center-btn-bubble" onclick="openTokenBubbleMap()">Holders map ↗</button>
+                <button type="button" class="tt-link-btn" id="center-btn-nearblocks" onclick="openTokenNearBlocks()">Explorer ↗</button>
+              </div>
+            </div>
 
-              <!-- Price & Stats Grid -->
-              <div class="spotlight-stats-grid">
-                <div class="spot-stat-item">
-                  <div class="spot-label">PRICE</div>
-                  <div class="spot-val" id="spotlight-price-usd">$0.000084</div>
+            <div class="tt-panel tt-chart">
+              <div class="tt-chart-head">
+                <span class="tt-panel-title tt-small">Price chart</span>
+                <div class="tt-seg" role="group" aria-label="Chart style">
+                  <button type="button" class="tt-seg-btn active" id="btn-chart-mode-dex" onclick="setCenterChartMode('dex')">Candles</button>
+                  <button type="button" class="tt-seg-btn" id="btn-chart-mode-svg" onclick="setCenterChartMode('svg')">Simple line</button>
                 </div>
-                <div class="spot-stat-item">
-                  <div class="spot-label">24H CHANGE</div>
-                  <div class="spot-val" id="spotlight-change" style="color:var(--color-text);">+36.5% ▲</div>
-                </div>
-                <div class="spot-stat-item">
-                  <div class="spot-label">MARKET CAP</div>
-                  <div class="spot-val" id="spotlight-mcap">$8.4K</div>
-                </div>
-                <div class="spot-stat-item">
-                  <div class="spot-label">24H VOLUME</div>
-                  <div class="spot-val" id="spotlight-vol">$24.2K</div>
+              </div>
+              <div class="alpha-chart-viewport tt-chart-viewport" id="center-chart-viewport">
+                  <!-- DexScreener Embed iframe -->
+                  <iframe id="center-dexscreener-frame" src="" style="width:100%; height:100%; border:none; display:block;" title="Token Chart" loading="lazy"></iframe>
+                  
+                  <!-- Fallback / Alternative SVG Speed Area Chart -->
+                  <div id="center-svg-chart-box" style="width:100%; height:100%; position:absolute; top:0; left:0; display:none; flex-direction:column; justify-content:center; align-items:center;">
+                    <svg id="center-chart-svg" style="width:100%; height:100%;" preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id="centerChartGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stop-color="#6ACCDC" stop-opacity="0.35"/>
+                          <stop offset="100%" stop-color="#6ACCDC" stop-opacity="0.0"/>
+                        </linearGradient>
+                      </defs>
+                      <path id="center-chart-area" d="" fill="url(#centerChartGrad)"/>
+                      <path id="center-chart-line" d="" fill="none" stroke="#6ACCDC" stroke-width="2.5"/>
+                    </svg>
+                    <div id="center-chart-watermark" style="position:absolute; font-family:var(--font-mono); font-size:12px; color:var(--color-text-subtle); pointer-events:none;">
+                      Rendering high-frequency price curve...
+                    </div>
+                  </div>
+              </div>
+            </div>
+
+            <div class="tt-panel tt-activity" id="tt-activity">
+              <div class="tt-subtabs" role="tablist" aria-label="Activity">
+                <button type="button" role="tab" class="tt-subtab active" data-tt-sub="trades" aria-selected="true" onclick="ttSwitchActivity('trades')">Live trades <span class="tt-subtab-badge" id="center-activity-count-badge">…</span></button>
+                <button type="button" role="tab" class="tt-subtab" data-tt-sub="positions" aria-selected="false" onclick="ttSwitchActivity('positions')">My positions</button>
+                <button type="button" role="tab" class="tt-subtab" data-tt-sub="caller" aria-selected="false" onclick="ttSwitchActivity('caller')">Trader I copy</button>
+              </div>
+
+              <!-- Live trades on the selected token -->
+              <div class="tt-subpanel" data-tt-panel="trades">
+                <p class="tt-hint">Everyone's latest buys and sells of this token. Updates every few seconds.</p>
+                <div class="tt-table-scroll">
+                  <table class="alpha-swaps-table">
+                    <thead>
+                      <tr>
+                        <th>TIME</th>
+                        <th>SIDE</th>
+                        <th>AMOUNT</th>
+                        <th>VALUE ($ / Ⓝ)</th>
+                        <th>PRICE</th>
+                        <th>MAKER</th>
+                        <th style="text-align:right;">TX</th>
+                      </tr>
+                    </thead>
+                    <tbody id="center-swaps-tbody">
+                      <tr>
+                        <td colspan="7" style="text-align:center; padding:24px; color:var(--color-text-subtle);">
+                          Fetching live on-chain swaps for selected token...
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
+              <!-- Your own private positions -->
+              <div class="tt-subpanel" data-tt-panel="positions" hidden>
+                <div id="console-executor-positions-wrap" hidden>
+                  <p class="tt-hint">Tokens you hold from private trades. Close one to sell it all and return the NEAR to your private balance.</p>
+                  <div id="console-executor-positions-list" class="tt-pos-list"></div>
+                </div>
+                <div class="tt-empty">
+                  <div class="tt-empty-icon" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+                  </div>
+                  <div class="tt-empty-title">No positions yet</div>
+                  <p class="tt-empty-text">When you buy a token it shows up here, with its profit or loss and a one-tap sell.</p>
+                  <button type="button" class="btn-secondary btn-sm" onclick="ttFocusOrder()">Go to the order panel</button>
+                </div>
+              </div>
+
+              <!-- Trades of the Alpha Caller you copy -->
+              <div class="tt-subpanel" data-tt-panel="caller" hidden>
+                <div class="tt-caller-head">
+                  <p class="tt-hint">Positions and swaps of the Alpha Caller picked in <b>Copy a trader</b>. Details need that caller's viewing key.</p>
+                  <div class="tt-mono tt-small-text">Total P&amp;L: <b id="terminal-total-pnl">--</b></div>
+                </div>
+                <div class="tt-table-scroll">
+              <table class="pos-table">
+                <thead>
+                  <tr>
+                    <th>SYMBOL</th>
+                    <th>SIDE</th>
+                    <th>SIZE</th>
+                    <th>ENTRY PRICE</th>
+                    <th>CURRENT PRICE</th>
+                    <th>P&amp;L (USD)</th>
+                    <th>P&amp;L (%)</th>
+                  </tr>
+                </thead>
+                <tbody id="terminal-positions-tbody">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+                </div>
+                <div class="tt-caller-swaps-head">
+                  <span class="tt-panel-title tt-small">Their recent swaps</span>
+                  <button type="button" class="tt-link-btn" onclick="loadTerminalData()">Refresh ↻</button>
+                </div>
+                <div class="tt-caller-swaps" id="terminal-swaps-container">
+                  <div class="tt-empty tt-empty-inline">Pick a trader in <b>Copy a trader</b> to see their swaps here.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT: account status and order ticket -->
+          <aside class="tt-order" id="tt-order" aria-label="Order panel">
+            <div class="tt-panel tt-account" id="alpha-account-strip" aria-live="polite">
+              <ol class="aas-steps tt-steps" aria-label="Getting started">
+                <li data-step="connect"><span class="aas-num">1</span>Connect</li>
+                <li data-step="fund"><span class="aas-num">2</span>Add funds</li>
+                <li data-step="trade"><span class="aas-num">3</span>Trade</li>
+              </ol>
+              <div class="tt-account-text">
+                <div class="aas-title" id="aas-title">Connect a wallet to start</div>
+                <div class="aas-sub" id="aas-sub">Solana, EVM or NEAR wallet, or your Telegram account.</div>
+              </div>
+              <div class="aas-actions" id="aas-actions"></div>
             </div>
 
-            <!-- Trade Execution Card -->
-            <div class="terminal-card" style="padding:16px;">
-              <!-- Tab Switcher -->
-              <div style="display:flex; gap:6px; background:var(--color-surface-2); padding:4px; border-radius:8px; border:1px solid var(--color-border); margin-bottom:4px;">
-                <button type="button" class="deposit-tab-btn active" id="term-tab-dispatch" onclick="switchTerminalRightTab('dispatch')" style="flex:1; min-height:44px; font-size:12.5px; padding:0 10px; justify-content:center;">
-                  <span>Private Trade</span>
-                </button>
-                <button type="button" class="deposit-tab-btn" id="term-tab-copy" onclick="switchTerminalRightTab('copy')" style="flex:1; min-height:44px; font-size:12.5px; padding:0 10px; justify-content:center;">
-                  <span>Copy Trading</span>
-                </button>
+            <div class="tt-panel tt-ticket">
+              <div class="tt-seg tt-seg-wide" role="group" aria-label="Order type">
+                <button type="button" class="tt-seg-btn active" id="term-tab-dispatch" onclick="switchTerminalRightTab('dispatch')">Buy / Sell</button>
+                <button type="button" class="tt-seg-btn" id="term-tab-copy" onclick="switchTerminalRightTab('copy')">Copy a trader</button>
               </div>
 
               <!-- Hidden legacy container kept for compatibility -->
               <div id="alpha-trading-wallet-card" style="display:none;"><div id="alpha-trading-wallet-inner"></div></div>
 
-              <!-- Panel A: Private DEX Trading -->
-              <div id="terminal-panel-dispatch" style="display:flex; flex-direction:column; gap:12px;">
-                <!-- Buy / Sell Mode Tabs -->
-                <div style="display:flex; gap:6px;">
-                  <button type="button" id="alpha-trade-btn-buy" class="alpha-mode-tab buy active" onclick="setRacerAlphaTradeSide('BUY')">
-                    <span style="font-weight:800; letter-spacing:0.04em;">BUY</span>
-                  </button>
-                  <button type="button" id="alpha-trade-btn-sell" class="alpha-mode-tab sell" onclick="setRacerAlphaTradeSide('SELL')">
-                    <span style="font-weight:800; letter-spacing:0.04em;">SELL</span>
-                  </button>
+              <!-- Buy / sell ticket -->
+              <div id="terminal-panel-dispatch" class="tt-dispatch">
+                <div class="tt-ticket-token" id="alpha-selected-token-card">
+                  <div class="tt-avatar tt-avatar-sm" id="spotlight-avatar"></div>
+                  <div class="tt-ticket-token-text">
+                    <span class="tt-ticket-token-lbl">Token</span>
+                    <span class="tt-sym tt-sym-sm" id="spotlight-symbol">--</span>
+                  </div>
+                  <div class="tt-ticket-token-px">
+                    <span class="tt-mono" id="spotlight-price-usd">--</span>
+                    <span class="tt-mono tt-small-text" id="spotlight-change">--</span>
+                  </div>
+                  <button type="button" class="tt-link-btn" onclick="ttOpenTokenList()" title="Pick another token">Change</button>
+                  <div hidden>
+                    <span id="spotlight-venue"></span><span id="spotlight-live-badge"></span><span id="spotlight-name"></span>
+                    <span id="spotlight-contract"></span><span id="spotlight-mcap"></span><span id="spotlight-vol"></span>
+                  </div>
                 </div>
 
-                <!-- Amount Input & Quick Chips -->
-                <div style="display:flex; flex-direction:column; gap:6px;">
-                  <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <label id="alpha-amount-label" for="alpha-trade-amount" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">AMOUNT</label>
-                    <span style="font-size:11px; color:var(--color-text-subtle);"><span id="alpha-balance-label">NEAR Balance:</span> <b id="alpha-wallet-balance" onclick="useFullTradeBalance()" style="color:var(--color-text); font-family:var(--font-mono); font-weight:700; cursor:pointer;" title="Click to use ready balance">-- Ⓝ</b></span>
+                <div class="tt-side" role="group" aria-label="Buy or sell">
+                  <button type="button" id="alpha-trade-btn-buy" class="alpha-mode-tab buy active" onclick="setRacerAlphaTradeSide('BUY')">Buy</button>
+                  <button type="button" id="alpha-trade-btn-sell" class="alpha-mode-tab sell" onclick="setRacerAlphaTradeSide('SELL')">Sell</button>
+                </div>
+
+                <div class="tt-field">
+                  <div class="tt-field-head">
+                    <label id="alpha-amount-label" for="alpha-trade-amount">You pay</label>
+                    <span class="tt-bal"><span id="alpha-balance-label">Private balance:</span> <b id="alpha-wallet-balance" onclick="useFullTradeBalance()" title="Click to use your whole balance">-- Ⓝ</b></span>
                   </div>
-                  <div style="position:relative;">
-                    <input type="number" id="alpha-trade-amount" step="0.1" min="0.1" value="2.5" placeholder="Amount in NEAR" oninput="isSelectedMaxSell=false; currentSellPct=null; updateRacerAlphaEstimatedOutput(); updateExecuteButtonText();" style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 85px 0 12px; font-size:15px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-weight:700; box-sizing:border-box;">
-                    <span id="alpha-trade-unit" style="position:absolute; right:12px; top:13px; font-size:12px; font-family:var(--font-mono); color:var(--color-racer-cyan); font-weight:700; text-transform:uppercase; max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right;">NEAR</span>
+                  <div class="tt-input-wrap">
+                    <input type="number" id="alpha-trade-amount" inputmode="decimal" step="0.1" min="0.1" value="1" placeholder="Amount in NEAR" oninput="isSelectedMaxSell=false; currentSellPct=null; updateRacerAlphaEstimatedOutput(); updateExecuteButtonText();">
+                    <span id="alpha-trade-unit" class="tt-unit">NEAR</span>
                   </div>
-                  
-                  <div class="alpha-preset-chips" id="alpha-preset-chips-container">
+                  <div class="alpha-preset-chips tt-chips" id="alpha-preset-chips-container">
                     <button type="button" class="alpha-chip" onclick="setRacerAlphaAmount(0.5)">0.5Ⓝ</button>
                     <button type="button" class="alpha-chip" onclick="setRacerAlphaAmount(1.0)">1.0Ⓝ</button>
                     <button type="button" class="alpha-chip" onclick="setRacerAlphaAmount(2.5)">2.5Ⓝ</button>
@@ -4964,55 +4815,47 @@
                   </div>
                 </div>
 
-                <!-- Estimated Output Calculation -->
-                <div class="alpha-est-output-box">
-                  <span class="est-label">Estimated Output:</span>
-                  <span class="est-val" id="alpha-est-tokens">--</span>
-                </div>
-
-                <!-- Slippage Selector -->
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                  <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted);">SLIPPAGE</span>
-                  <div class="alpha-slippage-chips">
-                    <button type="button" class="slip-chip" onclick="setRacerAlphaSlippage(0.5, this)">0.5%</button>
-                    <button type="button" class="slip-chip active" onclick="setRacerAlphaSlippage(1.0, this)">1.0%</button>
-                    <button type="button" class="slip-chip" onclick="setRacerAlphaSlippage(2.5, this)">2.5%</button>
-                    <button type="button" class="slip-chip" onclick="setRacerAlphaSlippage(5.0, this)">5.0%</button>
-                  </div>
-                </div>
-
-                <!-- Decentralized Private Intent Shield Callout -->
-                <div style="border-top:1px solid var(--color-border); padding-top:10px;">
-                  <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--color-text);">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                      <span id="intent-routing-badge">Private trade</span>
+                <div class="tt-summary">
+                  <div class="tt-summary-row"><span>You get about</span><b class="tt-mono" id="alpha-est-tokens">--</b></div>
+                  <details class="tt-settings">
+                    <summary><span>Max price move (slippage)</span><b class="tt-mono" id="tt-slip-summary">1.0%</b></summary>
+                    <div class="alpha-slippage-chips tt-slip">
+                      <button type="button" class="slip-chip" onclick="setRacerAlphaSlippage(0.5, this)">0.5%</button>
+                      <button type="button" class="slip-chip active" onclick="setRacerAlphaSlippage(1.0, this)">1.0%</button>
+                      <button type="button" class="slip-chip" onclick="setRacerAlphaSlippage(2.5, this)">2.5%</button>
+                      <button type="button" class="slip-chip" onclick="setRacerAlphaSlippage(5.0, this)">5.0%</button>
                     </div>
-                    <span id="intent-routing-tag" style="font-size:10px; font-family:var(--font-mono); color:var(--color-racer-cyan); background:rgba(106, 204, 220,0.12); padding:2px 6px; border-radius:4px; border:1px solid rgba(106, 204, 220,0.25);">PRIVATE</span>
-                  </div>
-                  <div style="font-size:11px; color:var(--color-text-muted); margin-top:4px; line-height:1.45;" id="intent-routing-desc">
-                    Runs from your private balance through a one-time account, so your wallet never appears in the trade. When you sell, the NEAR returns to your private balance.
+                    <p class="tt-hint">If the price moves more than this before your trade fills, it is cancelled and nothing is spent. 1% suits most tokens; raise it for brand-new or fast-moving ones.</p>
+                  </details>
+                </div>
+
+                <div class="tt-privacy">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                  <div>
+                    <div class="tt-privacy-head"><span id="intent-routing-badge">Private trade</span> <span id="intent-routing-tag" class="tt-tag">PRIVATE</span></div>
+                    <div class="tt-hint" id="intent-routing-desc">Runs from your private balance through a one-time account, so your wallet never appears in the trade. When you sell, the NEAR returns to your private balance.</div>
                   </div>
                 </div>
 
-                <div id="alpha-trade-feedback" style="display:none; padding:10px; border-radius:8px; font-size:11.5px; line-height:1.45;"></div>
+                <div id="alpha-trade-feedback" style="display:none; padding:10px; border-radius:8px; font-size:12px; line-height:1.45;"></div>
 
-                <button type="button" class="btn-primary" id="btn-alpha-execute" onclick="handleAlphaExecuteClick()" style="width:100%; justify-content:center; min-height:44px; font-size:13.5px; font-weight:700;">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                  <span id="btn-alpha-label">Execute Private Trade</span>
+                <button type="button" class="btn-primary tt-cta" id="btn-alpha-execute" onclick="handleAlphaExecuteClick()">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                  <span id="btn-alpha-label">Connect wallet to trade</span>
                 </button>
+                <p class="tt-hint tt-center-text">Nothing is spent until you press the button. A trade takes about 15 seconds.</p>
               </div>
 
               <!-- Panel B: Follower Copy Settings -->
               <div id="terminal-panel-copy" style="display:none; flex-direction:column; gap:14px;">
                 <div>
-                  <div style="font-size:15px; font-weight:700; color:var(--color-text);">CONFIDENTIAL COPY TRADING</div>
-                  <div style="font-size:12px; color:var(--color-text-muted);">Auto-mirror verified Alpha Callers on-chain through disposable executors. Requires a paid Viewing Key.</div>
+                  <div style="font-size:15px; font-weight:700; color:var(--color-text);">Copy an Alpha Caller</div>
+                  <div style="font-size:12px; color:var(--color-text-muted);">Automatically repeat the trades of a verified Alpha Caller, privately. Needs that caller's paid viewing key.</div>
                 </div>
 
                 <!-- Alpha Caller Selector -->
                 <div style="display:flex; flex-direction:column; gap:6px;">
-                  <label for="copy-trader-select" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">SELECT ALPHA CALLER TO COPY</label>
+                  <label for="copy-trader-select" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">Caller to copy</label>
                   <select id="copy-trader-select" onchange="handleCopyTraderChange(this.value)" class="select-filter" style="width:100%; min-height:44px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); font-size:13px; font-weight:600; padding:0 10px;">
                     <option value="">Choose an Alpha Caller...</option>
                   </select>
@@ -5044,7 +4887,7 @@
 
                 <div style="display:flex; flex-direction:column; gap:6px;">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <label for="copy-base-amount-near" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">BASE COPY AMOUNT (NEAR / TRADE)</label>
+                    <label for="copy-base-amount-near" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">NEAR per copied trade</label>
                     <span style="font-size:10.5px; color:var(--color-text-subtle);">Scaled by Risk Multiplier</span>
                   </div>
                   <div style="display:flex; gap:6px; align-items:center;">
@@ -5095,30 +4938,30 @@
 
                 <button type="button" class="btn-primary" id="btn-save-copy-settings" style="width:100%; justify-content:center; min-height:44px;" onclick="saveTerminalCopySettings()">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                  <span id="btn-save-copy-label">Save Copy Settings (Confidential)</span>
+                  <span id="btn-save-copy-label">Save copy settings</span>
                 </button>
 
                 <!-- Direct On-Chain Wallet Copy Trading (Free, Synced with Telegram /copy) -->
                 <div style="border-top:1px solid var(--color-border); padding-top:14px; margin-top:4px; display:flex; flex-direction:column; gap:10px;">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div>
-                      <div style="font-size:13.5px; font-weight:700; color:var(--color-text);">DIRECT WALLET COPY TRADING</div>
+                      <div style="font-size:13.5px; font-weight:700; color:var(--color-text);">Copy any wallet</div>
                       <div style="font-size:11.5px; color:var(--color-text-muted);">Copy any NEAR or Solana wallet on-chain in real time (synced with Telegram <code>/copy</code>). No Viewing Key required.</div>
                     </div>
                   </div>
 
                   <div style="display:flex; flex-direction:column; gap:6px;">
-                    <label for="direct-copy-wallet-input" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">TARGET WALLET ADDRESS (NEAR OR SOLANA)</label>
+                    <label for="direct-copy-wallet-input" style="font-size:11px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">Wallet to copy (NEAR or Solana)</label>
                     <input type="text" id="direct-copy-wallet-input" placeholder="e.g. whale.near or Solana address..." style="width:100%; min-height:40px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:12.5px;">
                   </div>
 
                   <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                     <div style="display:flex; flex-direction:column; gap:4px;">
-                      <label for="direct-copy-buy-amount" style="font-size:10.5px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">BUY PER TRADE (NEAR/SOL)</label>
+                      <label for="direct-copy-buy-amount" style="font-size:10.5px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">Buy per trade</label>
                       <input type="number" id="direct-copy-buy-amount" min="0.01" step="0.1" value="1.0" style="width:100%; min-height:38px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:12.5px; font-weight:700;">
                     </div>
                     <div style="display:flex; flex-direction:column; gap:4px;">
-                      <label for="direct-copy-daily-cap" style="font-size:10.5px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">DAILY CAP (OPTIONAL)</label>
+                      <label for="direct-copy-daily-cap" style="font-size:10.5px; font-family:var(--font-mono); color:var(--color-text-muted); text-transform:uppercase;">Daily limit (optional)</label>
                       <input type="number" id="direct-copy-daily-cap" min="0" step="1" placeholder="No limit" style="width:100%; min-height:38px; background:var(--color-surface); border:1px solid #6B7490; border-radius:8px; color:var(--color-text); padding:0 10px; font-family:var(--font-mono); font-size:12.5px;">
                     </div>
                   </div>
@@ -5143,7 +4986,7 @@
                 <summary class="console-conf-summary">
                   <span class="console-conf-summary-title">
                     <svg class="console-conf-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                    <span>Advanced: executor pool</span>
+                    <span>Advanced settings</span>
                   </span>
                   <span class="console-conf-summary-meta">Ready <span id="console-conf-pool-summary">--</span> NEAR · <span id="console-conf-mode-pill" style="color:var(--color-primary);">SPLIT MODE</span></span>
                 </summary>
@@ -5162,10 +5005,10 @@
 
                 <div class="console-conf-actions">
                   <button type="button" class="btn-secondary" id="btn-toggle-console-deposit" onclick="toggleConsoleConfDrawer('deposit')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
-                    <span>Deposit to private balance</span>
+                    <span>Add funds</span>
                   </button>
                   <button type="button" class="btn-secondary" id="btn-toggle-console-settings" onclick="toggleConsoleConfDrawer('settings')" style="min-height:44px; justify-content:center; font-size:12px; padding:0 10px;">
-                    <span>Executor Config</span>
+                    <span>Buy settings</span>
                   </button>
                 </div>
 
@@ -5212,77 +5055,14 @@
                 </div>
               </details>
             </div>
-
-
-          </div>
+          </aside>
         </div>
 
-        <!-- Bottom Row: Open Confidential Positions & Recent Private Swaps Feed -->
-        <div class="alpha-bottom-row">
-          <!-- Open Confidential Positions -->
-          <div class="terminal-card">
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-              <div>
-                <div style="font-size:14px; font-weight:700; color:var(--color-text);">OPEN CONFIDENTIAL POSITIONS</div>
-                <div style="font-size:12px; color:var(--color-text-muted); display:flex; align-items:center; gap:4px; margin-top:2px;">
-                  <span class="live-dot" style="width:5px;height:5px;"></span>
-                  <span>Your disposable executor positions &amp; caller strategy positions</span>
-                </div>
-              </div>
-              <div style="font-size:13px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; color:var(--color-text-muted);">
-                Total P&amp;L: <b style="color:var(--color-text);" id="terminal-total-pnl">--</b>
-              </div>
-            </div>
-
-            <!-- User's Own Disposable Executor Positions (1-click Sell & Delete Executor) -->
-            <div id="console-executor-positions-wrap" style="border-top:1px solid var(--color-border); padding-top:12px;" hidden>
-              <div style="font-size:11.5px; font-weight:700; color:var(--color-primary); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:8px;">
-                Your Active Disposable Executor Positions (Auto-Delete on Close)
-              </div>
-              <div id="console-executor-positions-list" style="display:flex; flex-direction:column; gap:8px;"></div>
-            </div>
-
-            <div class="table-container">
-              <table class="pos-table">
-                <thead>
-                  <tr>
-                    <th>SYMBOL</th>
-                    <th>SIDE</th>
-                    <th>SIZE</th>
-                    <th>ENTRY PRICE</th>
-                    <th>CURRENT PRICE</th>
-                    <th>P&amp;L (USD)</th>
-                    <th>P&amp;L (%)</th>
-                  </tr>
-                </thead>
-                <tbody id="terminal-positions-tbody">
-                  <!-- Populated by JS -->
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Recent Private Swaps Feed -->
-          <div class="terminal-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <div>
-                <div style="font-size:14px; font-weight:700; color:#fff;">RECENT PRIVATE SWAPS FEED</div>
-                <div style="font-size:12px; color:var(--color-text-muted);">Latest confidential swap activity • Real-time on-chain intent execution</div>
-              </div>
-              <button type="button" class="btn-secondary btn-sm" onclick="loadTerminalData()" style="padding:4px 8px; font-size:11px;">
-                <span>Refresh ↻</span>
-              </button>
-            </div>
-
-            <div style="display:flex; flex-direction:column; gap:8px;" id="terminal-swaps-container">
-              <!-- Populated by JS -->
-            </div>
-
-            <div style="font-size:11px; color:var(--color-text-subtle); display:flex; align-items:center; gap:6px; margin-top:4px;">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-              <span>All swaps are end-to-end encrypted and visible only to authorized viewing keys.</span>
-            </div>
-          </div>
+        <!-- Phone: Buy / Sell bar that stays in reach -->
+        <div class="tt-mbar" id="tt-mbar" aria-label="Quick trade">
+          <div class="tt-mbar-token"><span id="tt-mbar-sym">--</span><span class="tt-mono" id="tt-mbar-px">--</span></div>
+          <button type="button" class="tt-mbar-btn buy" onclick="ttQuickSide('BUY')">Buy</button>
+          <button type="button" class="tt-mbar-btn sell" onclick="ttQuickSide('SELL')">Sell</button>
         </div>
       </section>
 
@@ -7968,6 +7748,7 @@
       return `<span style="color:var(--color-text-subtle);">${months}mo ago</span>`;
     }
 
+    const ALPHA_DEFAULT_TOKEN = 'blackdragon.tkn.near';
     async function fetchRacerAlphaTokens() {
       try {
         const queryParams = new URLSearchParams({
@@ -7989,7 +7770,12 @@
           renderRacerAlphaTable();
           updateAlphaFilterSummaryStrip();
           if (!selectedAlphaToken && alphaTokens.length > 0) {
-            selectAlphaToken(alphaTokens[0].address);
+            // Open on a token people actually trade here, not a stablecoin or wrapped NEAR
+            // (a well-known NEAR meme token first, then the first token that isn't a stablecoin or wrapped asset)
+            const plain = t => /usd|dai|frax|^w?near$|^w?btc$|^w?eth$/i.test(String(t.symbol || '').trim())
+              || /stable|dollar|bridged|wrapped/i.test(String(t.name || ''));
+            const fallback = (alphaTokens.find(t => !plain(t) && t.priceUsd > 0) || alphaTokens[0]).address;
+            selectAlphaToken(ALPHA_DEFAULT_TOKEN).then(() => { if (!selectedAlphaToken) selectAlphaToken(fallback); });
           }
         }
       } catch (err) {
@@ -8154,6 +7940,13 @@
     function formatPriceUsd(val) {
       const n = parseFloat(val);
       if (isNaN(n) || n <= 0) return '$0.0000';
+      if (n < 0.0001) {
+        // Tiny meme-token prices: $0.0₈123 means 0.00000000123 (8 zeros after the point, then the digits)
+        const zeros = Math.floor(-Math.log10(n));
+        const digits = Math.floor(n * Math.pow(10, zeros + 3)).toString().slice(0, 3).replace(/0+$/, '') || '0';
+        const sub = String(zeros).split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[d]).join('');
+        return '$0.0' + sub + digits;
+      }
       return '$' + (n < 0.001 ? n.toFixed(6) : n.toFixed(4));
     }
 
@@ -8196,13 +7989,16 @@
         }
       }
       if (!tok || seq !== alphaSelectSeq) return;
+      const userPicked = Boolean(selectedAlphaToken); // the first pick is the page's default, so don't scroll for it
       selectedAlphaToken = tok;
 
       if (window.innerWidth <= 767 && typeof switchMobileTerminalTab === 'function') {
         switchMobileTerminalTab('trade');
-      } else if (window.innerWidth < 1024) {
-        document.querySelector('.alpha-trade-col')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (window.innerWidth < 1280 && userPicked) {
+        // Mid-size screens show the token list under the chart: bring the chart back into view
+        document.getElementById('alpha-token-center-stage')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
+      ttSyncQuickBar(tok);
 
       const symEl = document.getElementById('spotlight-symbol');
       const nameEl = document.getElementById('spotlight-name');
@@ -8296,30 +8092,69 @@
       if (b) b.style.display = 'none';
     }
 
+    // The terminal shows the token list and the chart side by side, so 'screener' just brings the list into view
     window.switchAlphaMainView = function(view) {
       currentAlphaMainView = view;
-      const chartBtn = document.getElementById('btn-view-chart');
-      const screenerBtn = document.getElementById('btn-view-screener');
-      const chartStage = document.getElementById('alpha-token-center-stage');
-      const screenerView = document.getElementById('alpha-screener-view');
-
       if (view === 'chart') {
-        if (chartBtn) chartBtn.classList.add('active');
-        if (screenerBtn) screenerBtn.classList.remove('active');
-        if (chartStage) chartStage.style.display = 'block';
-        if (screenerView) screenerView.style.display = 'none';
         if (selectedAlphaToken) {
           updateCenterStageSpotlight(selectedAlphaToken);
           renderCenterChart(selectedAlphaToken);
           renderTokenActivityFeed(selectedAlphaToken.address);
         }
       } else {
-        if (chartBtn) chartBtn.classList.remove('active');
-        if (screenerBtn) screenerBtn.classList.add('active');
-        if (chartStage) chartStage.style.display = 'none';
-        if (screenerView) screenerView.style.display = 'block';
+        ttOpenTokenList();
       }
     };
+
+    // ── Trading terminal helpers ──────────────────────────────────────────
+    /** Bottom panel tabs: live trades, my positions, the trader I copy */
+    window.ttSwitchActivity = function(key) {
+      document.querySelectorAll('#tt-activity .tt-subtab').forEach(b => {
+        const on = b.dataset.ttSub === key;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+      document.querySelectorAll('#tt-activity .tt-subpanel').forEach(p => { p.hidden = p.dataset.ttPanel !== key; });
+    };
+
+    /** Show the token list: its own tab on phones, focus the search box elsewhere */
+    window.ttOpenTokenList = function() {
+      if (window.innerWidth <= 767) switchMobileTerminalTab('screener');
+      const list = document.getElementById('alpha-screener-view');
+      if (list && window.innerWidth > 767) list.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      setTimeout(() => document.getElementById('alpha-search-input')?.focus({ preventScroll: true }), 250);
+    };
+
+    /** Bring the order panel into view (phones switch to the Trade tab first) */
+    window.ttFocusOrder = function() {
+      if (window.innerWidth <= 767) switchMobileTerminalTab('trade');
+      document.getElementById('tt-order')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    /** Phone quick bar: pick Buy or Sell and jump to the ticket */
+    window.ttQuickSide = function(side) {
+      if (selectedRacerAlphaSide !== side) setRacerAlphaTradeSide(side);
+      switchTerminalRightTab('dispatch');
+      ttFocusOrder();
+      setTimeout(() => document.getElementById('alpha-trade-amount')?.focus({ preventScroll: true }), 400);
+    };
+
+    // Phones: hide the floating Buy / Sell bar while the order panel itself is on screen
+    (function watchOrderPanel() {
+      const order = document.getElementById('tt-order');
+      const bar = document.getElementById('tt-mbar');
+      if (!order || !bar || typeof IntersectionObserver !== 'function') return;
+      new IntersectionObserver(entries => {
+        bar.classList.toggle('tt-mbar-hidden', entries.some(e => e.isIntersecting));
+      }, { threshold: 0.15 }).observe(order);
+    })();
+
+    function ttSyncQuickBar(tok) {
+      const s = document.getElementById('tt-mbar-sym');
+      const p = document.getElementById('tt-mbar-px');
+      if (s) s.textContent = tok?.symbol || '--';
+      if (p) p.textContent = tok ? formatPriceUsd(tok.priceUsd) : '--';
+    }
 
     window.setCenterChartMode = function(mode) {
       currentCenterChartMode = mode;
@@ -8836,7 +8671,7 @@
         balEl.title = priv ? `${priv.balance.toFixed(4)} NEAR in your private balance + ${priv.ready.toFixed(4)} NEAR in ready executors (Click to use ready balance)` : 'Sign in to see your private balance';
         balEl.style.color = 'var(--color-primary)';
         const input = document.getElementById('alpha-trade-amount');
-        if (input && priv && priv.ready > 0 && (input.value === '2.5' || !input.value)) {
+        if (input && priv && priv.ready > 0 && (input.value === '1' || !input.value)) {
           input.value = Math.min(1.0, priv.ready).toString();
           updateRacerAlphaEstimatedOutput();
         }
@@ -9109,7 +8944,9 @@
       if (side === 'BUY') {
         if (btnBuy) btnBuy.classList.add('active');
         if (btnSell) btnSell.classList.remove('active');
-        if (btnExec) btnExec.textContent = 'Execute Confidential BUY & Broadcast';
+        if (btnExec) btnExec.textContent = 'Buy';
+        const amtLbl = document.getElementById('alpha-amount-label');
+        if (amtLbl) amtLbl.textContent = 'You pay';
         if (unitBadge) {
           unitBadge.textContent = 'NEAR';
           unitBadge.style.color = 'var(--color-racer-cyan)';
@@ -9118,13 +8955,15 @@
           amountInput.placeholder = 'Amount in NEAR';
           amountInput.step = '0.1';
           amountInput.min = '0.1';
-          amountInput.value = '2.5';
+          amountInput.value = '1';
         }
       } else {
         if (btnBuy) btnBuy.classList.remove('active');
         if (btnSell) btnSell.classList.add('active');
         const sym = selectedAlphaToken ? selectedAlphaToken.symbol : 'TOKEN';
-        if (btnExec) btnExec.textContent = `Execute Confidential SELL & Broadcast`;
+        if (btnExec) btnExec.textContent = `Sell ${sym}`;
+        const amtLbl = document.getElementById('alpha-amount-label');
+        if (amtLbl) amtLbl.textContent = 'You sell';
         if (unitBadge) {
           unitBadge.textContent = sym;
           unitBadge.style.color = '#FF6B73';
@@ -9163,6 +9002,8 @@
       selectedRacerAlphaSlippage = slip;
       document.querySelectorAll('.slip-chip').forEach(c => c.classList.remove('active'));
       if (el) el.classList.add('active');
+      const sum = document.getElementById('tt-slip-summary');
+      if (sum) sum.textContent = Number(slip).toFixed(1) + '%';
     }
 
     let intentQuoteDebounce = null;
