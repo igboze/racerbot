@@ -16,6 +16,8 @@ let ranks = new Map<string, RankRow>();
 const users: Record<string, any> = {
   u1: { id: 'u1', telegram_id: 111, username: 'speedy', referral_code: 'SPEEDY' },
   u2: { id: 'u2', telegram_id: 222, username: 'newbie', referral_code: null },
+  // Wallet sign-in: shortened display name, and a code made from it before codes were checked
+  u3: { id: 'u3', telegram_id: null, username: 'racerb...near', subaccount_id: 'racerbot.near', referral_code: 'racerb...near-KBVZB' },
 };
 
 // In-memory racer_ranks with the same semantics as the SQL in packages/db
@@ -28,6 +30,7 @@ vi.mock('@racerbot/db', () => ({
   getRacerLinkFor: vi.fn(async () => null),
   listRacerLinks: vi.fn(async () => []),
   generateReferralCode: vi.fn(async (_id: string, name: string) => `${name.toUpperCase()}1`),
+  setReferralCodeFromName: vi.fn(async (_id: string, name: string) => `${name}-NEW01`),
   getRacerRank: vi.fn(async (id: string) => (ranks.has(id) ? { ...ranks.get(id)! } : null)),
   seedRacerRank: vi.fn(async (id: string, best: number, announced: number) => {
     if (!ranks.has(id)) ranks.set(id, { user_id: id, best_key: best, announced_key: Math.min(announced, best) });
@@ -51,7 +54,7 @@ vi.mock('./racerCardImageGenerator.js', async (importOriginal) => ({
   generateRacerCardOgImage: vi.fn(async () => Buffer.from('preview-png')),
 }));
 
-const { registerRacerCard, registerRacerCardPages, maybeAnnounceRankUp, clearRacerVolumeCache, clearRacerShareCache } = await import('./racerCard.js');
+const { registerRacerCard, registerRacerCardPages, maybeAnnounceRankUp, clearRacerVolumeCache, clearRacerShareCache, webRacerCard } = await import('./racerCard.js');
 const db = await import('@racerbot/db');
 const { generateRacerCardImage } = await import('./racerCardImageGenerator.js');
 
@@ -104,8 +107,9 @@ afterEach(() => {
 describe('/card', () => {
   it('registers /card, /racercard and the home-screen button', () => {
     const { commands, actions } = fakeBot();
-    expect([...commands.keys()]).toEqual(['card', 'racercard', 'start']);
+    expect([...commands.keys()]).toEqual(['card', 'racercard', 'weekly', 'weeklycard', 'start']);
     expect(actions.has('racer_card')).toBe(true);
+    expect(actions.has('racer_card_week')).toBe(true);
   });
 
   it('sends a ranked card with share buttons and no amounts, tokens or addresses', async () => {
@@ -308,6 +312,22 @@ describe('sharing with the card image', () => {
     row({ side: 'sell', input_amount: '140', created_at: new Date('2026-10-03T12:00:00Z') }),
   ];
 
+  it('gives a wallet account with a dotted code a clean one for its links and QR', async () => {
+    process.env.RACER_CARD_URL = 'https://racer.example';
+    const { json } = await webRacerCard(users.u3);
+    expect(json.referralCode).toBe('w_racerbot-NEW01');
+    expect(json.shareUrl).toBe('https://racer.example/c/w_racerbot-NEW01?r=1');
+    expect(decodeURIComponent(json.share.x)).not.toContain('...');
+  });
+
+  it('still opens a card link shared with an older dotted code', async () => {
+    process.env.RACER_CARD_URL = 'https://racer.example';
+    const routes = fakeApp();
+    const res = await call(routes, '/c/:code', { code: 'racerb...near-KBVZB' }, '/c/racerb...near-KBVZB', { r: '1' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<meta property="og:image" content="https://racer.example/c/racerb...near-KBVZB/preview.png?r=1">');
+  });
+
   it('points the X and Telegram buttons at the card page, keyed by rank', async () => {
     process.env.RACER_CARD_URL = 'https://racer.example/';
     rows = circuitRows();
@@ -457,5 +477,59 @@ describe('card image', () => {
     }
     expect(names.size).toBe(21);
     expect(racerCardArtName(2, 'II')).toBe('racer-cards/circuit-racer-2.jpg');
+  });
+});
+
+describe('weekly card', () => {
+  const page = async (query: any) => {
+    const routes = new Map<string, Function>();
+    registerRacerCardPages({ get: (paths: string | string[], fn: Function) => [paths].flat().forEach(p => routes.set(p, fn)) } as any);
+    const res: any = { statusCode: 200, headers: {}, body: undefined };
+    res.status = (c: number) => { res.statusCode = c; return res; };
+    res.set = (k: string, v: string) => { res.headers[k] = v; return res; };
+    res.send = (b: any) => { res.body = b; return res; };
+    await routes.get('/c/:code')!({ params: { code: 'SPEEDY' }, path: '/c/SPEEDY', query }, res);
+    return res;
+  };
+
+  it('counts only this week, never announces, and links to the weekly page', async () => {
+    process.env.RACER_CARD_URL = 'https://racer.example';
+    rows = [
+      row({ input_amount: '5000', created_at: new Date('2026-01-05T12:00:00Z') }),
+      row({ input_amount: '30', created_at: ago(60_000) }),
+    ];
+    const { actions } = fakeBot();
+    const ctx = fakeCtx(111);
+    await actions.get('racer_card_week')!(ctx);
+    const [, extra] = ctx.replyWithPhoto.mock.calls[0] as any;
+    expect(extra.caption).toContain('This week: Street Racer II');
+    expect(extra.caption).toContain('every Monday at 00:00 UTC');
+    expect(vi.mocked(generateRacerCardImage).mock.calls[0][0]).toMatchObject({ period: 'week', rankTitle: 'Street Racer', levelLabel: 'II' });
+    const [x] = buttons(extra);
+    expect(decodeURIComponent(x.url)).toContain("This week I'm a Street Racer II");
+    expect(new URL(x.url).searchParams.get('url')).toMatch(/^https:\/\/racer\.example\/c\/SPEEDY\?r=5&w=\d{4}-\d{2}-\d{2}$/);
+    expect(buttons(extra).some((b: any) => b.callback_data === 'racer_card')).toBe(true);
+    // Weekly cards never store or announce a rank
+    expect(ranks.size).toBe(0);
+  });
+
+  it('the all-time card offers the weekly one', async () => {
+    rows = [row({ input_amount: '30', created_at: ago(60_000) })];
+    const { commands } = fakeBot();
+    const ctx = fakeCtx(111);
+    await commands.get('card')!(ctx);
+    expect(buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]).some((b: any) => b.callback_data === 'racer_card_week')).toBe(true);
+  });
+
+  it('serves a weekly share page with weekly titles and image links', async () => {
+    process.env.RACER_CARD_URL = 'https://racer.example';
+    rows = [row({ input_amount: '30', created_at: ago(60_000) })];
+    const res = await page({ r: '5', w: '2026-11-09' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('Street Racer II this week on RacerBot');
+    expect(res.body).toContain('<meta property="og:image" content="https://racer.example/c/SPEEDY/preview.png?r=5&#38;w=2026-11-09">');
+    // Without w it is the all-time card
+    const all = await page({ r: '5' });
+    expect(all.body).not.toContain('this week');
   });
 });

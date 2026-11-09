@@ -1800,6 +1800,18 @@ export async function generateReferralCode(userId: string, username: string): Pr
   return code;
 }
 
+/**
+ * Give a user a new referral code (`<name>-<5 random>`) without touching their
+ * username. Used when a stored code cannot travel in a Telegram /start link.
+ */
+export async function setReferralCodeFromName(userId: string, name: string): Promise<string> {
+  const db = await getDb();
+  const randomSuffix = Math.random().toString(36).substring(2, 7).toUpperCase();
+  const code = `${name}-${randomSuffix}`;
+  await db.query('UPDATE users SET referral_code = $1 WHERE id = $2', [code, userId]);
+  return code;
+}
+
 export async function getUserByReferralCode(referralCode: string): Promise<UserRecord | null> {
   const db = await getDb();
   const trimmed = referralCode.trim();
