@@ -488,3 +488,18 @@ export {
   getMontraToken,
 } from './montra.js';
 export type { MontraLaunchInfo, MontraRoute, MontraApiToken } from './montra.js';
+export {
+  ELYSIUM_PADS,
+  ELYSPUMP_V3,
+  findPadRoute,
+  quotePad,
+  encodePadBuy,
+  encodePadSell,
+  padSellApprovals,
+  padSimApprovals,
+  findPadV3Route,
+  quotePadV3,
+  encodePadV3Buy,
+  encodePadV3Sell,
+} from './elysiumPads.js';
+export type { ElysiumPad, ElysiumPadName, PadRoute, PadV3Route } from './elysiumPads.js';

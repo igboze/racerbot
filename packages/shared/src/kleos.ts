@@ -28,6 +28,18 @@ import {
   resolveMontraRoute,
   type MontraRoute,
 } from './montra.js';
+import {
+  findPadRoute,
+  quotePad,
+  encodePadBuy,
+  encodePadSell,
+  findPadV3Route,
+  quotePadV3,
+  encodePadV3Buy,
+  encodePadV3Sell,
+  type PadRoute,
+  type PadV3Route,
+} from './elysiumPads.js';
 
 export const KLEOS = {
   launchpad: '0x6E3AFDdc49f5D43858a1FDD48184426deD11029b',
@@ -112,7 +124,7 @@ export const RONSPAD_TOKEN_URL = 'https://ronspad.fun/token?token=';
 
 /** The Elysium mainnet launchpads RacerBot trades, by venue name */
 /** `univ4`: any other coin with a Uniswap v4 pool against HYPE on Elysium (launchpads without special support) */
-export const ELYSIUM_PAD_VENUES = ['kleos', 'ronspad', 'ascend', 'montra', 'univ4'] as const;
+export const ELYSIUM_PAD_VENUES = ['kleos', 'ronspad', 'ascend', 'montra', 'boxa', 'elyspump', 'univ4'] as const;
 export type ElysiumPadVenue = (typeof ELYSIUM_PAD_VENUES)[number];
 
 export function isElysiumPadVenue(venue: unknown): venue is ElysiumPadVenue {
@@ -120,7 +132,8 @@ export function isElysiumPadVenue(venue: unknown): venue is ElysiumPadVenue {
 }
 
 export function elysiumPadName(venue: unknown): string {
-  return venue === 'ronspad' ? 'RonsPad' : venue === 'ascend' ? 'Ascend' : venue === 'montra' ? 'Montra' : venue === 'univ4' ? 'Uniswap v4' : 'Kleos';
+  return venue === 'ronspad' ? 'RonsPad' : venue === 'ascend' ? 'Ascend' : venue === 'montra' ? 'Montra'
+    : venue === 'boxa' ? 'BOXA' : venue === 'elyspump' ? 'ElysPump' : venue === 'univ4' ? 'Uniswap v4' : 'Kleos';
 }
 
 /** The launchpad's own page for a coin */
@@ -261,7 +274,7 @@ export function describeKleosRevert(err: any): string {
 
 // ── Routing ─────────────────────────────────────────────────────────────────
 
-export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad' | 'ascend' | 'montra' | 'univ4';
+export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad' | 'ascend' | 'montra' | 'pad' | 'padv3' | 'univ4';
 
 export interface KleosRoute {
   kind: KleosRouteKind;
@@ -274,6 +287,10 @@ export interface KleosRoute {
   ascend?: AscendRoute;
   /** montra only: the coin's launch pool on Montra Markets and optional HYPE hop pool */
   montra?: MontraRoute;
+  /** pad only: a BOXA or ElysPump pool on that pad's own PoolManager */
+  pad?: PadRoute;
+  /** padv3 only: an ElysPump Uniswap v3 pool against WHYPE */
+  padV3?: PadV3Route;
 }
 
 const ROUTES: Record<KleosRouteKind, KleosRoute> = {
@@ -286,6 +303,8 @@ const ROUTES: Record<KleosRouteKind, KleosRoute> = {
   ascend: { kind: 'ascend', router: ASCEND.universalRouter, hopFee: 0 },
   montra: { kind: 'montra', router: MONTRA.router, hopFee: 0 },
   univ4: { kind: 'univ4', router: ASCEND.universalRouter, hopFee: 0 },
+  pad: { kind: 'pad', router: ethers.ZeroAddress, hopFee: 0 },
+  padv3: { kind: 'padv3', router: ethers.ZeroAddress, hopFee: 0 },
 };
 
 type V5Deployment = (typeof KLEOS_V5_DEPLOYMENTS)[number];
@@ -369,6 +388,8 @@ export async function quoteKleos(
   if (route.kind === 'ronspad') return quoteRonsPad(provider, token, side, amountIn, from);
   if (route.kind === 'ascend' || route.kind === 'univ4') return quoteAscend(provider, route.ascend!, token, side, amountIn);
   if (route.kind === 'montra') return quoteMontra(provider, route.montra!, token, side, amountIn);
+  if (route.kind === 'pad') return quotePad(provider, route.pad!, side, amountIn);
+  if (route.kind === 'padv3') return quotePadV3(provider, route.padV3!, token, side, amountIn);
   if (route.kind === 'classic') {
     const quoter = new ethers.Contract(KLEOS.quoterV2, KLEOS_QUOTER_V2_ABI, provider);
     const [tokenIn, tokenOut] = side === 'buy' ? [KLEOS.whype, token] : [token, KLEOS.whype];
@@ -471,14 +492,17 @@ export async function resolveKleosRoute(
 ): Promise<KleosRoute> {
   const probe = 10n ** 15n; // 0.001 HYPE
   // RonsPad, Ascend and Montra name their own launches on chain
-  const [ronsPad, ascend, montra] = await Promise.all([
+  const [ronsPad, ascend, montra, pad] = await Promise.all([
     getRonsPadLaunch(provider, token).catch(() => null),
     // One retry: a busy RPC must not make an Ascend coin look like it can't be traded
     resolveAscendRoute(provider, token).catch(() => resolveAscendRoute(provider, token)).catch((err: Error) => err),
     resolveMontraRoute(provider, token).catch(() => null),
+    // BOXA / ElysPump at their usual pool settings, read on chain
+    findPadRoute(provider, token, { askKleos: false }).catch(() => null),
   ]);
   if (ronsPad) return ROUTES.ronspad;
   if (montra) return { ...ROUTES.montra, router: montra.router, montra };
+  if (pad) return { ...ROUTES.pad, router: pad.pad.router, pad };
   // resolveAscendRoute answers null for a coin Ascend did not launch, so an error is a real failure: say so
   // rather than probing Kleos and calling an Ascend coin untradeable after an RPC hiccup
   if (ascend instanceof Error) {
@@ -507,6 +531,11 @@ export async function resolveKleosRoute(
   }
   // Another launchpad's coin: trade its Uniswap v4 pool against HYPE, if it has one
   if (options.allowUniV4 !== false) {
+    // BOXA / ElysPump with other pool settings (from the Kleos app), then ElysPump's earlier v3 pools
+    const padRoute = await findPadRoute(provider, token).catch(() => null);
+    if (padRoute) return { ...ROUTES.pad, router: padRoute.pad.router, pad: padRoute };
+    const padV3 = await findPadV3Route(provider, token).catch(() => null);
+    if (padV3) return { ...ROUTES.padv3, router: padV3.router, padV3 };
     const v4 = await findElysiumV4Route(provider, token).catch(() => null);
     if (v4) return { ...ROUTES.univ4, ascend: v4 };
   }
@@ -522,6 +551,8 @@ export interface EvmCall {
 export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
   if (route.kind === 'ascend' || route.kind === 'univ4') return encodeAscendBuy(route.ascend!, token, hypeIn, minOut, recipient, deadline);
   if (route.kind === 'montra') return encodeMontraBuy(route.montra!, token, hypeIn, minOut, recipient, deadline);
+  if (route.kind === 'pad') return encodePadBuy(route.pad!, hypeIn, minOut, recipient, deadline);
+  if (route.kind === 'padv3') return encodePadV3Buy(route.padV3!, token, hypeIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('buy', [token, route.hop, minOut, recipient, deadline]);
     return { to: route.router, data, value: hypeIn };
@@ -547,6 +578,8 @@ export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint,
 export function encodeKleosSell(route: KleosRoute, token: string, amountIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
   if (route.kind === 'ascend' || route.kind === 'univ4') return encodeAscendSell(route.ascend!, token, amountIn, minOut, recipient, deadline);
   if (route.kind === 'montra') return encodeMontraSell(route.montra!, token, amountIn, minOut, recipient, deadline);
+  if (route.kind === 'pad') return encodePadSell(route.pad!, amountIn, minOut, recipient, deadline);
+  if (route.kind === 'padv3') return encodePadV3Sell(route.padV3!, token, amountIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('sell', [token, route.hop, amountIn, minOut, recipient, deadline]);
     return { to: route.router, data, value: 0n };
