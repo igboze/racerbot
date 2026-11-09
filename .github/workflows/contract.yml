@@ -1,0 +1,38 @@
+# Position executor contract: tests and a wasm build, only when the contract changes.
+# Deploying the contract stays a manual step (scripts/deploy-confidential.mjs), never part of CI.
+name: Contract
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/position-executor/**']
+  pull_request:
+    branches: [main]
+    paths: ['packages/position-executor/**', '.github/workflows/contract.yml']
+
+jobs:
+  contract-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/position-executor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  contract-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/position-executor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo build --release --target wasm32-unknown-unknown
+      - uses: actions/upload-artifact@v4
+        with:
+          name: position-executor
+          path: packages/position-executor/target/wasm32-unknown-unknown/release/racerbot_position_executor.wasm
