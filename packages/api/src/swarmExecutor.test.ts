@@ -162,3 +162,42 @@ describe('swarm executor', () => {
     await expect(ex.launchSwarmSession('s1')).rejects.toThrow(/Cannot launch/);
   });
 });
+
+describe('swarm tranches and the wallet', () => {
+  it('a buy tranche uses the plan slippage, not the saved setting', async () => {
+    sessions.s1 = session({ plan_json: { action: 'buy', tranches: [tranche(0, { maxSlippagePct: 0.8 })] } });
+    await ex.launchSwarmSession('s1');
+    await runAll();
+    expect(buy).toHaveBeenCalledWith('u1', 'hoot.near', 1, undefined, { slippagePct: 0.8 });
+  });
+
+  it('tranches due at the same moment run one after another, never at once', async () => {
+    let active = 0;
+    let maxActive = 0;
+    buy.mockImplementation(async (_u: string, _t: string, amount: number) => {
+      active++; maxActive = Math.max(maxActive, active);
+      await new Promise(r => setTimeout(r, 1000));
+      active--;
+      return { success: true, amountNear: amount, txHash: `tx${amount}`, positionId: 'pos-1', tokenQty: '1' };
+    });
+    sessions.s1 = session({ plan_json: { action: 'buy', tranches: [0, 1, 2].map(i => tranche(i, { delaySec: 0, delayMs: 0 })) } });
+    await ex.launchSwarmSession('s1');
+    await runAll();
+    expect(buy).toHaveBeenCalledTimes(3);
+    expect(maxActive).toBe(1);
+    expect(sessions.s1.status).toBe('completed');
+  });
+
+  it('a tranche waiting its turn does not run once the swarm is paused', async () => {
+    buy.mockImplementation(async (_u: string, _t: string, amount: number) => {
+      await new Promise(r => setTimeout(r, 1000));
+      return { success: true, amountNear: amount, txHash: `tx${amount}`, positionId: 'pos-1', tokenQty: '1' };
+    });
+    sessions.s1 = session({ plan_json: { action: 'buy', tranches: [0, 1].map(i => tranche(i, { delaySec: 0, delayMs: 0 })) } });
+    await ex.launchSwarmSession('s1');
+    await vi.advanceTimersByTimeAsync(10);
+    sessions.s1.status = 'paused';
+    await runAll();
+    expect(buy).toHaveBeenCalledTimes(1);
+  });
+});

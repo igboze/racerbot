@@ -2466,8 +2466,8 @@ export async function getCreatorStudioData(userId: string, walletAddress?: strin
       copyFeePct: parseFloat(trader.copy_fee_pct || '0.0'),
     },
     terminalUrl: trader.terminal_token
-      ? `https://raceralpha.xyz/terminal/${trader.terminal_token}`
-      : `https://raceralpha.xyz/terminal/7X-${trader.id.slice(0, 8)}`,
+      ? `https://racertrades.xyz/terminal/${trader.terminal_token}`
+      : `https://racertrades.xyz/terminal/7X-${trader.id.slice(0, 8)}`,
   };
 }
 
@@ -2625,7 +2625,7 @@ export async function generateTerminalLink(userId: string): Promise<any> {
     `UPDATE racer_alpha_traders SET terminal_token = $1 WHERE user_id = $2`,
     [token, userId]
   );
-  return { success: true, terminalUrl: `https://raceralpha.xyz/terminal/${token}` };
+  return { success: true, terminalUrl: `https://racertrades.xyz/terminal/${token}` };
 }
 
 export interface AlphaTokenItem {

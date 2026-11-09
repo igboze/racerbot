@@ -322,7 +322,7 @@ async function main(): Promise<void> {
       }
     }
 
-    // If alpha subdomain is used (alpha.racer.trade, raceralpha.xyz)
+    // If alpha subdomain is used (alpha.racer.trade, alpha.racertrades.xyz)
     if (tokenSubdomain === 'alpha' || tokenSubdomain === 'raceralpha') {
       return serveRacerAlphaHtml(res);
     }
@@ -374,8 +374,8 @@ async function main(): Promise<void> {
     serveRacerHtml(res);
   });
 
-  // Serve RacerAlpha WebApp at `/alpha`, `/raceralpha`, `/terminal`, `/console`, and `/trade`
-  app.get(['/alpha', '/raceralpha', '/terminal', '/console', '/trade'], (_req, res) => {
+  // Serve RacerAlpha WebApp at `/alpha`, `/raceralpha`, `/terminal` (and creator links `/terminal/<token>`), `/console`, and `/trade`
+  app.get(['/alpha', '/raceralpha', '/terminal', '/terminal/:token', '/console', '/trade'], (_req, res) => {
     serveRacerAlphaHtml(res);
   });
 

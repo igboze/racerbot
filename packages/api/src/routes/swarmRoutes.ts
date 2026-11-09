@@ -54,11 +54,14 @@ export function createSwarmRouter(): Router {
       }
 
       const balances = await getUserBalances(user.telegram_id, false, user).catch(() => null);
+      // Private tranches only when there is private NEAR to spend; otherwise every tranche would try
+      // a private buy first, fail, and only then fall back to the wallet
+      const { hasPrivateFunds } = await import('../executorPool.js');
       const plan = await planSwarmSession({
         prompt,
         userBalances: balances,
         defaultTokenAddress: defaultToken,
-        stealthModeOverride: stealthMode,
+        stealthModeOverride: stealthMode && await hasPrivateFunds(user).catch(() => false),
         totalNear: Number.isFinite(totalNear) && totalNear > 0 ? totalNear : null,
       });
       // The prompt can name a token too: the plan's token must be a NEAR one before it is saved
@@ -79,7 +82,6 @@ export function createSwarmRouter(): Router {
         planJson: plan,
         teeAttestation: {
           planner: plan.planner,
-          teeWrapped: true,
           commandSteps: plan.commandSteps || [],
           exitTriggers: plan.exitTriggers || [],
         },

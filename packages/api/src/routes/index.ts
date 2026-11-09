@@ -442,7 +442,7 @@ export async function resolveAlphaUser(req: any) {
   return null;
 }
 
-router.get(['/alpha', '/raceralpha', '/terminal', '/console', '/trade'], (_req, res) => {
+router.get(['/alpha', '/raceralpha', '/terminal', '/terminal/:token', '/console', '/trade'], (_req, res) => {
   serveRacerAlphaHtml(res);
 });
 
