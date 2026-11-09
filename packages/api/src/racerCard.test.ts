@@ -316,7 +316,7 @@ describe('sharing with the card image', () => {
     process.env.RACER_CARD_URL = 'https://racer.example';
     const { json } = await webRacerCard(users.u3);
     expect(json.referralCode).toBe('w_racerbot-NEW01');
-    expect(json.shareUrl).toBe('https://racer.example/c/w_racerbot-NEW01?r=1');
+    expect(json.shareUrl).toBe('https://racer.example/c/w_racerbot-NEW01?r=1&v=2');
     expect(decodeURIComponent(json.share.x)).not.toContain('...');
   });
 
@@ -325,7 +325,7 @@ describe('sharing with the card image', () => {
     const routes = fakeApp();
     const res = await call(routes, '/c/:code', { code: 'racerb...near-KBVZB' }, '/c/racerb...near-KBVZB', { r: '1' });
     expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('<meta property="og:image" content="https://racer.example/c/racerb...near-KBVZB/preview.png?r=1">');
+    expect(res.body).toContain('<meta property="og:image" content="https://racer.example/c/racerb...near-KBVZB/preview.png?r=1&#38;v=2">');
   });
 
   it('points the X and Telegram buttons at the card page, keyed by rank', async () => {
@@ -335,7 +335,7 @@ describe('sharing with the card image', () => {
     const ctx = fakeCtx(111);
     await commands.get('card')!(ctx);
     const [x, tg] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
-    const page = 'https://racer.example/c/SPEEDY?r=8';
+    const page = 'https://racer.example/c/SPEEDY?r=8&v=2';
     expect(new URL(x.url).searchParams.get('url')).toBe(page);
     expect(new URL(tg.url).searchParams.get('url')).toBe(page);
   });
@@ -372,12 +372,12 @@ describe('sharing with the card image', () => {
     const ctx = fakeCtx(111);
     await commands.get('card')!(ctx);
     const [x] = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
-    expect(new URL(x.url).searchParams.get('url')).toBe('https://racer.example/c/SPEEDY?r=8');
+    expect(new URL(x.url).searchParams.get('url')).toBe('https://racer.example/c/SPEEDY?r=8&v=2');
     const all = buttons((ctx.replyWithPhoto.mock.calls[0] as any)[1]);
     expect(all.find((b: any) => b.text.includes('Leaderboard'))?.url).toBe('https://racer.example/racers');
 
     const page = await call(fakeApp(), '/c/:code', { code: 'SPEEDY' }, '/c/SPEEDY', { r: '8' });
-    expect(page.body).toContain('content="https://racer.example/c/SPEEDY/preview.png?r=8"');
+    expect(page.body).toContain('content="https://racer.example/c/SPEEDY/preview.png?r=8&#38;v=2"');
     expect(page.body).not.toContain('railway');
   });
 
@@ -401,8 +401,8 @@ describe('sharing with the card image', () => {
     const html: string = res.body;
     expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
     expect(html).toContain('<meta property="og:image:type" content="image/png">');
-    expect(html).toContain('<meta property="og:image" content="https://racer.example/c/SPEEDY/preview.png?r=8">');
-    expect(html).toContain('<meta name="twitter:image" content="https://racer.example/c/SPEEDY/preview.png?r=8">');
+    expect(html).toContain('<meta property="og:image" content="https://racer.example/c/SPEEDY/preview.png?r=8&#38;v=2">');
+    expect(html).toContain('<meta name="twitter:image" content="https://racer.example/c/SPEEDY/preview.png?r=8&#38;v=2">');
     expect(html).toContain('Circuit Racer II on RacerBot');
     expect(html).toContain('https://t.me/racertradingbot?start=SPEEDY');
     expect(html).not.toMatch(/secret-token|\b290\b|\b150\b|\b140\b/);
@@ -507,7 +507,7 @@ describe('weekly card', () => {
     expect(vi.mocked(generateRacerCardImage).mock.calls[0][0]).toMatchObject({ period: 'week', rankTitle: 'Street Racer', levelLabel: 'II' });
     const [x] = buttons(extra);
     expect(decodeURIComponent(x.url)).toContain("This week I'm a Street Racer II");
-    expect(new URL(x.url).searchParams.get('url')).toMatch(/^https:\/\/racer\.example\/c\/SPEEDY\?r=5&w=\d{4}-\d{2}-\d{2}$/);
+    expect(new URL(x.url).searchParams.get('url')).toMatch(/^https:\/\/racer\.example\/c\/SPEEDY\?r=5&w=\d{4}-\d{2}-\d{2}&v=2$/);
     expect(buttons(extra).some((b: any) => b.callback_data === 'racer_card')).toBe(true);
     // Weekly cards never store or announce a rank
     expect(ranks.size).toBe(0);
@@ -527,7 +527,7 @@ describe('weekly card', () => {
     const res = await page({ r: '5', w: '2026-11-09' });
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('Street Racer II this week on RacerBot');
-    expect(res.body).toContain('<meta property="og:image" content="https://racer.example/c/SPEEDY/preview.png?r=5&#38;w=2026-11-09">');
+    expect(res.body).toContain('<meta property="og:image" content="https://racer.example/c/SPEEDY/preview.png?r=5&#38;w=2026-11-09&#38;v=2">');
     // Without w it is the all-time card
     const all = await page({ r: '5' });
     expect(all.body).not.toContain('this week');
