@@ -392,6 +392,7 @@ export {
   WHYPE_ADDRESS,
   getHypeUsdPrice,
 } from './evm.js';
+export { isEvmChainName, evmStoredAmount } from './evm.js';
 export type {
   EvmChain,
   GeneratedEvmWallet,

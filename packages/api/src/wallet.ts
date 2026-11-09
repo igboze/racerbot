@@ -672,6 +672,38 @@ export async function getHypeUsdPrice(): Promise<number> {
   return cachedHypeUsdPrice;
 }
 
+/** A button's short token key could not be turned back into an address (e.g. after a restart) */
+export class ExpiredTokenKeyError extends Error {
+  constructor(readonly key: string) {
+    super('This button has expired. Paste the token address again to get a fresh card. Nothing was spent.');
+  }
+}
+
+/**
+ * Turns a button's short token key (t_…) back into the token address: from memory, then from the database.
+ * Throws ExpiredTokenKeyError when neither knows it, so a key is never traded as if it were an address.
+ */
+export async function resolveTokenKey(raw: string): Promise<string> {
+  const fromMemory = resolveTokenAddressFromKey(raw);
+  if (!fromMemory.startsWith('t_')) return fromMemory;
+  const fromDb = await findTokenAddressByShortKey(fromMemory).catch(() => null);
+  if (!fromDb) throw new ExpiredTokenKeyError(fromMemory);
+  registerShortTokenKey(fromMemory, fromDb);
+  return fromDb;
+}
+
+/** Saves an EVM token's identity to the token cache, so its short key still resolves after a restart */
+function rememberEvmToken(info: TokenInfoResult): void {
+  upsertTokenCache({
+    token_address: info.address,
+    chain: info.chain as any,
+    name: info.name,
+    symbol: info.symbol,
+    decimals: info.decimals,
+    venue: info.venue as any,
+  } as any).catch(() => { });
+}
+
 /**
  * Why an EVM address did not resolve to a token, after checking HyperEVM and Elysium:
  * nothing is deployed there on either (`empty`), it is an account that has sent transactions
@@ -1496,6 +1528,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
           tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          rememberEvmToken(kleos);
           return kleos;
         }
       }
@@ -1519,6 +1552,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
           tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          rememberEvmToken(kleos);
           return kleos;
         }
         throw await explainMissingEvmToken(tokenAddress);
@@ -1561,6 +1595,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
       tokenInfoCache.set(tokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
       tokenInfoCache.set(rawTokenAddress, { data: result, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+      rememberEvmToken(result);
       return result;
     }
 

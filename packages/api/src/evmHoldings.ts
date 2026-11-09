@@ -78,6 +78,46 @@ export async function trackEvmHolding(p: {
   return position.id;
 }
 
+/**
+ * Reopens HyperEVM / Elysium positions that were closed by mistake. Until 2026-11-09 the holdings list read an
+ * EVM quantity (stored as whole tokens, "423000.5") as raw units, saw a near-zero amount and closed the position
+ * as dust. A position closed with quantity 0 and no sell is reopened when the wallet still holds the coin,
+ * at its real on-chain balance. Returns how many were reopened.
+ */
+export async function reopenWronglyClosedEvmPositions(user: UserRecord): Promise<number> {
+  if (!user.evm_address) return 0;
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT p.id, p.chain, p.token_address FROM positions p
+      WHERE p.user_id = $1 AND p.status = 'closed' AND p.chain IN ('hyperevm', 'elysium')
+        AND COALESCE(p.quantity_held, 0) = 0
+        AND EXISTS (SELECT 1 FROM fills f WHERE f.position_id = p.id AND f.side = 'buy')
+        AND NOT EXISTS (SELECT 1 FROM fills f WHERE f.position_id = p.id AND f.side = 'sell')
+        AND NOT EXISTS (SELECT 1 FROM positions o WHERE o.user_id = p.user_id AND o.status = 'open'
+                          AND LOWER(o.token_address) = LOWER(p.token_address))`,
+    [user.id]
+  );
+  let reopened = 0;
+  for (const chain of ['hyperevm', 'elysium'] as const) {
+    const rows = res.rows.filter((r: any) => r.chain === chain);
+    if (rows.length === 0) continue;
+    const balances = await balancesOf(chain, user.evm_address, rows.map((r: any) => String(r.token_address)));
+    const provider = getEvmProvider(chain, false);
+    for (const row of rows) {
+      const raw = balances.get(String(row.token_address).toLowerCase());
+      if (!raw || raw <= 0n) continue; // sold or sent away elsewhere, or unreadable: leave it closed
+      const decimals = await new ethers.Contract(row.token_address, ERC20, provider).decimals().then(Number).catch(() => 18);
+      await db.query(
+        `UPDATE positions SET status = 'open', closed_at = NULL, quantity_held = $2 WHERE id = $1 AND status = 'closed'`,
+        [row.id, ethers.formatUnits(raw, decimals)]
+      );
+      logger.info(`Reopened ${chain} position ${row.id} (${row.token_address}) for user ${user.id}: wrongly closed as dust`);
+      reopened++;
+    }
+  }
+  return reopened;
+}
+
 /** Balances of many tokens for one owner, in Multicall3 batches; a failed read is left out, never read as 0 */
 async function balancesOf(chain: EvmChain, owner: string, tokens: string[]): Promise<Map<string, bigint>> {
   const provider = getEvmProvider(chain, false);
@@ -105,12 +145,16 @@ export async function syncUserEvmHoldings(userId: string, force = false): Promis
 
   const user = await getUserById(userId).catch(() => null);
   if (!user?.evm_address) return 0;
+  const reopened = await reopenWronglyClosedEvmPositions(user).catch((err: any) => {
+    logger.warn(`Could not check closed EVM positions for ${user.id}: ${err?.message}`);
+    return 0;
+  });
   const coins = await listKleosBoardCoins().catch(() => [] as any[]);
-  if (coins.length === 0) return 0;
+  if (coins.length === 0) return reopened;
 
   const balances = await balancesOf('elysium', user.evm_address, coins.map(c => String(c.address)));
   const held = coins.filter(c => (balances.get(String(c.address).toLowerCase()) ?? 0n) > 0n);
-  if (held.length === 0) return 0;
+  if (held.length === 0) return reopened;
 
   const open = await getOpenPositions(user.id).catch(() => []);
   const tracked = new Set(open.filter(p => p.chain === 'elysium' || p.chain === 'hyperevm').map(p => p.token_address.toLowerCase()));
@@ -133,7 +177,7 @@ export async function syncUserEvmHoldings(userId: string, force = false): Promis
     });
     if (id) added++;
   }
-  return added;
+  return added + reopened;
 }
 
 /**

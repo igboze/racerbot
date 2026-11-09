@@ -1,6 +1,6 @@
 import { getFillsByPosition, getPositionById, getUserById, generateReferralCode } from '@racerbot/db';
 import { getTokenInfo, isSuiToken, isStarknetToken, getNearUsdPrice, getSuiUsdPrice, getHypeUsdPrice } from './wallet.js';
-import { getSolUsdPrice, isValidEvmAddress, isSolanaToken } from '@racerbot/shared';
+import { getSolUsdPrice, isValidEvmAddress, isSolanaToken, evmStoredAmount } from '@racerbot/shared';
 import { generatePNLCardImage } from './pnlCardImageGenerator.js';
 
 export interface PNLCardData {
@@ -124,6 +124,8 @@ export async function generatePNLCardData(
 
     const decimals    = tokenInfo?.decimals ?? (isSolanaPos ? 6 : isSuiPos ? 9 : 18);
     const toHuman = (rawStr: string): number => {
+      // HyperEVM / Elysium fills already store whole-token amounts
+      if (isEvmPos) return evmStoredAmount(rawStr);
       const val = parseFloat(rawStr || '0');
       if (decimals <= 0) return val;
       if (isSuiPos) {
@@ -181,7 +183,7 @@ export async function generatePNLCardData(
     let quantityHeld = 0;
     try {
       const rawBig = BigInt((position.quantity_held || '0').split('.')[0]);
-      quantityHeld = Number(rawBig) / Math.pow(10, decimals);
+      quantityHeld = isEvmPos ? evmStoredAmount(position.quantity_held) : Number(rawBig) / Math.pow(10, decimals);
     } catch {
       quantityHeld = parseFloat(position.quantity_held || '0');
     }

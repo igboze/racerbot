@@ -90,6 +90,7 @@ import {
   withdrawFunds,
   withdrawSuiFunds,
   withdrawEvmHype,
+  resolveTokenKey,
   withdrawStarknetFunds,
   withdrawTokenFunds,
   withdrawSolanaFunds,
@@ -193,6 +194,8 @@ import {
   RONSPAD_TOKEN_URL,
   isKleosTradingEnabled,
   isElysiumDirectSend,
+  isEvmChainName,
+  evmStoredAmount,
   isElysiumPadVenue,
   elysiumPadName,
   elysiumPadUrl,
@@ -959,8 +962,10 @@ export async function buildPointsView(telegramId: number) {
   return { text, keyboard };
 }
 
-export function formatHoldingQuantity(quantityHeld: string, decimals = 18): string {
+export function formatHoldingQuantity(quantityHeld: string, decimals = 18, chain?: string | null): string {
   try {
+    // HyperEVM / Elysium quantities are already whole-token amounts: format them as they are
+    if (isEvmChainName(chain)) throw new Error('human amount');
     const raw = (quantityHeld || '0').split('.')[0];
     const rawBig = BigInt(raw);
     if (rawBig === 0n) return '0';
@@ -1911,7 +1916,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       console.error('Failed to generate PNL card:', err);
     }
 
-    const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals);
+    const formattedQty = formatHoldingQuantity(userPosition.quantity_held, tokenInfo.decimals, userPosition.chain);
     text += `💼 *Holding*: ${formattedQty} ${safeSymbol} (${emoji} *${pnlDisplay}*) • Entry: ${formatCryptoPrice(entryPrice, '', nativeUnit).trim()}\n`;
   }
 
@@ -3028,8 +3033,18 @@ const ORDER_STAGE_LINES: Record<string, string> = {
   // Starknet Live Stages
   routing_starknet: '⚡ Routing trade via AVNU & Ekubo…',
   deploying_account: '🛡️ Deploying your Starknet Account contract (one-time setup)…',
-  executing_swap: '✍️ Signing & submitting swap to Starknet sequencer…',
+  // Shared by the Starknet, HyperEVM and Elysium executors, so it names no chain
+  executing_swap: '✍️ Signing & submitting your swap…',
   confirming_tx: '🚀 Trade submitted to Starknet! Awaiting block confirmation…',
+  // Elysium (Kleos, RonsPad, Ascend) Live Stages
+  routing_kleos: '🏛️ Finding the coin’s route on Elysium…',
+  preparing_buy: '📊 Getting an Elysium quote…',
+  preparing_sell: '📊 Getting an Elysium quote…',
+  simulating: '🧪 Checking the trade before sending it…',
+  approving: '✅ Approving the coin for sale (one-time per sell)…',
+  waiting_elysium: '🚀 Sent to Elysium. Waiting for confirmation…',
+  // HyperEVM Live Stages
+  routing_hyperevm: '⚡ Routing trade on HyperEVM…',
   // Solana Live Stages
   routing_solana: '⚡ Routing trade via Jupiter (pump.fun curve, PumpSwap, Raydium, Meteora)…',
   checking_balance: '💳 Checking your wallet balance…',
@@ -3110,7 +3125,8 @@ async function executeBuyHelperAsTrade(
   /** `slippagePct` overrides the user's saved slippage (a swarm tranche uses its plan's) */
   options?: { slippagePct?: number }
 ): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; txHash?: string }> {
-  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
+  // A short key that no longer resolves must never reach the NEAR checks below as if it were a NEAR token
+  const tokenAddress = await resolveTokenKey(rawTokenAddress);
   const user = typeof userIdOrTelegramId === 'string'
     ? await getUserById(userIdOrTelegramId)
     : await getUserByTelegramId(userIdOrTelegramId);
@@ -3760,7 +3776,7 @@ export function kleosSpendableHype(hyperevm: number, elysium: number): number {
 }
 
 async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, pct: number, onProgress?: (stage: string) => void) {
-  const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
+  const tokenAddress = await resolveTokenKey(rawTokenAddress);
   const user = await getUserByTelegramId(telegramId);
   if (!user) throw new Error('Please run /start to set up your wallet first.');
 
@@ -7883,7 +7899,9 @@ export function setupRoutes(bot: Telegraf): void {
       let humanQuantity = 0;
       try {
         const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-        if (isStarknetPos && (pos.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
+        if (isEvmPosH) {
+          humanQuantity = evmStoredAmount(pos.quantity_held);
+        } else if (isStarknetPos && (pos.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
           humanQuantity = parseFloat(pos.quantity_held) || 0;
         } else {
           humanQuantity = Number(rawBig) / Math.pow(10, decimals);
@@ -7901,7 +7919,8 @@ export function setupRoutes(bot: Telegraf): void {
       // this is sold dust. Auto-close position in background and omit from holdings list!
       let rawBigCheck = 0n;
       try { rawBigCheck = BigInt((pos.quantity_held || '0').split('.')[0]); } catch { }
-      const isDust = rawBigCheck <= 0n || humanQuantity <= 0 || (currentPrice > 0 && tokenValueUsd < 0.001 && humanQuantity < 0.000001);
+      // An EVM holding below one whole token (e.g. "0.5") has a zero integer part but is not dust
+      const isDust = (!isEvmPosH && rawBigCheck <= 0n) || humanQuantity <= 0 || (currentPrice > 0 && tokenValueUsd < 0.001 && humanQuantity < 0.000001);
       if (isDust) {
         updatePosition({
           position_id: pos.id,
@@ -7924,7 +7943,9 @@ export function setupRoutes(bot: Telegraf): void {
         const val = parseFloat(buy.amount || '0');
         let amount = val;
         const rawAmtStr = String(buy.amount || '');
-        if (isStarknetPos) {
+        if (isEvmPosH) {
+          amount = evmStoredAmount(buy.amount);
+        } else if (isStarknetPos) {
           amount = rawAmtStr.includes('.') && val < 1e10 ? val : val / Math.pow(10, decimals);
         } else if (decimals > 0 && (buy.input_amount != null || !rawAmtStr.includes('.') || val > 1e10)) {
           amount = val / Math.pow(10, decimals);
@@ -8004,7 +8025,7 @@ export function setupRoutes(bot: Telegraf): void {
       const rawLabel = `${emoji} ${compactSym} (${pnlDisplay})`;
       const cappedLabel = rawLabel.length > 20 ? `${rawLabel.slice(0, 19)}…` : rawLabel;
 
-      const formattedQty = formatHoldingQuantity(pos.quantity_held, decimals);
+      const formattedQty = formatHoldingQuantity(pos.quantity_held, decimals, posChain);
 
       return {
         pos,
@@ -8446,6 +8467,7 @@ export function setupRoutes(bot: Telegraf): void {
         if (isStarknetPos) {
           return rawStr.includes('.') && val < 1e10 ? val : val / Math.pow(10, decimals);
         }
+        if (isEvmPos) return evmStoredAmount(rawStr);
         if (!rawStr.includes('.') || val > 1e10) return val / Math.pow(10, decimals);
         return val;
       };
@@ -8482,7 +8504,9 @@ export function setupRoutes(bot: Telegraf): void {
       let humanQuantity = 0;
       try {
         const rawBig = BigInt((position.quantity_held || '0').split('.')[0]);
-        if (isStarknetPos && (position.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
+        if (isEvmPos) {
+          humanQuantity = evmStoredAmount(position.quantity_held);
+        } else if (isStarknetPos && (position.quantity_held || '').includes('.') && Number(rawBig) < 1e10) {
           humanQuantity = parseFloat(position.quantity_held) || 0;
         } else {
           humanQuantity = Number(rawBig) / Math.pow(10, decimals);
@@ -8560,7 +8584,7 @@ export function setupRoutes(bot: Telegraf): void {
       const pnlUsd = cardData ? (cardData.totalPnl * usdRate) : (holdingValueUsd - initialInvestedUsd);
       const pnlUsdStr = Math.abs(pnlUsd) >= 0.01 ? `${pnlUsd >= 0 ? '+$' : '-$'}${Math.abs(pnlUsd).toFixed(2)}` : '';
 
-      const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
+      const formattedQty = formatHoldingQuantity(position.quantity_held, decimals, getPositionChain(position));
 
       const fmtPrice = (p: number) => {
         if (p <= 0) return '`$0.00`';
@@ -8759,7 +8783,7 @@ export function setupRoutes(bot: Telegraf): void {
 
       const tokenInfo = await getTokenInfo(position.token_address, false).catch(() => null);
       const decimals = tokenInfo?.decimals ?? 18;
-      const formattedQty = formatHoldingQuantity(position.quantity_held, decimals);
+      const formattedQty = formatHoldingQuantity(position.quantity_held, decimals, getPositionChain(position));
       const sym = sanitizeMd(tokenInfo?.symbol || 'Tokens');
       const shortKey = getShortTokenKey(position.token_address);
 
@@ -8831,8 +8855,10 @@ export function setupRoutes(bot: Telegraf): void {
         const currentPrice = tokenInfo ? parseFloat(tokenInfo.price) : 0;
         const isSuiPos = livePosition.chain === 'sui' || isSuiToken(livePosition.token_address);
         const decimals = tokenInfo?.decimals ?? (isSuiPos ? 6 : 18);
-        // Fills store raw on-chain token units; prices are native per whole token.
+        const isEvmLive = isEvmChainName(getPositionChain(livePosition));
+        // Fills store raw on-chain token units (human amounts on HyperEVM / Elysium); prices are native per whole token.
         const toHuman = (rawStr: string): number => {
+          if (isEvmLive) return evmStoredAmount(rawStr);
           const val = parseFloat(rawStr || '0');
           if (decimals <= 0) return val;
           if (isSuiPos) {
@@ -9002,7 +9028,9 @@ export function setupRoutes(bot: Telegraf): void {
         const isSuiTokenAddr = isSuiToken(token);
         const rawAmt = parseFloat(s.amount || '0');
         const decimals = info?.decimals ?? (isSuiTokenAddr ? 6 : (rawAmt > 1e25 ? 24 : 18));
-        const humanQty = isSuiTokenAddr
+        const humanQty = isEvmChainName(s.chain)
+          ? evmStoredAmount(s.amount)
+          : isSuiTokenAddr
           ? (String(s.amount || '').includes('.') && rawAmt < 1e6 ? rawAmt : rawAmt / Math.pow(10, decimals))
           : (!String(s.amount || '').includes('.') || rawAmt > 1e10 ? rawAmt / Math.pow(10, decimals) : rawAmt);
         const sellPrice = parseFloat(s.price || '0');
@@ -10030,7 +10058,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       let humanQty = '';
       try {
         const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-        const qty = Number(rawBig) / Math.pow(10, decimals);
+        const qty = isEvmChainName(getPositionChain(pos)) ? evmStoredAmount(pos.quantity_held) : Number(rawBig) / Math.pow(10, decimals);
         humanQty = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(2)}M` : qty.toLocaleString('en-US', { maximumFractionDigits: 2 });
       } catch {
         humanQty = pos.quantity_held;
@@ -10072,7 +10100,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
     let humanQty = '';
     try {
       const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-      const qty = Number(rawBig) / Math.pow(10, decimals);
+      const qty = isEvmChainName(getPositionChain(pos)) ? evmStoredAmount(pos.quantity_held) : Number(rawBig) / Math.pow(10, decimals);
       humanQty = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(2)}M` : qty.toLocaleString('en-US', { maximumFractionDigits: 4 });
     } catch {
       humanQty = pos.quantity_held;
