@@ -2744,7 +2744,10 @@
     .rc-status { margin: 0; font-size: 14px; color: var(--color-text-muted); }
     .rc-body { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 32px; align-items: start; }
     .rc-body[hidden] { display: none; }
-    .rc-card-frame { aspect-ratio: 2 / 3; overflow: hidden; background: #111726; }
+    .rc-card-frame { position: relative; aspect-ratio: 2 / 3; overflow: hidden; background: #111726; }
+    .rc-card-frame img:not([src]) { visibility: hidden; }
+    .rc-img-status { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; padding: 24px; text-align: center; font-size: 14px; color: var(--color-text-muted); }
+    .rc-img-status[hidden] { display: none; }
     .rc-card-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
     .rc-details { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
     .rc-rank { font-family: var(--font-display); font-size: 28px; font-weight: 700; color: var(--color-text); }
@@ -5634,6 +5637,7 @@
         <div class="rc-body" id="rc-body" hidden>
           <div class="rc-card-frame">
             <img id="rc-card-img" alt="" width="1200" height="1800">
+            <p class="rc-img-status" id="rc-img-status" role="status" hidden></p>
           </div>
           <div class="rc-details">
             <div>
@@ -6199,9 +6203,32 @@
       loadRacerCard();
     }
 
+    // Only the newest load may fill the card, so text and picture always come from the same request
+    let rcLoadSeq = 0;
+
+    function rcCardImage(state) {
+      const img = document.getElementById('rc-card-img');
+      const note = document.getElementById('rc-img-status');
+      if (state === 'clear') {
+        img.removeAttribute('src');
+        if (rcImageUrl) { URL.revokeObjectURL(rcImageUrl); rcImageUrl = ''; }
+        note.textContent = 'Loading card…';
+        note.hidden = false;
+      } else if (state === 'failed') {
+        img.removeAttribute('src');
+        note.textContent = 'Card picture is not available right now. Refresh to try again.';
+        note.hidden = false;
+      } else {
+        note.hidden = true;
+      }
+    }
+
     async function loadRacerCard() {
       const period = rcPeriod;
+      const seq = ++rcLoadSeq;
       const body = document.getElementById('rc-body');
+      // Never leave the previous card's picture next to new text
+      rcCardImage('clear');
       if (!getAuthHeaders().Authorization && window.RacerConnect?.activeNearWallet && typeof window.RacerConnect.ensureWalletSession === 'function') {
         try { await window.RacerConnect.ensureWalletSession(); } catch (e) {}
       }
@@ -6214,8 +6241,8 @@
       try {
         const res = await fetch(`/api/racer-card?period=${period}`, { headers: getAuthHeaders() });
         const card = await res.json().catch(() => ({}));
+        if (seq !== rcLoadSeq) return;
         if (!res.ok) throw new Error(card.error || 'Could not load your Racer Card');
-        if (period !== rcPeriod) return;
         const weekly = period === 'week';
 
         document.getElementById('rc-rank').textContent = weekly ? `This week: ${card.rank.name}` : card.rank.name;
@@ -6245,15 +6272,18 @@
         img.alt = `${weekly ? 'Weekly' : 'NEAR'} Racer Card: ${card.rank.name}`;
         body.hidden = false;
         rcStatus('');
-        const imgRes = await fetch(`/api/racer-card/image.png?period=${period}`, { headers: getAuthHeaders() });
-        // A newer request (the other period) wins
-        if (period !== rcPeriod) return;
-        if (imgRes.ok) {
-          if (rcImageUrl) URL.revokeObjectURL(rcImageUrl);
-          rcImageUrl = URL.createObjectURL(await imgRes.blob());
-          img.src = rcImageUrl;
-        }
+        // no-store: a saved copy could be an older rank than the text above
+        const imgRes = await fetch(`/api/racer-card/image.png?period=${period}`, { headers: getAuthHeaders(), cache: 'no-store' });
+        if (seq !== rcLoadSeq) return;
+        if (!imgRes.ok) { rcCardImage('failed'); return; }
+        const blob = await imgRes.blob();
+        if (seq !== rcLoadSeq) return;
+        if (rcImageUrl) URL.revokeObjectURL(rcImageUrl);
+        rcImageUrl = URL.createObjectURL(blob);
+        img.src = rcImageUrl;
+        rcCardImage('shown');
       } catch (err) {
+        if (seq !== rcLoadSeq) return;
         body.hidden = true;
         rcStatus(err.message || 'Could not load your Racer Card');
       }

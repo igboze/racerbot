@@ -533,3 +533,37 @@ describe('weekly card', () => {
     expect(all.body).not.toContain('this week');
   });
 });
+
+describe('card picture always matches the rank text', () => {
+  // A racer with a high lifetime rank and no trades yet this week
+  const lifetimeOnly = () => [
+    row({ input_amount: '1500', created_at: new Date('2026-01-05T12:00:00Z') }),
+    row({ side: 'sell', input_amount: '1500', created_at: new Date('2026-02-05T12:00:00Z') }),
+  ];
+
+  it('in the bot, for the all-time and the weekly card', async () => {
+    rows = lifetimeOnly();
+    const { commands, actions } = fakeBot();
+    const all = fakeCtx(111);
+    await commands.get('card')!(all);
+    const allImage = vi.mocked(generateRacerCardImage).mock.calls[0][0];
+    expect(`${allImage.rankTitle} ${allImage.levelLabel}`).toBe('Pro Driver II');
+    expect((all.replyWithPhoto.mock.calls[0] as any)[1].caption).toContain('Pro Driver II');
+
+    const week = fakeCtx(111);
+    await actions.get('racer_card_week')!(week);
+    const weekImage = vi.mocked(generateRacerCardImage).mock.calls[1][0];
+    expect(`${weekImage.rankTitle} ${weekImage.levelLabel}`).toBe('Rookie I');
+    expect((week.replyWithPhoto.mock.calls[0] as any)[1].caption).toContain('Rookie I');
+  });
+
+  it('on the web, the JSON rank and the picture data agree for each period', async () => {
+    rows = lifetimeOnly();
+    for (const [period, name] of [['all', 'Pro Driver II'], ['week', 'Rookie I']] as const) {
+      const { json, data } = await webRacerCard(users.u1, period);
+      expect(json.rank.name).toBe(name);
+      expect(`${data.rankTitle} ${data.levelLabel}`).toBe(name);
+    }
+  });
+});
+

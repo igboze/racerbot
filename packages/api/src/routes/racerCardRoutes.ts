@@ -33,7 +33,7 @@ export function createRacerCardRouter(): Router {
       const png = await webRacerCardImage(user, periodOf(req.query?.period));
       if (!png) return void res.status(503).json({ error: 'Card image is not available right now' });
       res.set('Content-Type', 'image/png');
-      res.set('Cache-Control', 'private, max-age=300');
+      res.set('Cache-Control', 'private, no-store');
       res.send(png);
     } catch (err: any) {
       console.error('[RACER_CARD] Web card image failed:', err?.message);
