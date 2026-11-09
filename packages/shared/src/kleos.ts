@@ -1,14 +1,23 @@
 /**
  * Kleos launchpad on Elysium mainnet (chain 99901): routing, quotes and the HyperEVM inbox.
  *
- * Elysium is an Arbitrum Orbit rollup settling on HyperEVM. Before its public sequencer opens, no RPC takes
- * transactions, so everything enters through the delayed inbox on HyperEVM:
- *  - a retryable ticket (createRetryableTicket) runs a call on Elysium paid from HyperEVM HYPE, as the
- *    *aliased* sender, so it can buy (coins go to an explicit recipient) but never move the user's coins;
- *  - a signed Elysium transaction wrapped in sendL2Message runs as the user's own address, so it can sell.
- * Both keep working after the public launch. Addresses come from Kleos's deployments/99901.json.
+ * Elysium is an Arbitrum Orbit rollup settling on HyperEVM. Its public sequencer opened on 2026-11-09, so a
+ * signed Elysium transaction is sent straight to the Elysium RPC and runs in seconds. The HyperEVM delayed
+ * inbox is still used for one thing: a retryable ticket (createRetryableTicket) that pays for a buy from
+ * HyperEVM HYPE when the wallet has no HYPE on Elysium. A ticket runs as the *aliased* sender, so it can buy
+ * (coins go to an explicit recipient) but never move the user's coins. ELYSIUM_SEND_MODE=inbox puts signed
+ * transactions back through sendL2Message, the pre-launch path. Addresses come from Kleos's deployments/99901.json.
  */
 import { ethers } from 'ethers';
+import {
+  ASCEND,
+  ASCEND_TOKEN_URL,
+  encodeAscendBuy,
+  encodeAscendSell,
+  quoteAscend,
+  resolveAscendRoute,
+  type AscendRoute,
+} from './ascend.js';
 
 export const KLEOS = {
   launchpad: '0x6E3AFDdc49f5D43858a1FDD48184426deD11029b',
@@ -24,6 +33,26 @@ export const KLEOS = {
   hopRouter: '0x9428d860fE65C585704CCA1C3F2F02eecF12ee0d',
 } as const;
 
+/**
+ * Kleos's v5 launchers, newest first (from the Kleos app's deployments/99901.json). Each has its own router and
+ * pool manager; a coin is traded on the router of the launcher that made it. The second one went live with
+ * Elysium's public launch on 2026-11-09.
+ */
+export const KLEOS_V5_DEPLOYMENTS = [
+  {
+    launcher: '0x1c24B6d08220c9584DF1e3D8A15AD7B0D9BC2E6A',
+    router: '0x15c7Ee481CE8c57461bC8620adC5Fb784374c240',
+    poolManager: '0xE2e105d3F7209A9DA11f83cCf3E7398a753823F1',
+    hopRouter: '0xfd5d7bf62A315495a59715C333bd1311a3A1f7ed',
+  },
+  {
+    launcher: '0x2dA68edFF4588A77B55A829689C382F2acB39502',
+    router: KLEOS.v5Router,
+    poolManager: '0xb308B5df891c300a5f5a5b8fdBC30108bA842490',
+    hopRouter: KLEOS.hopRouter,
+  },
+] as const;
+
 export interface KleosPoolKey {
   currency0: string;
   currency1: string;
@@ -33,17 +62,32 @@ export interface KleosPoolKey {
 }
 
 /**
- * The HYPE pool of each quote token the hop router can route through (from the Kleos app, which
- * names them per quote token). Coins paired against these trade HYPE -> quote -> coin in one call.
+ * The HYPE pool of each quote token a hop router can route through (from the Kleos app, which names them per
+ * quote token). Coins paired against these trade HYPE -> quote -> coin in one call.
  */
 export const KLEOS_HOP_KEYS: Record<string, KleosPoolKey> = {
-  // BLOB
+  // BLOB (its HYPE pool is on ElysPump)
   '0x9a9815af521149e8d982791703a31bca2f95f534': {
     currency0: '0x0000000000000000000000000000000000000000',
     currency1: '0x9a9815Af521149E8D982791703A31bca2F95f534',
     fee: 0,
     tickSpacing: 200,
     hooks: '0xe11cafa5901b0aab51eb78251488400f9e4320cc',
+  },
+  // KNTQ (Kinetiq; its HYPE pool is a plain Uniswap v4 pool)
+  '0xe45a355d9e9cad2ad85f2d03e3ee3102a036acf0': {
+    currency0: '0x0000000000000000000000000000000000000000',
+    currency1: '0xe45a355d9e9cAd2aD85F2d03E3eE3102A036acF0',
+    fee: 10000,
+    tickSpacing: 200,
+    hooks: '0x0000000000000000000000000000000000000000',
+  },
+};
+
+/** Quote tokens whose hop runs through their own router for a given v5 router (v5 router -> hop router) */
+const KLEOS_QUOTE_HOP_ROUTERS: Record<string, Record<string, string>> = {
+  '0xe45a355d9e9cad2ad85f2d03e3ee3102a036acf0': {
+    '0x15c7ee481ce8c57461bc8620adc5fb784374c240': '0xb755388a004db8008a1f6e88274090f02fc5ddb3',
   },
 };
 
@@ -55,6 +99,25 @@ export const RONSPAD = {
 } as const;
 
 export const RONSPAD_TOKEN_URL = 'https://ronspad.fun/token?token=';
+
+/** The Elysium mainnet launchpads RacerBot trades, by venue name */
+export const ELYSIUM_PAD_VENUES = ['kleos', 'ronspad', 'ascend'] as const;
+export type ElysiumPadVenue = (typeof ELYSIUM_PAD_VENUES)[number];
+
+export function isElysiumPadVenue(venue: unknown): venue is ElysiumPadVenue {
+  return typeof venue === 'string' && (ELYSIUM_PAD_VENUES as readonly string[]).includes(venue);
+}
+
+export function elysiumPadName(venue: unknown): string {
+  return venue === 'ronspad' ? 'RonsPad' : venue === 'ascend' ? 'Ascend' : 'Kleos';
+}
+
+/** The launchpad's own page for a coin */
+export function elysiumPadUrl(venue: unknown, address: string): string {
+  if (venue === 'ronspad') return `${RONSPAD_TOKEN_URL}${address}`;
+  if (venue === 'ascend') return `${ASCEND_TOKEN_URL}${address}`;
+  return `https://www.thekleos.xyz/token/${address}`;
+}
 
 /** KleosSwap (classic coins) pools all use the 1% fee tier */
 export const KLEOS_CLASSIC_POOL_FEE = 10000;
@@ -146,27 +209,40 @@ export const ARB_RETRYABLE_TX_ABI = [
 /** Human-readable reasons for the errors Kleos contracts revert with (wording from the Kleos app) */
 const KLEOS_ERROR_MESSAGES: Record<string, string> = {
   TooLittleReceived: 'The price moved past your slippage limit, so nothing traded.',
+  V4TooLittleReceived: 'The price moved past your slippage limit, so nothing traded.',
+  DeadlineReached: 'The order ran after its deadline, so nothing traded.',
+  NotEnoughLiquidity: 'This coin’s pool has no HYPE in it to pay for a sell yet, so it can’t be sold right now.',
   Expired: 'The order ran after its deadline, so nothing traded.',
   NoHypeRoute: 'This coin has no HYPE route on Kleos yet.',
   UnknownToken: 'Kleos does not list this coin.',
   MaxWalletExceeded: "In its first minutes no wallet may hold more than this coin's launch-window limit. Buy less, or wait.",
 };
-const kleosErrorIface = new ethers.Interface([...KLEOS_V4_ROUTER_ABI.filter(f => f.startsWith('error')), ...KLEOS_COIN_ABI.filter(f => f.startsWith('error'))]);
+const kleosErrorIface = new ethers.Interface([
+  ...KLEOS_V4_ROUTER_ABI.filter(f => f.startsWith('error')),
+  ...KLEOS_COIN_ABI.filter(f => f.startsWith('error')),
+  // Uniswap v4 (Ascend): the quoter wraps a pool's revert in UnexpectedRevertBytes
+  'error V4TooLittleReceived(uint256 minAmountOutReceived, uint256 amountReceived)',
+  'error DeadlineReached()',
+  'error NotEnoughLiquidity(bytes32 poolId)',
+  'error UnexpectedRevertBytes(bytes revertData)',
+]);
 
 export function describeKleosRevert(err: any): string {
-  const data: string | undefined = err?.data ?? err?.info?.error?.data ?? err?.error?.data;
-  if (typeof data === 'string' && data.length >= 10) {
-    try {
-      const parsed = kleosErrorIface.parseError(data);
-      if (parsed && KLEOS_ERROR_MESSAGES[parsed.name]) return KLEOS_ERROR_MESSAGES[parsed.name];
-    } catch { /* not a Kleos error */ }
+  let data: string | undefined = err?.data ?? err?.info?.error?.data ?? err?.error?.data;
+  for (let depth = 0; typeof data === 'string' && data.length >= 10 && depth < 3; depth++) {
+    let parsed: ethers.ErrorDescription | null = null;
+    try { parsed = kleosErrorIface.parseError(data); } catch { /* not a known error */ }
+    if (!parsed) break;
+    if (parsed.name === 'UnexpectedRevertBytes') { data = parsed.args.revertData; continue; }
+    if (KLEOS_ERROR_MESSAGES[parsed.name]) return KLEOS_ERROR_MESSAGES[parsed.name];
+    break;
   }
   return err?.shortMessage || err?.reason || err?.message || 'reverted';
 }
 
 // ── Routing ─────────────────────────────────────────────────────────────────
 
-export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad';
+export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad' | 'ascend';
 
 export interface KleosRoute {
   kind: KleosRouteKind;
@@ -175,6 +251,8 @@ export interface KleosRoute {
   hopFee: number;
   /** hop only: the quote token's HYPE pool */
   hop?: KleosPoolKey;
+  /** ascend only: the coin's launch pool and, for a USDC or KNTQ coin, the HYPE pool into its quote */
+  ascend?: AscendRoute;
 }
 
 const ROUTES: Record<KleosRouteKind, KleosRoute> = {
@@ -184,12 +262,27 @@ const ROUTES: Record<KleosRouteKind, KleosRoute> = {
   classic: { kind: 'classic', router: KLEOS.swapRouter, hopFee: 0 },
   hop: { kind: 'hop', router: KLEOS.hopRouter, hopFee: 0 },
   ronspad: { kind: 'ronspad', router: RONSPAD.padFactory, hopFee: 0 },
+  ascend: { kind: 'ascend', router: ASCEND.universalRouter, hopFee: 0 },
 };
 
-/** The hop route for a coin paired against `quote`, when the hop router knows that quote's HYPE pool */
-function hopRouteFor(quote: string | undefined): KleosRoute | null {
-  const key = quote ? KLEOS_HOP_KEYS[quote.toLowerCase()] : undefined;
-  return key ? { ...ROUTES.hop, hop: key } : null;
+type V5Deployment = (typeof KLEOS_V5_DEPLOYMENTS)[number];
+
+/** The v5 deployment whose launcher made a coin, by the board's `launch.v4.v5.launcher` (older board entries name none) */
+function v5DeploymentFor(launcher: string | undefined): V5Deployment | null {
+  if (!launcher) return KLEOS_V5_DEPLOYMENTS[1];
+  return KLEOS_V5_DEPLOYMENTS.find(d => d.launcher.toLowerCase() === launcher.toLowerCase()) ?? null;
+}
+
+/**
+ * The hop route for a coin paired against `quote`, when a hop router knows that quote's HYPE pool. The router is
+ * the quote's own one for this v5 deployment if it has one, else the deployment's (the Kleos app's rule).
+ */
+function hopRouteFor(quote: string | undefined, deployment: V5Deployment = KLEOS_V5_DEPLOYMENTS[1]): KleosRoute | null {
+  const q = quote?.toLowerCase();
+  const key = q ? KLEOS_HOP_KEYS[q] : undefined;
+  if (!key) return null;
+  const router = KLEOS_QUOTE_HOP_ROUTERS[q!]?.[deployment.router.toLowerCase()] ?? deployment.hopRouter;
+  return { kind: 'hop', router: ethers.getAddress(router), hopFee: 0, hop: key };
 }
 
 /** The RonsPad launch of a coin, or null when PadFactory did not launch it */
@@ -217,13 +310,15 @@ export function kleosRouteFromLaunch(launch: any): KleosRoute {
   const v4 = launch?.v4;
   if (!v4) return ROUTES.classic;
   if (v4.v5) {
+    const deployment = v5DeploymentFor(v4.v5.launcher);
+    if (!deployment) throw new Error(`Unknown Kleos v5 launcher ${v4.v5.launcher}`);
     if (v4.pair && Number(v4.v5.routeFee ?? 0) === 0) {
-      // No HYPE hop on the v5 router: the hop router routes HYPE -> quote -> coin when it knows the quote's pool
-      const hop = hopRouteFor(v4.v5.quote);
+      // No HYPE hop on the v5 router: a hop router routes HYPE -> quote -> coin when it knows the quote's pool
+      const hop = hopRouteFor(v4.v5.quote, deployment);
       if (hop) return hop;
       throw new Error(KLEOS_ERROR_MESSAGES.NoHypeRoute);
     }
-    return { ...ROUTES.v5, hopFee: Number(v4.v5.routeFee ?? 0) };
+    return { kind: 'v5', router: deployment.router, hopFee: Number(v4.v5.routeFee ?? 0) };
   }
   if (v4.pair) {
     if (String(v4.pair.launcher).toLowerCase() !== KLEOS.pairLauncher.toLowerCase()) {
@@ -249,6 +344,7 @@ export async function quoteKleos(
     return out;
   }
   if (route.kind === 'ronspad') return quoteRonsPad(provider, token, side, amountIn, from);
+  if (route.kind === 'ascend') return quoteAscend(provider, route.ascend!, token, side, amountIn);
   if (route.kind === 'classic') {
     const quoter = new ethers.Contract(KLEOS.quoterV2, KLEOS_QUOTER_V2_ABI, provider);
     const [tokenIn, tokenOut] = side === 'buy' ? [KLEOS.whype, token] : [token, KLEOS.whype];
@@ -344,23 +440,32 @@ const V5_HOP_FEES = [0, 10000, 3000, 500];
  */
 export async function resolveKleosRoute(provider: ethers.Provider, token: string, launchHint?: any): Promise<KleosRoute> {
   const probe = 10n ** 15n; // 0.001 HYPE
-  // RonsPad coins: PadFactory names its own launches
-  if (await getRonsPadLaunch(provider, token).catch(() => null)) return ROUTES.ronspad;
+  // RonsPad and Ascend name their own launches on chain
+  const [ronsPad, ascend] = await Promise.all([
+    getRonsPadLaunch(provider, token).catch(() => null),
+    resolveAscendRoute(provider, token).catch((err: Error) => err),
+  ]);
+  if (ronsPad) return ROUTES.ronspad;
+  // resolveAscendRoute answers null for a coin Ascend did not launch, so an error is a real failure: say so
+  // rather than probing Kleos and calling an Ascend coin untradeable after an RPC hiccup
+  if (ascend instanceof Error) {
+    throw /Ascend coin/.test(ascend.message) ? ascend : new Error('Could not reach the Elysium network to look up this coin. Try again in a moment.');
+  }
+  if (ascend && !(ascend instanceof Error)) return { ...ROUTES.ascend, ascend };
   const candidates: KleosRoute[] = [];
   if (launchHint !== undefined && launchHint !== null) {
     try { candidates.push(kleosRouteFromLaunch(launchHint)); } catch { /* no HYPE route per the board: probe anyway */ }
   }
-  for (const r of [ROUTES.v5, ROUTES.v4, ROUTES.pair, ROUTES.classic]) {
-    if (r.kind === 'v5') {
-      for (const hopFee of V5_HOP_FEES) {
-        if (!candidates.some(c => c.kind === 'v5' && c.hopFee === hopFee)) candidates.push({ ...r, hopFee });
-      }
-    } else if (!candidates.some(c => c.kind === r.kind)) {
-      candidates.push(r);
-    }
+  const same = (a: KleosRoute, b: KleosRoute) =>
+    a.kind === b.kind && a.router.toLowerCase() === b.router.toLowerCase() && a.hopFee === b.hopFee &&
+    (a.hop?.currency1 ?? '').toLowerCase() === (b.hop?.currency1 ?? '').toLowerCase();
+  const add = (r: KleosRoute) => { if (!candidates.some(c => same(c, r))) candidates.push(r); };
+  for (const d of KLEOS_V5_DEPLOYMENTS) {
+    for (const hopFee of V5_HOP_FEES) add({ kind: 'v5', router: d.router, hopFee });
   }
-  for (const quote of Object.keys(KLEOS_HOP_KEYS)) {
-    if (!candidates.some(c => c.kind === 'hop' && c.hop?.currency1.toLowerCase() === quote)) candidates.push(hopRouteFor(quote)!);
+  for (const r of [ROUTES.v4, ROUTES.pair, ROUTES.classic]) add(r);
+  for (const d of KLEOS_V5_DEPLOYMENTS) {
+    for (const quote of Object.keys(KLEOS_HOP_KEYS)) add(hopRouteFor(quote, d)!);
   }
   for (const route of candidates) {
     try {
@@ -377,6 +482,7 @@ export interface EvmCall {
 }
 
 export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
+  if (route.kind === 'ascend') return encodeAscendBuy(route.ascend!, token, hypeIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('buy', [token, route.hop, minOut, recipient, deadline]);
     return { to: route.router, data, value: hypeIn };
@@ -400,6 +506,7 @@ export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint,
 }
 
 export function encodeKleosSell(route: KleosRoute, token: string, amountIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
+  if (route.kind === 'ascend') return encodeAscendSell(route.ascend!, token, amountIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('sell', [token, route.hop, amountIn, minOut, recipient, deadline]);
     return { to: route.router, data, value: 0n };
@@ -449,9 +556,42 @@ export function applyL1ToL2Alias(address: string): string {
   return ethers.getAddress(ethers.toBeHex(aliased, 20));
 }
 
-/** Max fee per gas for an Elysium transaction sent through the inbox (the Kleos app's rule) */
+/** Max fee per gas for an Elysium transaction (the Kleos app's rule); only the base fee is charged */
 export function elysiumInboxMaxFeePerGas(l2BaseFee: bigint): bigint {
   return l2BaseFee * 3n > MIN_ELYSIUM_FEE_PER_GAS ? l2BaseFee * 3n : MIN_ELYSIUM_FEE_PER_GAS;
+}
+export const elysiumMaxFeePerGas = elysiumInboxMaxFeePerGas;
+
+/**
+ * Signed Elysium transactions go straight to the Elysium RPC now that its public sequencer is open.
+ * ELYSIUM_SEND_MODE=inbox sends them through the HyperEVM inbox instead (slower; needs HyperEVM gas).
+ */
+export function isElysiumDirectSend(): boolean {
+  return process.env.ELYSIUM_SEND_MODE !== 'inbox';
+}
+
+/** Gas limit for a direct Elysium transaction: the estimate plus 30%, never below 21,000 */
+export function elysiumGasLimit(estimate: bigint): bigint {
+  const padded = (estimate * 13n) / 10n;
+  return padded > 21_000n ? padded : 21_000n;
+}
+
+/** Plain-language reason an Elysium RPC refused a signed transaction */
+export function describeElysiumSendError(err: any): string {
+  const raw = String(err?.info?.error?.message || err?.error?.message || err?.shortMessage || err?.message || '').toLowerCase();
+  if (raw.includes('insufficient funds')) return 'Not enough HYPE on Elysium to pay for this transaction and its gas.';
+  if (raw.includes('nonce too low') || raw.includes('already known') || raw.includes('nonce has already been used')) {
+    return 'Another transaction from this wallet went through first. Check your balance, then try again.';
+  }
+  if (raw.includes('nonce too high')) return 'An earlier transaction from this wallet is still waiting. Try again in a minute.';
+  if (raw.includes('max fee per gas less than block base fee') || raw.includes('fee cap') || raw.includes('underpriced')) {
+    return 'Elysium gas went up while the order was being sent. Try again.';
+  }
+  if (raw.includes('intrinsic gas too low') || raw.includes('gas limit')) return 'The transaction was given too little gas. Try again.';
+  if (raw.includes('timeout') || raw.includes('fetch failed') || raw.includes('econn') || raw.includes('network')) {
+    return 'Could not reach the Elysium network. Try again in a moment.';
+  }
+  return describeKleosRevert(err);
 }
 
 export interface RetryableTicketCost {
@@ -561,4 +701,73 @@ export function findRedeemTxHash(logs: readonly { address: string; topics: reado
 /** Kleos trading is on unless KLEOS_TRADING=off, the switch for turning it off without a deploy */
 export function isKleosTradingEnabled(): boolean {
   return process.env.KLEOS_TRADING !== 'off';
+}
+
+/** HyperEVM gas kept back for the transaction that carries a signed Elysium transaction into the inbox */
+export const HYPEREVM_INBOX_GAS_RESERVE = ethers.parseEther('0.0002');
+
+/**
+ * Signs one Elysium transaction from the wallet and sends it: straight to the Elysium RPC (gas estimated, so
+ * a call that would revert is never sent, then confirmed), or through the HyperEVM inbox when
+ * ELYSIUM_SEND_MODE=inbox. Errors are in plain language.
+ */
+export async function sendElysiumTransaction(p: {
+  elysium: ethers.JsonRpcProvider;
+  l2Signer: ethers.Wallet;
+  /** Only used in inbox mode */
+  l1Signer: ethers.Wallet;
+  hyperevm: ethers.Provider;
+  tx: { to: string; data?: string; value?: bigint };
+  /** Gas limit used in inbox mode, where nothing can be estimated against queued messages */
+  inboxGasLimit: bigint;
+  confirmTimeoutMs?: number;
+}): Promise<{ elysiumTxHash: string; inboxTxHash?: string; confirmed: boolean }> {
+  const { elysium, l2Signer, tx } = p;
+  const from = await l2Signer.getAddress();
+  const value = tx.value ?? 0n;
+  const data = tx.data ?? '0x';
+  const [block, nonce] = await Promise.all([elysium.getBlock('latest'), elysium.getTransactionCount(from, 'pending')]);
+  const maxFeePerGas = elysiumMaxFeePerGas(block?.baseFeePerGas ?? 0n);
+
+  if (!isElysiumDirectSend()) {
+    if ((await p.hyperevm.getBalance(from)) < HYPEREVM_INBOX_GAS_RESERVE) {
+      throw new Error(`Sending on Elysium needs about ${ethers.formatEther(HYPEREVM_INBOX_GAS_RESERVE)} HYPE on HyperEVM for the inbox transaction.`);
+    }
+    const raw = await l2Signer.signTransaction({
+      type: 2, chainId: Number(ELYSIUM_BRIDGE.childChainId), nonce,
+      to: tx.to, data, value, gasLimit: p.inboxGasLimit, maxFeePerGas, maxPriorityFeePerGas: 0n,
+    });
+    const inbox = new ethers.Interface(ELYSIUM_INBOX_ABI);
+    const sent = await p.l1Signer.sendTransaction({ to: ELYSIUM_BRIDGE.inbox, data: inbox.encodeFunctionData('sendL2Message', [encodeSignedTxMessage([raw])]) });
+    const receipt = await sent.wait(1);
+    if (receipt?.status !== 1) throw new Error('The HyperEVM inbox transaction reverted. Nothing was sent on Elysium.');
+    return { elysiumTxHash: ethers.keccak256(raw), inboxTxHash: receipt.hash, confirmed: false };
+  }
+
+  let estimate: bigint;
+  try {
+    estimate = await elysium.estimateGas({ from, to: tx.to, data, value });
+  } catch (err) {
+    throw new Error(`Elysium would refuse this transaction: ${describeElysiumSendError(err)} Nothing was sent.`);
+  }
+  const raw = await l2Signer.signTransaction({
+    type: 2, chainId: Number(ELYSIUM_BRIDGE.childChainId), nonce,
+    to: tx.to, data, value, gasLimit: elysiumGasLimit(estimate), maxFeePerGas, maxPriorityFeePerGas: 0n,
+  });
+  try {
+    await elysium.send('eth_sendRawTransaction', [raw]);
+  } catch (err) {
+    throw new Error(`${describeElysiumSendError(err)} Nothing was sent.`);
+  }
+  const hash = ethers.keccak256(raw);
+  const until = Date.now() + (p.confirmTimeoutMs ?? 60_000);
+  while (Date.now() < until) {
+    const receipt = await elysium.getTransactionReceipt(hash).catch(() => null);
+    if (receipt) {
+      if (receipt.status !== 1) throw new Error('The transaction ran on Elysium but reverted. Only its gas was spent.');
+      return { elysiumTxHash: hash, confirmed: true };
+    }
+    await new Promise(r => setTimeout(r, 1_000));
+  }
+  return { elysiumTxHash: hash, confirmed: false };
 }

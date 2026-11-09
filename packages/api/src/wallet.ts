@@ -75,16 +75,17 @@ import {
   generateEvmWallet,
   getEvmWalletFromEncrypted,
   isValidEvmAddress,
-  ELYSIUM_BRIDGE,
-  ELYSIUM_INBOX_ABI,
   elysiumInboxMaxFeePerGas,
-  encodeSignedTxMessage,
+  sendElysiumTransaction,
   getHypeBalance,
   getErc20TokenInfo,
   getKleosBoardCoin,
   isLaunchpadToken,
   kleosRouteFromLaunch,
   getRonsPadLaunch,
+  resolveKleosRoute,
+  resolveAscendRoute,
+  quoteAscend,
   ronsPadPriceHype,
   RONSPAD,
   getErc20Balance,
@@ -708,6 +709,57 @@ export async function explainMissingEvmToken(address: string): Promise<EvmTokenL
 }
 
 /**
+ * Look up a coin launched on Ascend (app.ascendlaunch.xyz), a launchpad on Elysium mainnet. Its launch pool is
+ * found on chain; the price comes from a small quote through that pool, market data from DexScreener's Elysium
+ * listing when it has one.
+ */
+export async function lookupAscendToken(address: string): Promise<TokenInfoResult | null> {
+  const provider = getEvmProvider('elysium', false);
+  const route = await resolveAscendRoute(provider, address).catch(() => null);
+  if (!route) return null;
+  const probe = 10n ** 15n; // 0.001 HYPE
+  const [meta, coinsOut, dex, hypeUsd] = await Promise.all([
+    getErc20TokenInfo(address, 'elysium', false).catch(() => null),
+    quoteAscend(provider, route, address, 'buy', probe).catch(() => 0n),
+    fetchDexScreenerTokenData(address, 'elysium').catch(() => null),
+    getHypeUsdPrice().catch(() => 25.0),
+  ]);
+  const decimals = meta?.decimals ?? 18;
+  const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
+  const quotedPrice = coinsOut > 0n ? 0.001 / Number(ethers.formatUnits(coinsOut, decimals)) : 0;
+  const dexOnElysium = dex && dex.chainId === 'elysium' ? dex : null;
+  const priceUsd = dexOnElysium?.priceUsd || quotedPrice * hypeUsd;
+  const priceHype = hypeUsd > 0 ? priceUsd / hypeUsd : quotedPrice;
+  const liquidityUsd = dexOnElysium?.liquidityUsd || 0;
+  const marketCapHype = priceHype * supply;
+  return {
+    address: meta?.address ?? ethers.getAddress(address),
+    chain: 'elysium',
+    name: meta?.name || dexOnElysium?.name || 'Ascend coin',
+    symbol: meta?.symbol || dexOnElysium?.symbol || 'TKN',
+    decimals,
+    total_supply: meta?.totalSupply ?? '0',
+    price: priceHype.toString(),
+    price_usd: priceUsd.toString(),
+    liquidity: (hypeUsd > 0 ? liquidityUsd / hypeUsd : 0).toFixed(2),
+    liquidity_usd: liquidityUsd.toFixed(2),
+    market_cap: marketCapHype,
+    market_cap_usd: marketCapHype * hypeUsd,
+    near_usd: hypeUsd,
+    venue: 'ascend',
+    launchpad: 'Ascend',
+    tradeable: isKleosTradingEnabled(),
+    price_24h_change: dexOnElysium?.priceChange24h,
+    volume_24h_usd: dexOnElysium?.volume24hUsd,
+    buys_count: dexOnElysium?.buys24h,
+    sells_count: dexOnElysium?.sells24h,
+    // Ascend's launch pool fee is set by its hook and already counted in every quote
+    buy_tax_pct: 0,
+    sell_tax_pct: 0,
+  } as TokenInfoResult;
+}
+
+/**
  * Look up a coin launched on RonsPad (ronspad.fun), the other launchpad on Elysium mainnet. Everything is
  * read from the chain: PadFactory names its own launches, and the coin's pool gives its price and depth.
  */
@@ -778,6 +830,13 @@ export async function lookupKleosToken(address: string, boardCoin?: any): Promis
     } catch {
       const quote = coin.launch?.v4?.pair?.symbol;
       noRouteReason = `This coin trades only against ${quote ? `$${quote}` : 'another Kleos coin'}; Kleos has no HYPE route for it yet.`;
+    }
+  } else if (!coin) {
+    // Not on the Kleos board: a coin launched in the last minute, or a token from another Elysium launchpad.
+    // A Kleos router that quotes it proves it is Kleos's; otherwise say plainly that it can't be traded here.
+    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address).then(() => true).catch(() => false);
+    if (!routed) {
+      noRouteReason = 'This Elysium token is not a Kleos, RonsPad or Ascend coin, the Elysium launchpads RacerBot trades, so it can’t be bought here yet.';
     }
   }
   return {
@@ -1444,14 +1503,18 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       const chain: EvmChain = isElysium ? 'elysium' : 'hyperevm';
       const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
 
-      const [tokenMeta, dexscreenerData] = await Promise.all([
+      const [tokenMeta, dexscreenerAny] = await Promise.all([
         getErc20TokenInfo(tokenAddress, chain, isTestnet).catch(() => null),
         fetchDexScreenerTokenData(tokenAddress, chain).catch(() => null),
       ]);
+      // DexScreener falls back to any chain's pools; since 2026-11-09 it lists Elysium too. Only a pool on this
+      // chain describes this token, or an Elysium coin would be shown and traded as a HyperEVM token.
+      const dexscreenerData = dexscreenerAny && (!dexscreenerAny.chainId || dexscreenerAny.chainId === chain) ? dexscreenerAny : null;
 
       if (!tokenMeta && !dexscreenerData) {
-        // Elysium mainnet launchpads: RonsPad names its launches on chain, then Kleos coins newer than its board
+        // Elysium mainnet launchpads: RonsPad and Ascend name their launches on chain, then Kleos coins newer than its board
         const kleos = (await lookupRonsPadToken(tokenAddress).catch(() => null))
+          ?? (await lookupAscendToken(tokenAddress).catch(() => null))
           ?? await lookupKleosToken(tokenAddress, null).catch(() => null);
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
@@ -2648,22 +2711,19 @@ export async function getUserEvmBalances(user: UserRecord): Promise<{
   return { address, hyperevm, elysium };
 }
 
-/** Gas for the HyperEVM transaction that posts an Elysium transfer into the inbox */
-const HYPEREVM_INBOX_GAS_RESERVE = ethers.parseEther('0.0002');
-/** Gas an inbox-delivered Elysium HYPE transfer is given; unused gas is refunded */
+/** Gas budgeted for an Elysium HYPE transfer (the inbox path's fixed limit); unused gas is never charged */
 const ELYSIUM_TRANSFER_GAS = 100_000n;
 
 /**
- * Sends HYPE from the user's EVM wallet. HyperEVM is a direct transfer. Elysium has no
- * public sequencer yet, so the transfer is signed for Elysium and posted through the
- * HyperEVM inbox, as Kleos trades are; it lands on Elysium within a few minutes.
+ * Sends HYPE from the user's EVM wallet. Both chains are direct transfers now that Elysium's public
+ * sequencer is open (ELYSIUM_SEND_MODE=inbox posts the Elysium one through the HyperEVM inbox instead).
  */
 export async function withdrawEvmHype(
   user: UserRecord,
   chain: EvmChain,
   toAddress: string,
   amount: number | 'all'
-): Promise<{ success: boolean; txHash?: string; elysiumTxHash?: string; amountHype?: string; error?: string }> {
+): Promise<{ success: boolean; txHash?: string; elysiumTxHash?: string; viaInbox?: boolean; amountHype?: string; error?: string }> {
   if (!user.evm_address || !user.evm_private_key_enc) {
     return { success: false, error: 'EVM wallet not configured.' };
   }
@@ -2693,39 +2753,23 @@ export async function withdrawEvmHype(
 
     const elysium = getEvmProvider('elysium', false);
     const l2Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, elysium);
-    const [l2Balance, l1Balance, l2Block, nonce] = await Promise.all([
-      elysium.getBalance(user.evm_address),
-      hyperevm.getBalance(user.evm_address),
-      elysium.getBlock('latest'),
-      elysium.getTransactionCount(user.evm_address, 'pending'),
-    ]);
+    const [l2Balance, l2Block] = await Promise.all([elysium.getBalance(user.evm_address), elysium.getBlock('latest')]);
     const maxFeePerGas = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);
     const gasCost = ELYSIUM_TRANSFER_GAS * maxFeePerGas;
     const value = amount === 'all' ? l2Balance - gasCost : ethers.parseEther(String(amount));
     if (value <= 0n || l2Balance < value + gasCost) {
-      return { success: false, error: `Insufficient Elysium HYPE for the transfer plus gas. Balance: ${ethers.formatEther(l2Balance)} HYPE` };
+      return { success: false, error: `Not enough HYPE on Elysium for the transfer plus gas. Balance: ${ethers.formatEther(l2Balance)} HYPE` };
     }
-    if (l1Balance < HYPEREVM_INBOX_GAS_RESERVE) {
-      return {
-        success: false,
-        error: `Sending from Elysium needs about ${ethers.formatEther(HYPEREVM_INBOX_GAS_RESERVE)} HYPE on HyperEVM for the inbox transaction. You have ${ethers.formatEther(l1Balance)}.`,
-      };
-    }
-
-    const raw = await l2Signer.signTransaction({
-      type: 2, chainId: Number(ELYSIUM_BRIDGE.childChainId), nonce,
-      to: toAddress, value, gasLimit: ELYSIUM_TRANSFER_GAS, maxFeePerGas, maxPriorityFeePerGas: 0n,
+    const sent = await sendElysiumTransaction({
+      elysium, l2Signer, l1Signer, hyperevm, tx: { to: toAddress, value }, inboxGasLimit: ELYSIUM_TRANSFER_GAS,
     });
-    const inbox = new ethers.Interface(ELYSIUM_INBOX_ABI);
-    const tx = await l1Signer.sendTransaction({
-      to: ELYSIUM_BRIDGE.inbox,
-      data: inbox.encodeFunctionData('sendL2Message', [encodeSignedTxMessage([raw])]),
-    });
-    const receipt = await tx.wait(1);
-    if (receipt?.status !== 1) {
-      return { success: false, error: 'The HyperEVM inbox transaction reverted. Nothing was sent on Elysium.' };
-    }
-    return { success: true, txHash: receipt.hash, elysiumTxHash: ethers.keccak256(raw), amountHype: ethers.formatEther(value) };
+    return {
+      success: true,
+      txHash: sent.inboxTxHash ?? sent.elysiumTxHash,
+      elysiumTxHash: sent.elysiumTxHash,
+      viaInbox: Boolean(sent.inboxTxHash),
+      amountHype: ethers.formatEther(value),
+    };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Transaction failed' };
   }

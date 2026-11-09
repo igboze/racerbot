@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { getNear, getSolanaTokenBalance, SOL_MINT, toTokenUnits, runAsTrade } from '@racerbot/shared';
+import { getNear, getSolanaTokenBalance, SOL_MINT, toTokenUnits, runAsTrade, isElysiumPadVenue } from '@racerbot/shared';
 import { getPositionById, getUserById, updatePosition } from '@racerbot/db';
 import { getTokenInfo, publishSwap } from './wallet.js';
 
@@ -102,7 +102,7 @@ async function sellAtTargetAsTrade(
       token_out: 'HYPE',
       amount_in: ethers.formatUnits(evmSellUnits, 18),
       min_amount_out: '1',
-      venue: info.venue === 'kleos' || info.venue === 'ronspad' ? info.venue : `${chain}_dex` as any,
+      venue: isElysiumPadVenue(info.venue) ? info.venue : `${chain}_dex` as any,
       timestamp: Date.now(),
       slippage_pct: slippagePct,
     };

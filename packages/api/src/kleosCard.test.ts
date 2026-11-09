@@ -50,7 +50,7 @@ describe('Kleos token card', () => {
   it('shows buy buttons and the settlement note once trading is on', async () => {
     tokenInfo = kleosInfo(true);
     const { text, keyboard } = await buildTokenCard(KSOCKS, 1);
-    expect(text).toContain('Trades settle on Elysium in about 1–5 min');
+    expect(text).toContain('Trades paid with Elysium HYPE settle in seconds');
     expect(text).not.toMatch(/can.t trade Kleos/);
     const buttons = keyboard.reply_markup.inline_keyboard.flat().map((b: any) => b.text);
     expect(buttons.some((t: string) => /Buy/.test(t))).toBe(true);
@@ -73,9 +73,18 @@ describe('Kleos buy keyboard', () => {
 describe('% buys of a Kleos coin', () => {
   it('spend HyperEVM HYPE after the ticket reserve, or Elysium HYPE when there is more there', () => {
     expect(kleosSpendableHype(1.003, 0)).toBeCloseTo(1, 9);
-    // Proceeds from earlier sells on Elysium; posting the order still needs a little HyperEVM HYPE
+    // Proceeds from earlier sells on Elysium: they go straight to Elysium, so no HyperEVM HYPE is needed
     expect(kleosSpendableHype(0.001, 0.5004)).toBeCloseTo(0.5, 9);
-    expect(kleosSpendableHype(0.0001, 0.5)).toBe(0);
+    expect(kleosSpendableHype(0, 0.5004)).toBeCloseTo(0.5, 9);
     expect(kleosSpendableHype(0, 0)).toBe(0);
+  });
+
+  it('still needs a little HyperEVM HYPE for an Elysium-paid buy when ELYSIUM_SEND_MODE=inbox', () => {
+    process.env.ELYSIUM_SEND_MODE = 'inbox';
+    try {
+      expect(kleosSpendableHype(0.0001, 0.5)).toBe(0);
+    } finally {
+      delete process.env.ELYSIUM_SEND_MODE;
+    }
   });
 });
