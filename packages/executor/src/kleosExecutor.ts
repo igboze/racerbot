@@ -112,6 +112,9 @@ const notYetConfirmed = (what: string, elysiumTx: string): string =>
   `${what} was sent to Elysium (${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${elysiumTx}) but no confirmation arrived yet. ` +
   `Check your balance before trying again, so you don't trade twice.`;
 
+const isAlreadyKnown = (err: any): boolean =>
+  /already known|known transaction/i.test(String(err?.info?.error?.message || err?.error?.message || err?.shortMessage || err?.message || ''));
+
 /** A signed Elysium transaction the RPC refused (or would revert); its message is already in plain language */
 class ElysiumSendError extends Error {}
 
@@ -193,7 +196,8 @@ export async function executeKleosSwap(
     try {
       await l2.send('eth_sendRawTransaction', [raw]);
     } catch (err) {
-      throw new ElysiumSendError(describeElysiumSendError(err));
+      // A backup RPC saying "already known" means an earlier attempt did reach Elysium: it is sent
+      if (!isAlreadyKnown(err)) throw new ElysiumSendError(describeElysiumSendError(err));
     }
     return ethers.keccak256(raw);
   };

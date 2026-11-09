@@ -443,7 +443,8 @@ export async function resolveKleosRoute(provider: ethers.Provider, token: string
   // RonsPad and Ascend name their own launches on chain
   const [ronsPad, ascend] = await Promise.all([
     getRonsPadLaunch(provider, token).catch(() => null),
-    resolveAscendRoute(provider, token).catch((err: Error) => err),
+    // One retry: a busy RPC must not make an Ascend coin look like it can't be traded
+    resolveAscendRoute(provider, token).catch(() => resolveAscendRoute(provider, token)).catch((err: Error) => err),
   ]);
   if (ronsPad) return ROUTES.ronspad;
   // resolveAscendRoute answers null for a coin Ascend did not launch, so an error is a real failure: say so
@@ -756,8 +757,10 @@ export async function sendElysiumTransaction(p: {
   });
   try {
     await elysium.send('eth_sendRawTransaction', [raw]);
-  } catch (err) {
-    throw new Error(`${describeElysiumSendError(err)} Nothing was sent.`);
+  } catch (err: any) {
+    // A backup RPC saying "already known" means an earlier attempt did reach Elysium: it is sent
+    const msg = String(err?.info?.error?.message || err?.error?.message || err?.shortMessage || err?.message || '');
+    if (!/already known|known transaction/i.test(msg)) throw new Error(`${describeElysiumSendError(err)} Nothing was sent.`);
   }
   const hash = ethers.keccak256(raw);
   const until = Date.now() + (p.confirmTimeoutMs ?? 60_000);
