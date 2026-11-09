@@ -6,6 +6,7 @@ import {
   consumeRacerLinkCode,
   createRacerLinkCode,
   generateReferralCode,
+  setReferralCodeFromName,
   getConfidentialRacerExecutors,
   getNearRacerFills,
   getRacerLinkFor,
@@ -146,16 +147,28 @@ type CardUser = {
 
 /** Name for a new referral code. Wallet-only accounts get a w_ prefix so it never looks like a Telegram name. */
 function referralName(user: CardUser): string {
-  if (user.username) return user.username;
+  // Wallet sign-ins get a shortened display name like "racerb...near": not usable in a link
+  if (user.username && TELEGRAM_SAFE_NAME.test(user.username)) return user.username;
   if (user.telegram_id) return `racer${user.telegram_id}`;
   const wallet = String(user.subaccount_id || '').replace(/\.near$/i, '').replace(/[^A-Za-z0-9_]/g, '_').slice(0, 20);
   return `w_${wallet || user.id.slice(0, 8)}`;
+}
+
+/** What a Telegram /start parameter may hold: anything else and Telegram drops it. */
+const TELEGRAM_SAFE_CODE = /^[A-Za-z0-9_-]{1,64}$/;
+const TELEGRAM_SAFE_NAME = /^[A-Za-z0-9_]{1,40}$/;
+
+export function isTelegramSafeCode(code: string): boolean {
+  return TELEGRAM_SAFE_CODE.test(code);
 }
 
 async function referralFor(user: CardUser) {
   let code = user.referral_code || null;
   if (!code) {
     code = await generateReferralCode(user.id, referralName(user)).catch(() => null);
+  } else if (!isTelegramSafeCode(code)) {
+    // e.g. "racerb...near-KBVZB": the bot link, QR and share page all need a clean code
+    code = await setReferralCodeFromName(user.id, referralName(user)).catch(() => code);
   }
   return { code: code || 'racerbot', link: code ? `${BOT_LINK}?start=${encodeURIComponent(code)}` : BOT_LINK };
 }
@@ -370,7 +383,8 @@ function sendPng(res: Response, png: Buffer): void {
   res.send(png);
 }
 
-const CODE_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// Dots allowed so links shared with an older wallet code ("racerb...near-KBVZB") still open
+const CODE_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /** Express routes for the public card page and its two images. */
 export function registerRacerCardPages(app: Express): void {

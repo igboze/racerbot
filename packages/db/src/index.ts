@@ -39,6 +39,7 @@ export {
   upsertTokenCache,
   recordFee,
   generateReferralCode,
+  setReferralCodeFromName,
   getUserByReferralCode,
   createReferral,
   activateReferral,

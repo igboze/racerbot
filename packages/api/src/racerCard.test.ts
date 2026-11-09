@@ -16,6 +16,8 @@ let ranks = new Map<string, RankRow>();
 const users: Record<string, any> = {
   u1: { id: 'u1', telegram_id: 111, username: 'speedy', referral_code: 'SPEEDY' },
   u2: { id: 'u2', telegram_id: 222, username: 'newbie', referral_code: null },
+  // Wallet sign-in: shortened display name, and a code made from it before codes were checked
+  u3: { id: 'u3', telegram_id: null, username: 'racerb...near', subaccount_id: 'racerbot.near', referral_code: 'racerb...near-KBVZB' },
 };
 
 // In-memory racer_ranks with the same semantics as the SQL in packages/db
@@ -28,6 +30,7 @@ vi.mock('@racerbot/db', () => ({
   getRacerLinkFor: vi.fn(async () => null),
   listRacerLinks: vi.fn(async () => []),
   generateReferralCode: vi.fn(async (_id: string, name: string) => `${name.toUpperCase()}1`),
+  setReferralCodeFromName: vi.fn(async (_id: string, name: string) => `${name}-NEW01`),
   getRacerRank: vi.fn(async (id: string) => (ranks.has(id) ? { ...ranks.get(id)! } : null)),
   seedRacerRank: vi.fn(async (id: string, best: number, announced: number) => {
     if (!ranks.has(id)) ranks.set(id, { user_id: id, best_key: best, announced_key: Math.min(announced, best) });
@@ -51,7 +54,7 @@ vi.mock('./racerCardImageGenerator.js', async (importOriginal) => ({
   generateRacerCardOgImage: vi.fn(async () => Buffer.from('preview-png')),
 }));
 
-const { registerRacerCard, registerRacerCardPages, maybeAnnounceRankUp, clearRacerVolumeCache, clearRacerShareCache } = await import('./racerCard.js');
+const { registerRacerCard, registerRacerCardPages, maybeAnnounceRankUp, clearRacerVolumeCache, clearRacerShareCache, webRacerCard } = await import('./racerCard.js');
 const db = await import('@racerbot/db');
 const { generateRacerCardImage } = await import('./racerCardImageGenerator.js');
 
@@ -307,6 +310,22 @@ describe('sharing with the card image', () => {
     row({ input_amount: '150', created_at: new Date('2026-10-01T12:00:00Z') }),
     row({ side: 'sell', input_amount: '140', created_at: new Date('2026-10-03T12:00:00Z') }),
   ];
+
+  it('gives a wallet account with a dotted code a clean one for its links and QR', async () => {
+    process.env.RACER_CARD_URL = 'https://racer.example';
+    const { json } = await webRacerCard(users.u3);
+    expect(json.referralCode).toBe('w_racerbot-NEW01');
+    expect(json.shareUrl).toBe('https://racer.example/c/w_racerbot-NEW01?r=1');
+    expect(decodeURIComponent(json.share.x)).not.toContain('...');
+  });
+
+  it('still opens a card link shared with an older dotted code', async () => {
+    process.env.RACER_CARD_URL = 'https://racer.example';
+    const routes = fakeApp();
+    const res = await call(routes, '/c/:code', { code: 'racerb...near-KBVZB' }, '/c/racerb...near-KBVZB', { r: '1' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<meta property="og:image" content="https://racer.example/c/racerb...near-KBVZB/preview.png?r=1">');
+  });
 
   it('points the X and Telegram buttons at the card page, keyed by rank', async () => {
     process.env.RACER_CARD_URL = 'https://racer.example/';
