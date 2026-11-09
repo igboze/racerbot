@@ -87,6 +87,9 @@ import {
   resolveAscendRoute,
   quoteAscend,
   findElysiumV4Route,
+  findPadRoute,
+  quotePad,
+  elysiumPadName,
   ronsPadPriceHype,
   RONSPAD,
   getErc20Balance,
@@ -787,6 +790,56 @@ export async function lookupAscendToken(address: string): Promise<TokenInfoResul
     buys_count: dexOnElysium?.buys24h,
     sells_count: dexOnElysium?.sells24h,
     // Ascend's launch pool fee is set by its hook and already counted in every quote
+    buy_tax_pct: 0,
+    sell_tax_pct: 0,
+  } as TokenInfoResult;
+}
+
+/**
+ * Look up a BOXA or ElysPump coin (Elysium launchpads with their own Uniswap v4 PoolManager). The pool is found
+ * and priced on chain through that pad's quoter; market data comes from DexScreener's Elysium listing.
+ */
+export async function lookupPadToken(address: string): Promise<TokenInfoResult | null> {
+  const provider = getEvmProvider('elysium', false);
+  const route = await findPadRoute(provider, address).catch(() => null);
+  if (!route) return null;
+  const [meta, dex, hypeUsd, coinsOut] = await Promise.all([
+    getErc20TokenInfo(address, 'elysium', false).catch(() => null),
+    fetchDexScreenerTokenData(address, 'elysium').catch(() => null),
+    getHypeUsdPrice().catch(() => 25.0),
+    quotePad(provider, route, 'buy', 10n ** 15n).catch(() => 0n),
+  ]);
+  const decimals = meta?.decimals ?? 18;
+  const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
+  const dexOnElysium = dex && dex.chainId === 'elysium' ? dex : null;
+  const quotedPriceHype = coinsOut > 0n ? 0.001 / Number(ethers.formatUnits(coinsOut, decimals)) : 0;
+  const priceUsd = dexOnElysium?.priceUsd || quotedPriceHype * hypeUsd;
+  const priceHype = hypeUsd > 0 ? priceUsd / hypeUsd : quotedPriceHype;
+  const liquidityUsd = dexOnElysium?.liquidityUsd || 0;
+  const marketCapHype = priceHype * supply;
+  const venue = route.pad.name;
+  return {
+    address: meta?.address ?? ethers.getAddress(address),
+    chain: 'elysium',
+    name: meta?.name || dexOnElysium?.name || `${elysiumPadName(venue)} coin`,
+    symbol: meta?.symbol || dexOnElysium?.symbol || 'TKN',
+    decimals,
+    total_supply: meta?.totalSupply ?? '0',
+    price: priceHype.toString(),
+    price_usd: priceUsd.toString(),
+    liquidity: (hypeUsd > 0 ? liquidityUsd / hypeUsd : 0).toFixed(2),
+    liquidity_usd: liquidityUsd.toFixed(2),
+    market_cap: marketCapHype,
+    market_cap_usd: marketCapHype * hypeUsd,
+    near_usd: hypeUsd,
+    venue: venue as any,
+    launchpad: elysiumPadName(venue),
+    tradeable: isKleosTradingEnabled(),
+    price_24h_change: dexOnElysium?.priceChange24h,
+    volume_24h_usd: dexOnElysium?.volume24hUsd,
+    buys_count: dexOnElysium?.buys24h,
+    sells_count: dexOnElysium?.sells24h,
+    // The pool's fee and hook are counted in every quote
     buy_tax_pct: 0,
     sell_tax_pct: 0,
   } as TokenInfoResult;
@@ -1603,7 +1656,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           ?? await lookupKleosToken(tokenAddress, null).catch(() => null);
         // Not a Kleos coin either: another launchpad's coin trades through its Uniswap v4 pool against HYPE
         if (!kleos || (kleos.venue === 'kleos' && kleos.trade_block_reason)) {
-          kleos = (await lookupUniV4Token(tokenAddress).catch(() => null)) ?? kleos;
+          kleos = (await lookupPadToken(tokenAddress).catch(() => null))
+            ?? (await lookupUniV4Token(tokenAddress).catch(() => null))
+            ?? kleos;
         }
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

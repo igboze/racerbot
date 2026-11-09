@@ -474,3 +474,13 @@ export {
   simulateV4RoundTrip,
 } from './ascend.js';
 export type { AscendRoute, V4PoolKey } from './ascend.js';
+export {
+  ELYSIUM_PADS,
+  findPadRoute,
+  quotePad,
+  encodePadBuy,
+  encodePadSell,
+  padSellApprovals,
+  padSimApprovals,
+} from './elysiumPads.js';
+export type { ElysiumPad, ElysiumPadName, PadRoute } from './elysiumPads.js';

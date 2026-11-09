@@ -62,7 +62,7 @@ export async function executeEvmSwap(
   onProgress?: (stage: string) => void
 ): Promise<EvmSwapExecutionResult> {
   // Kleos, RonsPad and Ascend coins live on Elysium mainnet and trade through their launchpads' routers
-  if (event.venue === 'kleos' || event.venue === 'ronspad' || event.venue === 'ascend' || event.venue === 'univ4') return executeKleosSwap(event, EVM_TREASURY_ADDRESS, onProgress);
+  if (event.venue === 'kleos' || event.venue === 'ronspad' || event.venue === 'ascend' || event.venue === 'univ4' || event.venue === 'boxa' || event.venue === 'elyspump') return executeKleosSwap(event, EVM_TREASURY_ADDRESS, onProgress);
   const chain: EvmChain = event.chain || (event.token_out?.toLowerCase().endsWith('.elysium') ? 'elysium' : 'hyperevm');
   // Non-Kleos Elysium tokens only exist on the Kinetiq testnet, which RacerBot does not trade
   if (chain === 'elysium') {

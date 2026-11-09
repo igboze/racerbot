@@ -62,6 +62,8 @@ export type VenueName =
   | 'ronspad'
   | 'ascend'
   | 'univ4'
+  | 'boxa'
+  | 'elyspump'
   | 'intents';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [

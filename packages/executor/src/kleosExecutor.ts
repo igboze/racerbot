@@ -37,6 +37,7 @@ import {
   elysiumPadName,
   ascendSellApprovals,
   simulateV4RoundTrip,
+  padSellApprovals,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -168,7 +169,8 @@ export async function executeKleosSwap(
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
   // RonsPad coins trade through the same inbox flow, on RonsPad's PadFactory
-  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'univ4' ? 'univ4' : 'kleos';
+  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'univ4' ? 'univ4'
+    : route.kind === 'pad' ? route.pad!.pad.name : 'kleos';
   const venueName = elysiumPadName(fillVenue);
 
   const direct = isElysiumDirectSend();
@@ -369,7 +371,9 @@ export async function executeKleosSwap(
   const sell = encodeKleosSell(route, token, amountIn, minOut, userAddress, deadline);
 
   // Exactly this amount, as the launchpads' own apps approve. Ascend pulls coins through Permit2 (two approvals).
-  const approvals: EvmCall[] = route.kind === 'ascend' || route.kind === 'univ4'
+  const approvals: EvmCall[] = route.kind === 'pad'
+    ? await padSellApprovals(l2, route.pad!, userAddress, amountIn)
+    : route.kind === 'ascend' || route.kind === 'univ4'
     ? await ascendSellApprovals(l2, token, userAddress, amountIn)
     : (await coin.allowance(userAddress, route.router)) < amountIn
       ? [{ to: token, data: new ethers.Interface(ERC20_ABI).encodeFunctionData('approve', [route.router, amountIn]), value: 0n }]
