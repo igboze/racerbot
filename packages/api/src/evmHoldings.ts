@@ -9,7 +9,7 @@
  *    balance when opened and starts tracking a holding it finds.
  */
 import { ethers } from 'ethers';
-import { createLogger, getEvmProvider, listKleosBoardCoins, type EvmChain } from '@racerbot/shared';
+import { createLogger, getEvmProvider, listKleosBoardCoins, listMontraTokens, type EvmChain } from '@racerbot/shared';
 import { createPosition, getDb, getOpenPositions, getUserById, type UserRecord } from '@racerbot/db';
 import { notifyTokenDeposit } from './notify.js';
 
@@ -149,7 +149,32 @@ export async function syncUserEvmHoldings(userId: string, force = false): Promis
     logger.warn(`Could not check closed EVM positions for ${user.id}: ${err?.message}`);
     return 0;
   });
-  const coins = await listKleosBoardCoins().catch(() => [] as any[]);
+  const [kleosCoins, montraTokens] = await Promise.all([
+    listKleosBoardCoins().catch(() => [] as any[]),
+    listMontraTokens().catch(() => [] as any[]),
+  ]);
+  const coinMap = new Map<string, { address: string; symbol?: string; name?: string; priceHype: number }>();
+  for (const c of kleosCoins) {
+    if (c?.address) {
+      coinMap.set(String(c.address).toLowerCase(), {
+        address: String(c.address),
+        symbol: c.symbol,
+        name: c.name,
+        priceHype: Number(c.launch?.price) || 0,
+      });
+    }
+  }
+  for (const m of montraTokens) {
+    if (m?.address && !coinMap.has(String(m.address).toLowerCase())) {
+      coinMap.set(String(m.address).toLowerCase(), {
+        address: String(m.address),
+        symbol: m.symbol,
+        name: m.name,
+        priceHype: Number(m.priceHype ?? m.price) || 0,
+      });
+    }
+  }
+  const coins = [...coinMap.values()];
   if (coins.length === 0) return reopened;
 
   const balances = await balancesOf('elysium', user.evm_address, coins.map(c => String(c.address)));
@@ -166,8 +191,8 @@ export async function syncUserEvmHoldings(userId: string, force = false): Promis
       chain: 'elysium',
       token: coin.address,
       balanceRaw: balances.get(String(coin.address).toLowerCase())!,
-      decimals: 18, // every Kleos coin has 18 decimals
-      priceHype: Number(coin.launch?.price) || 0,
+      decimals: 18, // every Kleos / Montra coin has 18 decimals
+      priceHype: coin.priceHype,
       symbol: coin.symbol,
       name: coin.name,
       notify: true,

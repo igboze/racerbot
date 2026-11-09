@@ -5,6 +5,9 @@ const resolveKleosRoute = vi.fn();
 const getRonsPadLaunch = vi.fn();
 const resolveAscendRoute = vi.fn(async (..._args: any[]): Promise<any> => null);
 const quoteAscend = vi.fn();
+const getMontraToken = vi.fn(async (..._args: any[]): Promise<any> => null);
+const resolveMontraRoute = vi.fn(async (..._args: any[]): Promise<any> => null);
+const quoteMontra = vi.fn();
 vi.mock('@racerbot/shared', async (importActual) => ({
   ...(await importActual<typeof import('@racerbot/shared')>()),
   getErc20TokenInfo: (...args: any[]) => getErc20TokenInfo(...args),
@@ -12,9 +15,12 @@ vi.mock('@racerbot/shared', async (importActual) => ({
   getRonsPadLaunch: (...args: any[]) => getRonsPadLaunch(...args),
   resolveAscendRoute: (...args: any[]) => resolveAscendRoute(...args),
   quoteAscend: (...args: any[]) => quoteAscend(...args),
+  getMontraToken: (...args: any[]) => getMontraToken(...args),
+  resolveMontraRoute: (...args: any[]) => resolveMontraRoute(...args),
+  quoteMontra: (...args: any[]) => quoteMontra(...args),
 }));
 
-const { lookupKleosToken, getHypeUsdPrice, getTokenInfo } = await import('./wallet.js');
+const { lookupKleosToken, lookupMontraToken, getHypeUsdPrice, getTokenInfo } = await import('./wallet.js');
 
 const KSOCKS = '0xd8C9bd555DEcc4Ae694E6C3e492Ef9DD96d2979d';
 
@@ -123,6 +129,17 @@ describe('Kleos (Elysium mainnet) tokens', () => {
     const info = await getTokenInfo(ORPHEUS, true);
     expect(info).toMatchObject({ chain: 'elysium', venue: 'ascend', launchpad: 'Ascend', symbol: 'ORPHEUS', tradeable: true, liquidity_usd: '36546.00' });
     expect(Number(info.price_usd)).toBeCloseTo(0.0008, 9);
+  });
+
+  it('recognises a Montra Markets coin (HYPEPE / BLOB) and marks it tradeable on Montra', async () => {
+    const HYPEPE = '0x5dcfb191f0cdb853bac3a6a4385e160e779e377f';
+    getErc20TokenInfo.mockResolvedValue({ address: HYPEPE, name: 'Hyper Pepe', symbol: 'HYPEPE', decimals: 18, totalSupply: (10n ** 27n).toString() });
+    resolveMontraRoute.mockResolvedValue({ quote: '0x0000000000000000000000000000000000000000', quoteIsCurrency0: true, launchKey: {}, hook: '0x6b1216A40B65c83e9c9e18a562C446697B8cf8EC', poolId: '0x00', router: '0xc6E9a8E1a99023B67067B8A3605403b8d7B3A157' });
+    quoteMontra.mockResolvedValue(10n ** 18n * 2000n); // 0.001 HYPE -> 2000 coins => 5e-7 HYPE/coin
+    const coin: any = { address: HYPEPE, name: 'Hyper Pepe', symbol: 'HYPEPE', decimals: 18, imageUrl: 'https://montramarkets.xyz/api/images/hypepe', price: 5e-7, totalFeePips: 10000, quote: { native: true, symbol: 'HYPE', decimals: 18 } };
+    const info = await lookupMontraToken(HYPEPE, coin);
+    expect(info).toMatchObject({ chain: 'elysium', venue: 'montra', launchpad: 'Montra', symbol: 'HYPEPE', tradeable: true, buy_tax_pct: 1, sell_tax_pct: 1 });
+    expect(info!.market_cap).toBeCloseTo(500);
   });
 });
 

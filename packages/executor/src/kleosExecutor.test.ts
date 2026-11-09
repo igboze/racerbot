@@ -81,6 +81,7 @@ vi.mock('@racerbot/shared', async (importOriginal) => {
     }),
     resolveKleosRoute: vi.fn(async () => ({ kind: 'v4', router: V4_ROUTER, hopFee: 0 })),
     ascendSellApprovals: vi.fn(async () => []),
+    montraSellApprovals: vi.fn(async () => []),
     simulateV4RoundTrip: vi.fn(async () => 'ok'),
     quoteKleos: vi.fn(async (_p: unknown, _r: unknown, _t: string, side: string) => (side === 'buy' ? ethers.parseEther('1000') : ethers.parseEther('0.05'))),
   };
@@ -328,6 +329,29 @@ describe('executeKleosSwap', () => {
     expect(res.success).toBe(false);
     expect(res.reason).toMatch(/won't buy this coin.*honeypot.*Nothing was spent/);
     expect(state.l2Sent).toHaveLength(0);
+  });
+
+  it('sells a Montra coin: runs Montra approvals and executes the sell on Elysium', async () => {
+    const shared = await import('@racerbot/shared');
+    const LR = shared.MONTRA.router;
+    const montraRoute = {
+      poolId: ethers.ZeroHash,
+      hook: shared.MONTRA.hook,
+      router: LR,
+      quote: ethers.ZeroAddress,
+      quoteIsCurrency0: true,
+      launchKey: { currency0: ethers.ZeroAddress, currency1: COIN, fee: 0x800000, tickSpacing: 200, hooks: shared.MONTRA.hook },
+    };
+    vi.mocked(shared.resolveKleosRoute).mockResolvedValueOnce({ kind: 'montra', router: LR, hopFee: 0, montra: montraRoute } as any);
+    const approveLR = { to: COIN, data: '0x095ea7b3', value: 0n };
+    vi.mocked(shared.montraSellApprovals).mockResolvedValueOnce([approveLR]);
+    state.coinBalance = ethers.parseEther('500');
+    state.l2Balances = [ethers.parseEther('0.01'), ethers.parseEther('0.06')];
+    state.l2Answers = [{ gasUsed: 46_000n }, { gasUsed: 185_000n }];
+    const res = await executeKleosSwap({ ...event('sell', '500'), venue: 'montra' } as any, TREASURY);
+    expect(res).toMatchObject({ success: true });
+    expect(state.l2Sent.map(t => t.to)).toEqual([COIN, LR]);
+    expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'montra' }));
   });
 });
 

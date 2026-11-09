@@ -87,6 +87,10 @@ import {
   resolveAscendRoute,
   quoteAscend,
   findElysiumV4Route,
+  resolveMontraRoute,
+  quoteMontra,
+  getMontraToken,
+  type MontraApiToken,
   ronsPadPriceHype,
   RONSPAD,
   getErc20Balance,
@@ -635,15 +639,15 @@ export interface DexScreenerData {
   liquidityNative?: number;
 }
 
-let cachedHypeUsdPrice = 25.0;
+let cachedHypeUsdPrice = 74.0;
 let lastHypeUsdPriceTime = 0;
 export async function getHypeUsdPrice(): Promise<number> {
   const now = Date.now();
-  if (now - lastHypeUsdPriceTime < 60_000 && cachedHypeUsdPrice > 0) {
+  if (now - lastHypeUsdPriceTime < 30_000 && cachedHypeUsdPrice > 0) {
     return cachedHypeUsdPrice;
   }
   try {
-    // Hyperliquid's own mid price; DexScreener's first WHYPE pair often quotes HYPE, so its priceUsd is the other token's
+    // 1. Hyperliquid's own mid price
     const mids = await fetch('https://api.hyperliquid.xyz/info', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -656,13 +660,45 @@ export async function getHypeUsdPrice(): Promise<number> {
       lastHypeUsdPriceTime = now;
       return cachedHypeUsdPrice;
     }
+
+    // 2. Bybit spot HYPEUSDT
+    const bybitRes = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=HYPEUSDT', {
+      signal: AbortSignal.timeout(2500),
+    }).catch(() => null);
+    if (bybitRes?.ok) {
+      const bybitData: any = await bybitRes.json().catch(() => null);
+      const bybitVal = parseFloat(bybitData?.result?.list?.[0]?.lastPrice || '0');
+      if (bybitVal > 0) {
+        cachedHypeUsdPrice = bybitVal;
+        lastHypeUsdPriceTime = now;
+        return cachedHypeUsdPrice;
+      }
+    }
+
+    // 3. Gate.io spot HYPE_USDT
+    const gateRes = await fetch('https://api.gateio.ws/api/v4/spot/tickers?currency_pair=HYPE_USDT', {
+      signal: AbortSignal.timeout(2500),
+    }).catch(() => null);
+    if (gateRes?.ok) {
+      const gateData: any = await gateRes.json().catch(() => null);
+      const gateVal = parseFloat(gateData?.[0]?.last || '0');
+      if (gateVal > 0) {
+        cachedHypeUsdPrice = gateVal;
+        lastHypeUsdPriceTime = now;
+        return cachedHypeUsdPrice;
+      }
+    }
+
+    // 4. DexScreener WHYPE on HyperEVM (highest liquidity pool)
     const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x5555555555555555555555555555555555555555', {
       signal: AbortSignal.timeout(3000),
     });
     if (res.ok) {
       const data: any = await res.json();
-      const p = data.pairs?.find((x: any) => x.chainId === 'hyperevm' && x.baseToken?.address?.toLowerCase() === '0x5555555555555555555555555555555555555555');
-      const val = parseFloat(p?.priceUsd || '0');
+      const hyperPairs = (data.pairs || [])
+        .filter((x: any) => x.chainId === 'hyperevm' && x.baseToken?.address?.toLowerCase() === '0x5555555555555555555555555555555555555555')
+        .sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+      const val = parseFloat(hyperPairs[0]?.priceUsd || '0');
       if (val > 0) {
         cachedHypeUsdPrice = val;
         lastHypeUsdPriceTime = now;
@@ -742,6 +778,88 @@ export async function explainMissingEvmToken(address: string): Promise<EvmTokenL
 }
 
 /**
+ * Look up a coin launched on Montra Markets (montramarkets.xyz), a launchpad on Elysium mainnet.
+ * Combines Montra's API metadata (when indexed) with on-chain pool routing and quotes.
+ */
+export async function lookupMontraToken(address: string, montraCoin?: MontraApiToken | null): Promise<TokenInfoResult | null> {
+  const provider = getEvmProvider('elysium', false);
+  const [apiCoin, route] = await Promise.all([
+    montraCoin !== undefined ? Promise.resolve(montraCoin) : getMontraToken(address).catch(() => null),
+    resolveMontraRoute(provider, address).catch(() => null),
+  ]);
+  if (!apiCoin && !route) return null;
+
+  const probe = 10n ** 15n; // 0.001 HYPE
+  const [meta, coinsOut, dex, hypeUsd] = await Promise.all([
+    getErc20TokenInfo(address, 'elysium', false).catch(() => null),
+    route ? quoteMontra(provider, route, address, 'buy', probe).catch(() => 0n) : Promise.resolve(0n),
+    fetchDexScreenerTokenData(address, 'elysium').catch(() => null),
+    getHypeUsdPrice().catch(() => 74.0),
+  ]);
+
+  const decimals = meta?.decimals ?? apiCoin?.decimals ?? 18;
+  const supply = meta
+    ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals))
+    : (Number(apiCoin?.supply) || 1_000_000_000);
+  const totalSupplyRaw = meta?.totalSupply || (BigInt(Math.round(supply)) * 10n ** BigInt(decimals)).toString();
+  const quotedPriceHype = coinsOut > 0n ? 0.001 / Number(ethers.formatUnits(coinsOut, decimals)) : 0;
+  const dexOnElysium = dex && dex.chainId === 'elysium' ? dex : null;
+
+  const apiPriceHype = apiCoin?.quote?.native && Number(apiCoin?.price) > 0
+    ? Number(apiCoin?.price)
+    : (Number(apiCoin?.priceUsd) > 0 && hypeUsd > 0 ? Number(apiCoin?.priceUsd) / hypeUsd : 0);
+  const priceHype = quotedPriceHype > 0
+    ? quotedPriceHype
+    : (apiPriceHype > 0 ? apiPriceHype : (dexOnElysium?.priceUsd && hypeUsd > 0 ? dexOnElysium.priceUsd / hypeUsd : 0));
+  const priceUsd = priceHype > 0 && hypeUsd > 0
+    ? priceHype * hypeUsd
+    : (Number(apiCoin?.priceUsd) || dexOnElysium?.priceUsd || 0);
+
+  const marketCapHype = priceHype > 0 && supply > 0
+    ? priceHype * supply
+    : (Number(apiCoin?.marketCapUsd) > 0 && hypeUsd > 0 ? Number(apiCoin?.marketCapUsd) / hypeUsd : 0);
+  const marketCapUsd = marketCapHype > 0 && hypeUsd > 0
+    ? marketCapHype * hypeUsd
+    : (Number(apiCoin?.marketCapUsd) || 0);
+
+  const liquidityUsd = dexOnElysium?.liquidityUsd || (marketCapUsd > 0 ? marketCapUsd * 0.2 : 0);
+  const liquidityHype = hypeUsd > 0 ? liquidityUsd / hypeUsd : 0;
+  const feePct = Number(apiCoin?.live?.effectiveTotalFee ?? apiCoin?.totalFeePips ?? 0) / 10_000;
+  const stage = apiCoin?.graduation?.stage;
+  const progressBps = Number(apiCoin?.live?.graduationProgressBps ?? apiCoin?.graduation?.progressBps ?? 0);
+
+  return {
+    address: meta?.address ?? ethers.getAddress(address),
+    chain: 'elysium',
+    name: meta?.name || apiCoin?.name || dexOnElysium?.name || 'Montra coin',
+    symbol: meta?.symbol || apiCoin?.symbol || dexOnElysium?.symbol || 'TKN',
+    decimals,
+    total_supply: totalSupplyRaw,
+    price: priceHype.toString(),
+    price_usd: priceUsd.toString(),
+    liquidity: liquidityHype.toFixed(2),
+    liquidity_usd: liquidityUsd.toFixed(2),
+    market_cap: marketCapHype,
+    market_cap_usd: marketCapUsd,
+    near_usd: hypeUsd,
+    venue: 'montra',
+    launchpad: 'Montra',
+    icon: typeof apiCoin?.imageUrl === 'string' && apiCoin.imageUrl ? apiCoin.imageUrl : undefined,
+    tradeable: isKleosTradingEnabled() && Boolean(route),
+    trade_block_reason: !route ? 'This Montra coin has no active HYPE route yet.' : undefined,
+    bonding_phase: stage === 'graduated' ? 'bonded' : (stage ? 'prebonded' : undefined),
+    bonding_progress_pct: progressBps > 0 ? Math.min(100, progressBps / 100) : undefined,
+    holders_count: typeof apiCoin?.holders === 'number' ? apiCoin.holders : undefined,
+    price_24h_change: apiCoin?.change24hPct ?? dexOnElysium?.priceChange24h,
+    volume_24h_usd: Number(apiCoin?.volume24hUsd || dexOnElysium?.volume24hUsd || 0) || undefined,
+    buys_count: dexOnElysium?.buys24h,
+    sells_count: dexOnElysium?.sells24h,
+    buy_tax_pct: feePct,
+    sell_tax_pct: feePct,
+  } as TokenInfoResult;
+}
+
+/**
  * Look up a coin launched on Ascend (app.ascendlaunch.xyz), a launchpad on Elysium mainnet. Its launch pool is
  * found on chain; the price comes from a small quote through that pool, market data from DexScreener's Elysium
  * listing when it has one.
@@ -755,7 +873,7 @@ export async function lookupAscendToken(address: string): Promise<TokenInfoResul
     getErc20TokenInfo(address, 'elysium', false).catch(() => null),
     quoteAscend(provider, route, address, 'buy', probe).catch(() => 0n),
     fetchDexScreenerTokenData(address, 'elysium').catch(() => null),
-    getHypeUsdPrice().catch(() => 25.0),
+    getHypeUsdPrice().catch(() => 74.0),
   ]);
   const decimals = meta?.decimals ?? 18;
   const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
@@ -856,7 +974,7 @@ export async function lookupRonsPadToken(address: string): Promise<TokenInfoResu
     getErc20TokenInfo(address, 'elysium', false).catch(() => null),
     ronsPadPriceHype(provider, launch).catch(() => 0),
     (whype.balanceOf(launch.pool) as Promise<bigint>).catch(() => 0n),
-    getHypeUsdPrice().catch(() => 25.0),
+    getHypeUsdPrice().catch(() => 74.0),
   ]);
   const decimals = meta?.decimals ?? 18;
   const supply = meta ? Number(ethers.formatUnits(meta.totalSupply || '0', decimals)) : 0;
@@ -898,7 +1016,7 @@ export async function lookupKleosToken(address: string, boardCoin?: any): Promis
   const [coin, meta, hypeUsd] = await Promise.all([
     boardCoin !== undefined ? Promise.resolve(boardCoin) : getKleosBoardCoin(address).catch(() => null),
     getErc20TokenInfo(address, 'elysium', false).catch(() => null),
-    getHypeUsdPrice().catch(() => 25.0),
+    getHypeUsdPrice().catch(() => 74.0),
   ]);
   if (!meta && !coin) return null;
   const decimals = meta?.decimals ?? 18;
@@ -1572,9 +1690,12 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
     // ── EVM Token Resolution (HyperEVM & Elysium L2) ───────────────────────────
     if (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near') && !isStarknetToken(tokenAddress)) {
-      // Kleos first: its board lists every Kleos coin, so a listed coin is never mistaken for a
-      // HyperEVM token or lost to a slow DexScreener / HyperEVM lookup
-      const boardCoin = await getKleosBoardCoin(tokenAddress).catch(() => null);
+      // Kleos & Montra boards first: their APIs list every coin they launched, so a listed coin is never
+      // mistaken for a HyperEVM token or lost to a slow DexScreener / HyperEVM lookup
+      const [boardCoin, montraCoin] = await Promise.all([
+        getKleosBoardCoin(tokenAddress).catch(() => null),
+        getMontraToken(tokenAddress).catch(() => null),
+      ]);
       if (boardCoin) {
         const kleos = await lookupKleosToken(tokenAddress, boardCoin).catch(() => null);
         if (kleos) {
@@ -1582,6 +1703,15 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
           rememberEvmToken(kleos);
           return kleos;
+        }
+      }
+      if (montraCoin) {
+        const montra = await lookupMontraToken(tokenAddress, montraCoin).catch(() => null);
+        if (montra) {
+          tokenInfoCache.set(tokenAddress, { data: montra, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          tokenInfoCache.set(rawTokenAddress, { data: montra, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          rememberEvmToken(montra);
+          return montra;
         }
       }
       const isElysium = tokenAddress.toLowerCase().endsWith('.elysium') || rawTokenAddress.toLowerCase().includes('elysium');
@@ -1597,8 +1727,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       const dexscreenerData = dexscreenerAny && (!dexscreenerAny.chainId || dexscreenerAny.chainId === chain) ? dexscreenerAny : null;
 
       if (!tokenMeta && !dexscreenerData) {
-        // Elysium mainnet launchpads: RonsPad and Ascend name their launches on chain, then Kleos coins newer than its board
+        // Elysium mainnet launchpads: RonsPad, Montra and Ascend name their launches on chain, then Kleos coins newer than its board
         let kleos = (await lookupRonsPadToken(tokenAddress).catch(() => null))
+          ?? (await lookupMontraToken(tokenAddress, null).catch(() => null))
           ?? (await lookupAscendToken(tokenAddress).catch(() => null))
           ?? await lookupKleosToken(tokenAddress, null).catch(() => null);
         // Not a Kleos coin either: another launchpad's coin trades through its Uniswap v4 pool against HYPE
@@ -1619,7 +1750,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       const decimals = tokenMeta?.decimals ?? 18;
       const totalSupply = tokenMeta?.totalSupply || '1000000000000000000000000';
 
-      const hypeUsd = await getHypeUsdPrice().catch(() => 25.0);
+      const hypeUsd = await getHypeUsdPrice().catch(() => 74.0);
       const priceUsd = Number(dexscreenerData?.priceUsd || 0);
       const priceHype = priceUsd > 0 && hypeUsd > 0 ? priceUsd / hypeUsd : 0.001;
       const liquidityUsd = Number(dexscreenerData?.liquidityUsd || 0);
@@ -3562,10 +3693,10 @@ export async function getUserBalances(
         user.evm_address
           ? withTimeout(getUserEvmBalances(user), 2500, null as any)
           : Promise.resolve(null),
-        // Live HYPE price (Hyperliquid mid, cached a minute); the last known price if it can't be read
+        // Live HYPE price (Hyperliquid mid, cached); the last known price if it can't be read
         withTimeout(getHypeUsdPrice(), 3000, 0),
       ]);
-      const hypePrice = hypeUsdRes.status === 'fulfilled' && hypeUsdRes.value > 0 ? hypeUsdRes.value : await getHypeUsdPrice().catch(() => 0);
+      const hypePrice = hypeUsdRes.status === 'fulfilled' && hypeUsdRes.value > 0 ? hypeUsdRes.value : await getHypeUsdPrice().catch(() => 74.0);
       const solLamports: bigint | null = solRes.status === 'fulfilled' && solRes.value ? solRes.value.lamports : null;
       const solPrice = solUsdRes.status === 'fulfilled' ? solUsdRes.value : 150;
 

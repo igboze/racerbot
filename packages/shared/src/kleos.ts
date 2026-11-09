@@ -19,6 +19,15 @@ import {
   findElysiumV4Route,
   type AscendRoute,
 } from './ascend.js';
+import {
+  MONTRA,
+  MONTRA_TOKEN_URL,
+  encodeMontraBuy,
+  encodeMontraSell,
+  quoteMontra,
+  resolveMontraRoute,
+  type MontraRoute,
+} from './montra.js';
 
 export const KLEOS = {
   launchpad: '0x6E3AFDdc49f5D43858a1FDD48184426deD11029b',
@@ -103,7 +112,7 @@ export const RONSPAD_TOKEN_URL = 'https://ronspad.fun/token?token=';
 
 /** The Elysium mainnet launchpads RacerBot trades, by venue name */
 /** `univ4`: any other coin with a Uniswap v4 pool against HYPE on Elysium (launchpads without special support) */
-export const ELYSIUM_PAD_VENUES = ['kleos', 'ronspad', 'ascend', 'univ4'] as const;
+export const ELYSIUM_PAD_VENUES = ['kleos', 'ronspad', 'ascend', 'montra', 'univ4'] as const;
 export type ElysiumPadVenue = (typeof ELYSIUM_PAD_VENUES)[number];
 
 export function isElysiumPadVenue(venue: unknown): venue is ElysiumPadVenue {
@@ -111,13 +120,14 @@ export function isElysiumPadVenue(venue: unknown): venue is ElysiumPadVenue {
 }
 
 export function elysiumPadName(venue: unknown): string {
-  return venue === 'ronspad' ? 'RonsPad' : venue === 'ascend' ? 'Ascend' : venue === 'univ4' ? 'Uniswap v4' : 'Kleos';
+  return venue === 'ronspad' ? 'RonsPad' : venue === 'ascend' ? 'Ascend' : venue === 'montra' ? 'Montra' : venue === 'univ4' ? 'Uniswap v4' : 'Kleos';
 }
 
 /** The launchpad's own page for a coin */
 export function elysiumPadUrl(venue: unknown, address: string): string {
   if (venue === 'ronspad') return `${RONSPAD_TOKEN_URL}${address}`;
   if (venue === 'ascend') return `${ASCEND_TOKEN_URL}${address}`;
+  if (venue === 'montra') return `${MONTRA_TOKEN_URL}${address}`;
   if (venue === 'univ4') return `https://dexscreener.com/elysium/${address}`;
   return `https://www.thekleos.xyz/token/${address}`;
 }
@@ -215,6 +225,8 @@ const KLEOS_ERROR_MESSAGES: Record<string, string> = {
   V4TooLittleReceived: 'The price moved past your slippage limit, so nothing traded.',
   DeadlineReached: 'The order ran after its deadline, so nothing traded.',
   NotEnoughLiquidity: 'This coin’s pool has no HYPE in it to pay for a sell yet, so it can’t be sold right now.',
+  PartialFillRejected: 'This coin’s pool does not have enough liquidity for that trade size yet.',
+  PastOpening: 'Trading has not opened for this coin yet.',
   Expired: 'The order ran after its deadline, so nothing traded.',
   NoHypeRoute: 'This coin has no HYPE route on Kleos yet.',
   UnknownToken: 'Kleos does not list this coin.',
@@ -223,11 +235,14 @@ const KLEOS_ERROR_MESSAGES: Record<string, string> = {
 const kleosErrorIface = new ethers.Interface([
   ...KLEOS_V4_ROUTER_ABI.filter(f => f.startsWith('error')),
   ...KLEOS_COIN_ABI.filter(f => f.startsWith('error')),
-  // Uniswap v4 (Ascend): the quoter wraps a pool's revert in UnexpectedRevertBytes
+  // Uniswap v4 (Ascend & Montra): the quoter wraps a pool's revert in UnexpectedRevertBytes / UnexpectedRevert
   'error V4TooLittleReceived(uint256 minAmountOutReceived, uint256 amountReceived)',
   'error DeadlineReached()',
   'error NotEnoughLiquidity(bytes32 poolId)',
+  'error PartialFillRejected()',
+  'error PastOpening()',
   'error UnexpectedRevertBytes(bytes revertData)',
+  'error UnexpectedRevert(bytes reason)',
 ]);
 
 export function describeKleosRevert(err: any): string {
@@ -237,6 +252,7 @@ export function describeKleosRevert(err: any): string {
     try { parsed = kleosErrorIface.parseError(data); } catch { /* not a known error */ }
     if (!parsed) break;
     if (parsed.name === 'UnexpectedRevertBytes') { data = parsed.args.revertData; continue; }
+    if (parsed.name === 'UnexpectedRevert') { data = parsed.args.reason; continue; }
     if (KLEOS_ERROR_MESSAGES[parsed.name]) return KLEOS_ERROR_MESSAGES[parsed.name];
     break;
   }
@@ -245,7 +261,7 @@ export function describeKleosRevert(err: any): string {
 
 // ── Routing ─────────────────────────────────────────────────────────────────
 
-export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad' | 'ascend' | 'univ4';
+export type KleosRouteKind = 'classic' | 'v4' | 'v5' | 'pair' | 'hop' | 'ronspad' | 'ascend' | 'montra' | 'univ4';
 
 export interface KleosRoute {
   kind: KleosRouteKind;
@@ -256,6 +272,8 @@ export interface KleosRoute {
   hop?: KleosPoolKey;
   /** ascend / univ4: the coin's Uniswap v4 pool and, for a USDC or KNTQ Ascend coin, the HYPE pool into its quote */
   ascend?: AscendRoute;
+  /** montra only: the coin's launch pool on Montra Markets and optional HYPE hop pool */
+  montra?: MontraRoute;
 }
 
 const ROUTES: Record<KleosRouteKind, KleosRoute> = {
@@ -266,6 +284,7 @@ const ROUTES: Record<KleosRouteKind, KleosRoute> = {
   hop: { kind: 'hop', router: KLEOS.hopRouter, hopFee: 0 },
   ronspad: { kind: 'ronspad', router: RONSPAD.padFactory, hopFee: 0 },
   ascend: { kind: 'ascend', router: ASCEND.universalRouter, hopFee: 0 },
+  montra: { kind: 'montra', router: MONTRA.router, hopFee: 0 },
   univ4: { kind: 'univ4', router: ASCEND.universalRouter, hopFee: 0 },
 };
 
@@ -349,6 +368,7 @@ export async function quoteKleos(
   }
   if (route.kind === 'ronspad') return quoteRonsPad(provider, token, side, amountIn, from);
   if (route.kind === 'ascend' || route.kind === 'univ4') return quoteAscend(provider, route.ascend!, token, side, amountIn);
+  if (route.kind === 'montra') return quoteMontra(provider, route.montra!, token, side, amountIn);
   if (route.kind === 'classic') {
     const quoter = new ethers.Contract(KLEOS.quoterV2, KLEOS_QUOTER_V2_ABI, provider);
     const [tokenIn, tokenOut] = side === 'buy' ? [KLEOS.whype, token] : [token, KLEOS.whype];
@@ -450,13 +470,15 @@ export async function resolveKleosRoute(
   options: { allowUniV4?: boolean } = {}
 ): Promise<KleosRoute> {
   const probe = 10n ** 15n; // 0.001 HYPE
-  // RonsPad and Ascend name their own launches on chain
-  const [ronsPad, ascend] = await Promise.all([
+  // RonsPad, Ascend and Montra name their own launches on chain
+  const [ronsPad, ascend, montra] = await Promise.all([
     getRonsPadLaunch(provider, token).catch(() => null),
     // One retry: a busy RPC must not make an Ascend coin look like it can't be traded
     resolveAscendRoute(provider, token).catch(() => resolveAscendRoute(provider, token)).catch((err: Error) => err),
+    resolveMontraRoute(provider, token).catch(() => null),
   ]);
   if (ronsPad) return ROUTES.ronspad;
+  if (montra) return { ...ROUTES.montra, router: montra.router, montra };
   // resolveAscendRoute answers null for a coin Ascend did not launch, so an error is a real failure: say so
   // rather than probing Kleos and calling an Ascend coin untradeable after an RPC hiccup
   if (ascend instanceof Error) {
@@ -499,6 +521,7 @@ export interface EvmCall {
 
 export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
   if (route.kind === 'ascend' || route.kind === 'univ4') return encodeAscendBuy(route.ascend!, token, hypeIn, minOut, recipient, deadline);
+  if (route.kind === 'montra') return encodeMontraBuy(route.montra!, token, hypeIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('buy', [token, route.hop, minOut, recipient, deadline]);
     return { to: route.router, data, value: hypeIn };
@@ -523,6 +546,7 @@ export function encodeKleosBuy(route: KleosRoute, token: string, hypeIn: bigint,
 
 export function encodeKleosSell(route: KleosRoute, token: string, amountIn: bigint, minOut: bigint, recipient: string, deadline: bigint): EvmCall {
   if (route.kind === 'ascend' || route.kind === 'univ4') return encodeAscendSell(route.ascend!, token, amountIn, minOut, recipient, deadline);
+  if (route.kind === 'montra') return encodeMontraSell(route.montra!, token, amountIn, minOut, recipient, deadline);
   if (route.kind === 'hop') {
     const data = new ethers.Interface(KLEOS_HOP_ROUTER_ABI).encodeFunctionData('sell', [token, route.hop, amountIn, minOut, recipient, deadline]);
     return { to: route.router, data, value: 0n };

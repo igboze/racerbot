@@ -81,10 +81,10 @@ export async function distributeTradeFeeRewards(params: DistributeFeeParams): Pr
       feeInNear = (fee * effectiveToken) / effectiveNear;
     } else if (chainLower === 'hyperevm' || chainLower === 'elysium') {
       const [hypeUsd, nearUsd] = await Promise.all([
-        getHypeUsdPrice().catch(() => 25.0),
+        getHypeUsdPrice().catch(() => 74.0),
         getNearUsdPrice().catch(() => 5.0),
       ]);
-      const effectiveHype = hypeUsd > 0 ? hypeUsd : 25.0;
+      const effectiveHype = hypeUsd > 0 ? hypeUsd : 74.0;
       const effectiveNear = nearUsd > 0 ? nearUsd : 5.0;
       feeInNear = (fee * effectiveHype) / effectiveNear;
     } else {

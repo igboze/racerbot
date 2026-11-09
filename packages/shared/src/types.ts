@@ -61,6 +61,7 @@ export type VenueName =
   | 'kleos'
   | 'ronspad'
   | 'ascend'
+  | 'montra'
   | 'univ4'
   | 'intents';
 

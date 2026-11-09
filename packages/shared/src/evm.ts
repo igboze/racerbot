@@ -516,14 +516,16 @@ export async function simulateEvmTrade(
 
 
 
-let cachedHypeUsdPrice = 0;
+let cachedHypeUsdPrice = 74.0;
 let lastHypeUsdPriceTime = 0;
 
 export async function getHypeUsdPrice(): Promise<number> {
   const now = Date.now();
-  if (now - lastHypeUsdPriceTime < 60_000 && cachedHypeUsdPrice > 0) {
+  if (now - lastHypeUsdPriceTime < 30_000 && cachedHypeUsdPrice > 0) {
     return cachedHypeUsdPrice;
   }
+
+  // 1. Primary: Hyperliquid L1 official mid price
   try {
     const mids = await fetch('https://api.hyperliquid.xyz/info', {
       method: 'POST',
@@ -537,19 +539,58 @@ export async function getHypeUsdPrice(): Promise<number> {
       lastHypeUsdPriceTime = now;
       return cachedHypeUsdPrice;
     }
-    const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x5555555555555555555555555555555555555555', {
-      signal: AbortSignal.timeout(3000),
+  } catch { /* fallback */ }
+
+  // 2. Secondary: Bybit spot ticker
+  try {
+    const res = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=HYPEUSDT', {
+      signal: AbortSignal.timeout(2500),
     });
     if (res.ok) {
       const data: any = await res.json();
-      const p = data.pairs?.find((x: any) => x.chainId === 'hyperevm' && x.baseToken?.address?.toLowerCase() === '0x5555555555555555555555555555555555555555');
-      const val = parseFloat(p?.priceUsd || '0');
+      const val = parseFloat(data?.result?.list?.[0]?.lastPrice || '0');
       if (val > 0) {
         cachedHypeUsdPrice = val;
         lastHypeUsdPriceTime = now;
         return cachedHypeUsdPrice;
       }
     }
-  } catch { }
-  return cachedHypeUsdPrice || 25.0;
+  } catch { /* fallback */ }
+
+  // 3. Tertiary: Gate.io spot ticker
+  try {
+    const res = await fetch('https://api.gateio.ws/api/v4/spot/tickers?currency_pair=HYPE_USDT', {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const val = parseFloat(data?.[0]?.last || '0');
+      if (val > 0) {
+        cachedHypeUsdPrice = val;
+        lastHypeUsdPriceTime = now;
+        return cachedHypeUsdPrice;
+      }
+    }
+  } catch { /* fallback */ }
+
+  // 4. Quaternary: DexScreener WHYPE on HyperEVM (highest liquidity pool)
+  try {
+    const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x5555555555555555555555555555555555555555', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const hyperPairs = (data.pairs || [])
+        .filter((x: any) => x.chainId === 'hyperevm' && x.baseToken?.address?.toLowerCase() === '0x5555555555555555555555555555555555555555')
+        .sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+      const val = parseFloat(hyperPairs[0]?.priceUsd || '0');
+      if (val > 0) {
+        cachedHypeUsdPrice = val;
+        lastHypeUsdPriceTime = now;
+        return cachedHypeUsdPrice;
+      }
+    }
+  } catch { /* use last known */ }
+
+  return cachedHypeUsdPrice || 74.0;
 }

@@ -107,7 +107,7 @@ export async function generatePNLCardData(
       : isSuiPos
       ? await getSuiUsdPrice().catch(() => 2.0)
       : isEvmPos
-      ? (tokenInfo?.hype_usd || await getHypeUsdPrice().catch(() => 25.0))
+      ? (tokenInfo?.hype_usd || await getHypeUsdPrice().catch(() => 74.0))
       : await getNearUsdPrice().catch(() => 5.16);
     const nearUsd      = isSolanaPos
       ? (tokenInfo?.sol_usd || liveNativeUsd)

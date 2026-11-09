@@ -784,7 +784,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       const rawStrkUsd = parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.40);
       const rawEthUsd = parseFloat(b.ethBalanceFormatted || '0') * (b.ethUsd || 2600.0);
       const rawSolUsd = (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0);
-      const rawHypePrice = b.hypeUsd || 25.0;
+      const rawHypePrice = b.hypeUsd || 74.0;
       const rawHyperevmUsd = (parseFloat(hyperevmBalFormatted || '0') || 0) * rawHypePrice;
       const rawElysiumUsd = (parseFloat(elysiumBalFormatted || '0') || 0) * rawHypePrice;
 
@@ -1024,7 +1024,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const hyperevmVisible = isChainVisible(user, 'hyperevm');
   const elysiumVisible = isChainVisible(user, 'elysium');
 
-  const rawHypePrice = b.hypeUsd || 25.0;
+  const rawHypePrice = b.hypeUsd || 74.0;
   const hyperevmUsdNum = hyperevmVisible ? (parseFloat(b.hyperevmBalanceFormatted || '0') || 0) * rawHypePrice : 0;
   const elysiumUsdNum = elysiumVisible ? (parseFloat(b.elysiumBalanceFormatted || '0') || 0) * rawHypePrice : 0;
 
@@ -1464,8 +1464,8 @@ export async function extractEvmCandidate(text: string): Promise<string | null> 
     return matchedAddr;
   }
 
-  // 2. Hypurrscan / Purr.fun / Elysium / Hyperliquid explorer links
-  const explorerMatch = /(?:hypurrscan\.io|purr\.fun|elysium\.kinetiq\.xyz|hyperliquid\.xyz)\/(?:token|address|pool)\/(0x[0-9a-fA-F]{40})/i.exec(trimmed);
+  // 2. Hypurrscan / Purr.fun / Elysium / Hyperliquid / Kleos / RonsPad / Ascend / Montra links
+  const explorerMatch = /(?:hypurrscan\.io|purr\.fun|elysium\.kinetiq\.xyz|hyperliquid\.xyz|thekleos\.xyz|ronspad\.fun|ascendlaunch\.xyz|montramarkets\.xyz)\/(?:token|tokens|coin|address|pool|\?token=)\/?(0x[0-9a-fA-F]{40})/i.exec(trimmed);
   if (explorerMatch) {
     return explorerMatch[1];
   }
@@ -1680,7 +1680,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   } else if (isKleos) {
     venueText = `🏛️ *Venue*: ${padName} (Elysium mainnet)`;
   } else if (isElysium) {
-    venueText = `🏛️ *Venue*: Elysium L2 (not a Kleos, RonsPad or Ascend coin)`;
+    venueText = `🏛️ *Venue*: Elysium L2 (not a Kleos, RonsPad, Ascend or Montra coin)`;
   } else if (tokenInfo.tradeable) {
     venueText = `💧 *Venue*: NEAR Protocol DEX`;
   }
@@ -1851,7 +1851,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   } else if (isKleos) {
     // The bottom line says it can't be traded here; one mention is enough
   } else if (isElysium) {
-    safetyBanner += `🟡 *Elysium*: RacerBot trades Kleos, RonsPad and Ascend coins on Elysium mainnet; this token is not one of them.\n\n`;
+    safetyBanner += `🟡 *Elysium*: RacerBot trades Kleos, RonsPad, Ascend and Montra coins on Elysium mainnet; this token is not one of them.\n\n`;
   }
 
   // Mobile-optimized ultra-compact stats block (dense 4-line monospace under 28 chars wide)
@@ -3225,7 +3225,7 @@ async function executeBuyHelperAsTrade(
   }
   // Non-Kleos Elysium tokens only exist on the Kinetiq testnet, which RacerBot does not trade
   if (!isKleos && (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium'))) {
-    throw new Error('RacerBot trades Kleos, RonsPad and Ascend coins on Elysium. This token is not one of them.');
+    throw new Error('RacerBot trades Kleos, RonsPad, Ascend and Montra coins on Elysium. This token is not one of them.');
   }
   if (info.chain === 'hyperevm' || info.chain === 'elysium' || (isValidEvmAddress(tokenAddress) && !isStarknetHint && !tokenAddress.endsWith('.near'))) {
     const chain: EvmChain = (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
@@ -3291,7 +3291,7 @@ async function executeBuyHelperAsTrade(
       positionId: swapResult.positionId,
       txHash: swapResult.txHash,
       message:
-        `🚀 *Buy Confirmed!* (${isKleos ? 'Kleos' : chain === 'elysium' ? 'Elysium' : 'HyperEVM'})\n\n` +
+        `🚀 *Buy Confirmed!* (${isKleos ? elysiumPadName(info.venue) : chain === 'elysium' ? 'Elysium' : 'HyperEVM'})\n\n` +
         `Bought: *${tokenQtyDisplay} ${tokenSym}*\n` +
         `Spent: *${amountHype} HYPE*\n` +
         `Tx Hash: \`${swapResult.txHash}\`\n` +
@@ -4660,7 +4660,7 @@ export function setupRoutes(bot: Telegraf): void {
           `Your unified EVM wallet has been generated and linked to your account:\n` +
           `<code>${result.evmAddress}</code>\n\n` +
           `• <b>HyperEVM:</b> 🟢 Mainnet Live — trade real tokens now!\n` +
-          `• <b>Elysium:</b> 🟢 Mainnet Live — trade Kleos, RonsPad and Ascend coins now!\n\n` +
+          `• <b>Elysium:</b> 🟢 Mainnet Live — trade Kleos, RonsPad, Ascend and Montra coins now!\n\n` +
           `Deposit native <b>HYPE</b> to start trading!`,
           { parse_mode: 'HTML' }
         ).catch(() => {});
@@ -4937,7 +4937,7 @@ export function setupRoutes(bot: Telegraf): void {
         `Send native <b>HYPE</b> to your unified EVM address:\n\n` +
         `<code>${escapeHtml(evmUser.evm_address || '')}</code>\n\n` +
         `• 🟢 <b>HyperEVM (Chain ID 999):</b> Mainnet live — trade real tokens now.\n` +
-        `• 🟢 <b>Elysium (Chain ID 99901):</b> Mainnet live — trade Kleos, RonsPad and Ascend coins now.\n` +
+        `• 🟢 <b>Elysium (Chain ID 99901):</b> Mainnet live — trade Kleos, RonsPad, Ascend and Montra coins now.\n` +
         `• Tap the address above to copy it.\n` +
         `• Keep at least 0.01 HYPE in your wallet for gas fees.`,
         {
@@ -8427,7 +8427,7 @@ export function setupRoutes(bot: Telegraf): void {
           : isSuiPos
             ? await withTimeout(getSuiUsdPrice(), 3000).catch(() => 2.0)
             : isEvmPos
-              ? await withTimeout(getHypeUsdPrice(), 3000).catch(() => 25.0)
+              ? await withTimeout(getHypeUsdPrice(), 3000).catch(() => 74.0)
               : await withTimeout(getNearUsdPrice(), 3000).catch(() => 5.16);
       const usdRate = isSolanaPos
         ? (info?.sol_usd || liveNativeUsd)
@@ -14774,7 +14774,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
     {
       const evmCandidate = await extractEvmCandidate(rawText);
       if (evmCandidate && isValidEvmAddress(evmCandidate)) {
-        const loadingMsg = await ctx.reply('🔍 Looking up token (HyperEVM · Kleos)...').catch(() => null);
+        const loadingMsg = await ctx.reply('🔍 Looking up token (HyperEVM · Elysium)...').catch(() => null);
         try {
           const card = await withTimeout(buildTokenCard(evmCandidate, telegramId), 15000, 'The token lookup timed out — please try again');
           if (loadingMsg) await ctx.deleteMessage(loadingMsg.message_id).catch(() => {});

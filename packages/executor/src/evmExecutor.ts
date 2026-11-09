@@ -18,6 +18,7 @@ import {
   resolveV2Router,
   toTokenUnits,
   distributeTradeFeeRewards,
+  isElysiumPadVenue,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -61,12 +62,12 @@ export async function executeEvmSwap(
   event: SwapEvent & { chain?: EvmChain },
   onProgress?: (stage: string) => void
 ): Promise<EvmSwapExecutionResult> {
-  // Kleos, RonsPad and Ascend coins live on Elysium mainnet and trade through their launchpads' routers
-  if (event.venue === 'kleos' || event.venue === 'ronspad' || event.venue === 'ascend' || event.venue === 'univ4') return executeKleosSwap(event, EVM_TREASURY_ADDRESS, onProgress);
+  // Kleos, RonsPad, Ascend, Montra and Uniswap v4 coins live on Elysium mainnet and trade through their launchpads' routers
+  if (isElysiumPadVenue(event.venue)) return executeKleosSwap(event, EVM_TREASURY_ADDRESS, onProgress);
   const chain: EvmChain = event.chain || (event.token_out?.toLowerCase().endsWith('.elysium') ? 'elysium' : 'hyperevm');
   // Non-Kleos Elysium tokens only exist on the Kinetiq testnet, which RacerBot does not trade
   if (chain === 'elysium') {
-    throw new Error('RacerBot trades Kleos, RonsPad and Ascend coins on Elysium. This token is not one of them.');
+    throw new Error('RacerBot trades Kleos, RonsPad, Ascend and Montra coins on Elysium. This token is not one of them.');
   }
   const isTestnet = process.env.HYPEREVM_TESTNET === 'true';
   const { user_id, token_in, token_out, amount_in, slippage_pct = 2 } = event;
