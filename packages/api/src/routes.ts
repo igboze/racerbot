@@ -147,7 +147,7 @@ import {
   renderPrivateDepositCard,
   type PrivatePromptAction,
 } from './botPrivate.js';
-import { EXECUTORS_ENABLED as PRIVATE_TRADING_ENABLED, confidentialBuy } from './executorPool.js';
+import { EXECUTORS_ENABLED as PRIVATE_TRADING_ENABLED, confidentialBuy, hasPrivateFunds } from './executorPool.js';
 import { syncUserEvmHoldings, trackEvmHoldingOnView } from './evmHoldings.js';
 import { copyModeData, copyShareParam, parseCopyShareParam } from './copyLinks.js';
 import {
@@ -3102,7 +3102,9 @@ async function executeBuyHelperAsTrade(
   userIdOrTelegramId: number | string,
   rawTokenAddress: string,
   amountNear: number,
-  onProgress?: (stage: string) => void
+  onProgress?: (stage: string) => void,
+  /** `slippagePct` overrides the user's saved slippage (a swarm tranche uses its plan's) */
+  options?: { slippagePct?: number }
 ): Promise<{ success: boolean; amountNear: number; tokenAddress: string; message: string; positionId?: string; tokenName?: string; tokenSymbol?: string; tokenQty?: string; priceNear?: number; nearSpent?: number; txHash?: string }> {
   const tokenAddress = resolveTokenAddressFromKey(rawTokenAddress);
   const user = typeof userIdOrTelegramId === 'string'
@@ -3128,7 +3130,7 @@ async function executeBuyHelperAsTrade(
       if (safety?.isHoneypot) {
         throw new Error(`🚨 ORDER BLOCKED FOR YOUR PROTECTION:\n\nThis token (\`${tokenAddress}\`) was identified as a MALICIOUS HONEYPOT.\n• ${safety.reasons[0] || 'Backdoor methods detected'}\n\n🛡️ RacerBot has blocked this transaction to prevent loss of funds.`);
       }
-      const fastSlippage = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+      const fastSlippage = options?.slippagePct ?? (user.slippage_pct ? Number(user.slippage_pct) : 2.0);
       return buyLaunchpadDclPath(user, tokenAddress, fastInfo, amountNear, fastSlippage, onProgress);
     }
   }
@@ -3190,7 +3192,7 @@ async function executeBuyHelperAsTrade(
     throw new Error('Could not resolve token details. Please verify the address.');
   }
 
-  const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+  const slippagePct = options?.slippagePct ?? (user.slippage_pct ? Number(user.slippage_pct) : 2.0);
 
   // ── HyperEVM & Elysium Trading Path ──────────────────────────────────────
   // Kleos coins live on Elysium mainnet (99901); other Elysium tokens here are on the Kinetiq testnet
@@ -4695,7 +4697,7 @@ export function setupRoutes(bot: Telegraf): void {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '🏎️ Open RacerAlpha WebApp', web_app: { url: 'https://raceralpha.xyz/alpha' } }
+              { text: '🏎️ Open RacerAlpha WebApp', web_app: { url: 'https://racertrades.xyz/alpha' } }
             ],
             [
               { text: '🔑 My Unlocked Keys', callback_data: 'alpha_my_keys' },
@@ -4728,7 +4730,7 @@ export function setupRoutes(bot: Telegraf): void {
             parse_mode: 'HTML',
             reply_markup: {
               inline_keyboard: [
-                [{ text: '🏎️ Explore Marketplace', web_app: { url: 'https://raceralpha.xyz/alpha' } }],
+                [{ text: '🏎️ Explore Marketplace', web_app: { url: 'https://racertrades.xyz/alpha' } }],
                 [{ text: '« Back to Menu', callback_data: 'menu_home' }]
               ]
             }
@@ -4748,7 +4750,7 @@ export function setupRoutes(bot: Telegraf): void {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🏎️ Open WebApp Feed', web_app: { url: 'https://raceralpha.xyz/alpha' } }],
+            [{ text: '🏎️ Open WebApp Feed', web_app: { url: 'https://racertrades.xyz/alpha' } }],
             [{ text: '« Back', callback_data: 'menu_home' }]
           ]
         }
@@ -6943,7 +6945,7 @@ export function setupRoutes(bot: Telegraf): void {
         prompt,
         userBalances: balances,
         defaultTokenAddress: defaultToken,
-        stealthModeOverride: true,
+        stealthModeOverride: await hasPrivateFunds(user).catch(() => false),
       });
 
       const session = await createAiSwarmSession({
@@ -6956,7 +6958,7 @@ export function setupRoutes(bot: Telegraf): void {
         droneCount: plan.droneCount,
         stealthMode: plan.stealthMode,
         planJson: plan,
-        teeAttestation: { planner: plan.planner, teeWrapped: true, commandSteps: plan.commandSteps || [], exitTriggers: plan.exitTriggers || [] },
+        teeAttestation: { planner: plan.planner, commandSteps: plan.commandSteps || [], exitTriggers: plan.exitTriggers || [] },
       });
 
       const text = swarmPlanText(plan, 'Swarm plan ready for review');
@@ -12542,7 +12544,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
           const plan = await planSwarmSession({
             prompt,
             userBalances: balances,
-            stealthModeOverride: true,
+            stealthModeOverride: await hasPrivateFunds(user).catch(() => false),
           });
 
           const session = await createAiSwarmSession({
@@ -12555,7 +12557,7 @@ Explore active token launchpads running on HyperEVM (Mainnet) and Elysium L2 (Te
             droneCount: plan.droneCount,
             stealthMode: plan.stealthMode,
             planJson: plan,
-            teeAttestation: { planner: plan.planner, teeWrapped: true, commandSteps: plan.commandSteps || [], exitTriggers: plan.exitTriggers || [] },
+            teeAttestation: { planner: plan.planner, commandSteps: plan.commandSteps || [], exitTriggers: plan.exitTriggers || [] },
           });
 
           const text = swarmPlanText(plan, 'Swarm plan ready for review');

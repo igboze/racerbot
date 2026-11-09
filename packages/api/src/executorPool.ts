@@ -289,6 +289,19 @@ function keysOf(acct: ConfidentialAccountRecord): PrivateAccountKeys {
   return { accountId: acct.private_account_id, publicKey: acct.public_key, secretKey: decrypt(acct.secret_key_encrypted, MASTER_KEY) };
 }
 
+/**
+ * Whether private buys can run for this user now: executors are on and the user has NEAR in the private
+ * balance or in ready executors. A swarm only routes tranches privately when this is true.
+ */
+export async function hasPrivateFunds(user: UserRecord): Promise<boolean> {
+  if (!EXECUTORS_ENABLED) return false;
+  const acct = await getConfidentialAccount(user.id).catch(() => null);
+  if (!acct?.enabled) return false;
+  const ready = await listUserExecutors(user.id, ['ready']).catch(() => []);
+  if (ready.length > 0) return true;
+  return (await privateBalance(acct).catch(() => 0n)) > 0n;
+}
+
 export async function privateBalance(acct: ConfidentialAccountRecord): Promise<bigint> {
   return getPrivateNearBalance(keysOf(acct));
 }

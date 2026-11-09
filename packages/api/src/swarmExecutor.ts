@@ -24,6 +24,20 @@ const logger = createLogger('swarm-executor');
 // In-memory active swarm session timers
 const activeSwarmTimers = new Map<string, NodeJS.Timeout[]>();
 
+/**
+ * Per-user queue: every tranche signs with the same wallet key, so two running at once would collide on
+ * the nonce. A tranche whose time comes while another of the user's tranches is running waits for it.
+ */
+const userTradeLocks = new Map<string, Promise<unknown>>();
+function withUserTradeLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = userTradeLocks.get(userId) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  const settled = next.catch(() => undefined);
+  userTradeLocks.set(userId, settled);
+  void settled.then(() => { if (userTradeLocks.get(userId) === settled) userTradeLocks.delete(userId); });
+  return next;
+}
+
 /** Per-session queue: read-modify-write of execution_state happens one at a time. */
 const sessionLocks = new Map<string, Promise<unknown>>();
 function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -183,7 +197,8 @@ async function runBuy(userId: string, session: AiSwarmSessionRecord, tranche: an
       logger.warn('Confidential executors unavailable; falling back to standard wallet execution');
     }
   }
-  const res = await executeBuyHelper(userId, session.token_address, tranche.amountNear);
+  const slippagePct = Number(tranche.maxSlippagePct) > 0 ? Number(tranche.maxSlippagePct) : undefined;
+  const res = await executeBuyHelper(userId, session.token_address, tranche.amountNear, undefined, { slippagePct });
   let positionId = res?.positionId || null;
   if (res?.success && !positionId) {
     const openPos = await getOpenPositions(userId).catch(() => []);
@@ -267,7 +282,14 @@ async function executeTranche(
 
   let outcome: TrancheOutcome;
   try {
-    outcome = isSell ? await runSell(userId, session, tranche, trancheIndex) : await runBuy(userId, session, tranche);
+    outcome = await withUserTradeLock(userId, async () => {
+      // The swarm may have been paused or aborted while this tranche waited its turn
+      const live = await getAiSwarmSessionById(sessionId);
+      if (!live || live.status !== 'executing') {
+        return { ok: false, txHash: null, error: 'Swarm was paused or stopped before this tranche ran', nearAmount: 0, tokenQty: '0', positionId: null };
+      }
+      return isSell ? runSell(userId, session, tranche, trancheIndex) : runBuy(userId, session, tranche);
+    });
   } catch (err: any) {
     outcome = { ok: false, txHash: null, error: err?.message || 'Transaction failed', nearAmount: 0, tokenQty: '0', positionId: null };
     logger.warn(`Tranche ${trancheIndex} failed for ${session.token_address}: ${outcome.error}`);

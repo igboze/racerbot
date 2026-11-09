@@ -75,6 +75,8 @@ export interface SwarmPlanResult {
   exitTrigger?: SwarmExitTrigger | null;
   exit_trigger?: SwarmExitTrigger | null;
   exitTriggers?: SwarmExitTrigger[];
+  /** Exits the model proposed when the user asked for none: shown to the user, never armed */
+  suggestedExitTriggers?: SwarmExitTrigger[];
   commandSteps?: SwarmCommandStep[];
   planner: SwarmPlanner;
   analysis: string;
@@ -729,6 +731,8 @@ interface ModelCall {
 }
 
 const RULE_PLANNER: SwarmPlanner = { source: 'rules', label: 'Racer rule planner', model: null };
+/** NEAR AI is configured but did not answer: the plan says so instead of passing as an AI plan */
+const FALLBACK_PLANNER: SwarmPlanner = { source: 'rules', label: 'Racer rule planner (NEAR AI did not answer)', model: null };
 
 /**
  * Asks NEAR AI Cloud (or OpenAI) for strategy decomposition and ordered triggers.
@@ -813,16 +817,21 @@ Output valid JSON only with keys:
 
     if (!res.ok) {
       logger.warn(`NEAR AI API request failed with status ${res.status}`);
-      return { result: null, planner: RULE_PLANNER };
+      return { result: null, planner: FALLBACK_PLANNER };
     }
 
     const data: any = await res.json();
     const rawContent = data.choices?.[0]?.message?.content;
-    if (!rawContent) return { result: null, planner: RULE_PLANNER };
-    return { result: JSON.parse(rawContent), planner };
+    if (!rawContent) {
+      logger.warn('NEAR AI returned no content; using the rule planner');
+      return { result: null, planner: FALLBACK_PLANNER };
+    }
+    // Some models wrap JSON in a ```json fence even when asked for an object
+    const json = String(rawContent).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    return { result: JSON.parse(json), planner };
   } catch (err: any) {
     logger.warn(`NEAR AI model call failed, falling back to rule planner: ${err?.message || err}`);
-    return { result: null, planner: RULE_PLANNER };
+    return { result: null, planner: FALLBACK_PLANNER };
   }
 }
 
@@ -979,19 +988,22 @@ export async function planSwarmSession(params: {
   // 4. Strategy suggestions from the model, when one is configured
   const { result: aiResult, planner } = await callNearAiModel(prompt, tokenInfo, availableNear);
 
-  // 5. Ordered exit triggers: deterministic parser preserves exact prompt order; model triggers fill in if rules found none
+  // 5. Ordered exit triggers come only from the user's own words, in the order they gave them. When the
+  // user set none, the model's exits are kept as suggestions: shown, never armed, so nothing sells on a
+  // target the user did not ask for.
   let exitTriggers: SwarmExitTrigger[] = [];
+  let suggestedExitTriggers: SwarmExitTrigger[] = [];
   if (action === 'buy') {
-    const promptTriggers = extractExitTriggers(prompt);
-    if (promptTriggers.length > 0) {
-      exitTriggers = promptTriggers;
-    } else if (Array.isArray(aiResult?.exit_triggers) && aiResult.exit_triggers.length > 0) {
-      exitTriggers = aiResult.exit_triggers
-        .map((t: any, idx: number) => mapAiTrigger(t, idx + 1))
-        .filter((t: SwarmExitTrigger | null): t is SwarmExitTrigger => Boolean(t));
-    } else if (aiResult?.exit_trigger?.target_value) {
-      const single = mapAiTrigger(aiResult.exit_trigger, 1);
-      if (single) exitTriggers = [single];
+    exitTriggers = extractExitTriggers(prompt);
+    if (exitTriggers.length === 0) {
+      if (Array.isArray(aiResult?.exit_triggers) && aiResult.exit_triggers.length > 0) {
+        suggestedExitTriggers = aiResult.exit_triggers
+          .map((t: any, idx: number) => mapAiTrigger(t, idx + 1))
+          .filter((t: SwarmExitTrigger | null): t is SwarmExitTrigger => Boolean(t));
+      } else if (aiResult?.exit_trigger?.target_value) {
+        const single = mapAiTrigger(aiResult.exit_trigger, 1);
+        if (single) suggestedExitTriggers = [single];
+      }
     }
   }
   const exitTrigger: SwarmExitTrigger | null = exitTriggers[0] ?? null;
@@ -1170,6 +1182,7 @@ export async function planSwarmSession(params: {
     tranches,
     exitTrigger,
     exitTriggers,
+    ...(suggestedExitTriggers.length ? { suggestedExitTriggers } : {}),
     commandSteps,
     planner,
     analysis,

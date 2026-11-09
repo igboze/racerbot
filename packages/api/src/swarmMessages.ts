@@ -19,6 +19,7 @@ interface PlanLike {
   exitTrigger?: { targetDisplay?: string; targetValue?: number; sellPct?: number } | null;
   exit_trigger?: { targetDisplay?: string; targetValue?: number; sellPct?: number } | null;
   exitTriggers?: Array<{ targetDisplay?: string; targetValue?: number; sellPct?: number; order?: number }>;
+  suggestedExitTriggers?: Array<{ targetDisplay?: string; targetValue?: number; sellPct?: number }>;
   planner?: { label?: string } | null;
   stealthMode?: boolean;
   analysis?: string;
@@ -73,6 +74,11 @@ export function swarmPlanText(plan: PlanLike, heading: string, extra?: string): 
     });
   } else if (trig) {
     lines.push(`🎯 Exit trigger: <b>${escapeHtml(String(trig.targetDisplay || trig.targetValue))}</b>`);
+  }
+  const suggested = Array.isArray(plan.suggestedExitTriggers) ? plan.suggestedExitTriggers : [];
+  if (orderedTriggers.length === 0 && suggested.length > 0) {
+    const s = suggested.map(t => `sell ${t.sellPct ?? 100}% at ${escapeHtml(String(t.targetDisplay || t.targetValue))}`).join(', ');
+    lines.push(`💡 Suggested exits (not set): ${s}. Add them to your request to use them.`);
   }
   lines.push('', `<b>Tranches:</b>`, list);
   const why = plan.analysis || plan.reasoning;

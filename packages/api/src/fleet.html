@@ -848,7 +848,7 @@
               <!-- How the swarm works -->
               <div style="background:rgba(106, 204, 220, 0.06); border:1px solid rgba(106, 204, 220, 0.25); border-radius:var(--radius-md); padding:12px 14px; margin-bottom:18px;">
                 <div style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--color-primary); letter-spacing:0.5px;">
-                  AI SWARM · PLANNED WITH NEAR AI CLOUD
+                  AI SWARM
                 </div>
                 <div style="font-size:11px; color:var(--color-text-muted); margin-top:2px;">
                   Splits your trade into staggered tranches with randomized sizes and timing. You review the plan before anything trades. Trades run from your RacerBot wallet.
@@ -859,7 +859,6 @@
               <div class="form-group">
                 <div class="form-label">
                   <span>SWARM INTENT / NATURAL LANGUAGE PROMPT</span>
-                  <span style="font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Decomposed by NEAR AI</span>
                 </div>
                 <textarea id="swarm-prompt-input" class="terminal-input" style="height:76px; padding:10px 14px; font-family:var(--font-sans); font-size:13px; line-height:1.4; resize:none;" placeholder="Describe your swarm strategy for any token, e.g.: Accumulate 10 NEAR of LONK (or SWEAT, REF, HOOT) in 5 tranches staggered over 15 minutes"></textarea>
                 
@@ -919,14 +918,14 @@
 
               <!-- Generate Plan Button -->
               <button class="btn btn-primary" id="btn-swarm-plan" style="width:100%; height:48px; font-size:14px; margin-top:12px;" onclick="generateSwarmPlan()">
-                <span>Plan Swarm with NEAR AI</span>
+                <span>Plan Swarm</span>
               </button>
 
               <!-- Step 2: AI Plan Review Modal / Card -->
               <div id="swarm-plan-preview" style="display:none; margin-top:20px; background:var(--color-surface); border:1px solid rgba(106, 204, 220, 0.4); border-radius:var(--radius-md); padding:16px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--color-border); padding-bottom:10px;">
                   <div>
-                    <span style="font-size:11px; font-family:var(--font-mono); color:var(--color-primary); text-transform:uppercase;">NEAR AI Strategy Plan</span>
+                    <span id="swarm-plan-source" style="font-size:11px; font-family:var(--font-mono); color:var(--color-primary); text-transform:uppercase;">Swarm plan</span>
                     <h4 id="swarm-plan-strategy-title" style="margin:2px 0 0; font-size:15px; color:var(--color-text); font-family:var(--font-display);">TWAP Accumulation</h4>
                   </div>
                   <span id="swarm-plan-stealth-badge" class="badge-status active">95% Stealth</span>
@@ -2197,7 +2196,7 @@
       }
 
       btn.disabled = true;
-      btn.innerHTML = '<span>Planning with NEAR AI…</span>';
+      btn.innerHTML = '<span>Planning…</span>';
 
       try {
         const headers = { 'Content-Type': 'application/json' };
@@ -2230,7 +2229,7 @@
         showToast(err.message || 'Error generating swarm plan', 'error');
       } finally {
         btn.disabled = false;
-        btn.innerHTML = '<span>Plan Swarm with NEAR AI</span>';
+        btn.innerHTML = '<span>Plan Swarm</span>';
       }
     }
 
@@ -2253,6 +2252,7 @@
       document.getElementById('swarm-plan-stealth-badge').textContent = badgeHtml;
       document.getElementById('swarm-plan-reasoning').textContent = plan.reasoning || plan.analysis || '';
       document.getElementById('swarm-planner').textContent = (plan.planner && plan.planner.label) || 'Unknown planner';
+      document.getElementById('swarm-plan-source').textContent = plan.planner && plan.planner.source !== 'rules' ? 'AI plan' : 'Rule-based plan';
       document.getElementById('swarm-route').textContent = plan.stealthMode ? 'Confidential executors' : 'Your RacerBot wallet';
 
       const tranchesList = document.getElementById('swarm-tranches-list');
@@ -2282,6 +2282,14 @@
             <span style="color:var(--color-text-subtle); font-size:11px;">Sell ${Number(trig.sellPct || 100)}%</span>
           </div>
           `).join('');
+        }
+        // Exits the AI proposed: shown for the user to add to their prompt, never armed by themselves
+        const suggested = Array.isArray(plan.suggestedExitTriggers) ? plan.suggestedExitTriggers : [];
+        if (suggested.length > 0) {
+          tranchesList.innerHTML += `
+          <div style="padding:6px 10px; border:1px dashed var(--color-border); border-radius:4px; font-size:12px; color:var(--color-text-muted);">
+            Suggested exits (not set): ${suggested.map(t => `sell ${Number(t.sellPct || 100)}% at ${escapeHtml(t.targetDisplay)}`).join(', ')}. Add them to your prompt to use them.
+          </div>`;
         }
       }
     }
