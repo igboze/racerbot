@@ -968,19 +968,41 @@ export async function depositFromWallet(user: UserRecord, amount: bigint): Promi
   }
   const acct = await ensureConfidentialAccount(user);
   const quote = await quoteShield(acct.private_account_id, amount, user.subaccount_id);
-  await near.addKey(user.subaccount_id, KeyPair.fromString(decrypt(user.scoped_key_encrypted, MASTER_KEY) as any));
-  // Wrap, register the one-time deposit address, send: one transaction to wrap.near
-  const outcome = await near.signAndSendTransactionAll(user.subaccount_id, 'wrap.near', [
-    transactions.functionCall('near_deposit', {}, 10n * TGAS, amount),
-    transactions.functionCall('storage_deposit', { account_id: quote.depositAddress, registration_only: true }, 10n * TGAS, 1_250_000_000_000_000_000_000n),
-    transactions.functionCall('ft_transfer', { receiver_id: quote.depositAddress, amount: amount.toString() }, 15n * TGAS, 1n),
-  ]);
-  const err = failureOf(outcome);
-  if (err) throw new Error(`Deposit failed: ${err}`);
-  const txHash = outcome.transaction.hash;
+  const txHash = await payDepositAddressFromWallet(user, amount, quote.depositAddress, 'Deposit');
   await insertConfidentialMove({ user_id: user.id, kind: 'deposit', deposit_address: quote.depositAddress, amount: amount.toString(), destination: acct.private_account_id, tx_hash: txHash });
   void notifyDeposit(quote.depositAddress, txHash);
   return { depositAddress: quote.depositAddress, txHash };
+}
+
+/**
+ * Pay a 1Click deposit address `amount` wNEAR from the user's RacerBot wallet: wrap, register the
+ * one-time address, send, in one transaction to wrap.near. Returns the transaction hash.
+ */
+export async function payDepositAddressFromWallet(user: UserRecord, amount: bigint, depositAddress: string, what: string): Promise<string> {
+  const near = getNear();
+  await near.addKey(user.subaccount_id, KeyPair.fromString(decrypt(user.scoped_key_encrypted, MASTER_KEY) as any));
+  const outcome = await near.signAndSendTransactionAll(user.subaccount_id, 'wrap.near', [
+    transactions.functionCall('near_deposit', {}, 10n * TGAS, amount),
+    transactions.functionCall('storage_deposit', { account_id: depositAddress, registration_only: true }, 10n * TGAS, 1_250_000_000_000_000_000_000n),
+    transactions.functionCall('ft_transfer', { receiver_id: depositAddress, amount: amount.toString() }, 15n * TGAS, 1n),
+  ]);
+  const err = failureOf(outcome);
+  if (err) throw new Error(`${what} failed: ${err}`);
+  return outcome.transaction.hash;
+}
+
+/**
+ * The RacerBot wallet must hold `amount` plus about 0.02 NEAR for fees before anything is quoted or
+ * signed, so a short balance gets a plain answer instead of an RPC error.
+ */
+export async function assertWalletCovers(user: UserRecord, amount: bigint, what: string): Promise<void> {
+  const have = BigInt((await getNear().getNearBalance(user.subaccount_id, 0).catch(() => '0')) || '0');
+  const need = amount + DEPOSIT_OVERHEAD;
+  if (have >= need) return;
+  const fmt = (y: bigint) => (Number(y / 10n ** 18n) / 1e6).toFixed(4);
+  throw new WalletNeedsNearError(have === 0n
+    ? `Your RacerBot wallet (${user.subaccount_id}) has no NEAR yet. Send NEAR to it first.`
+    : `Your RacerBot wallet has ${fmt(have)} NEAR; this ${what} needs ${fmt(need)} NEAR (the amount plus about 0.02 NEAR for fees).`);
 }
 
 /** Signed in with their own NEAR wallet: RacerBot holds no key for it, so the user signs deposits themselves */
@@ -1047,11 +1069,20 @@ export async function quoteCrossChainDeposit(user: UserRecord, originAsset: stri
 }
 
 /** Withdraw from the private balance to any NEAR account (~12 s) */
-export async function withdrawPrivate(user: UserRecord, amount: bigint, destination?: string): Promise<{ depositAddress: string; intentHash: string }> {
+/**
+ * Send `amount` of the private balance to a NEAR account, or, with `destinationAsset` (a 1Click asset
+ * on another chain), to `destination` on that chain as that asset.
+ */
+export async function withdrawPrivate(user: UserRecord, amount: bigint, destination?: string, destinationAsset?: string): Promise<{ depositAddress: string; intentHash: string; amountOut?: string }> {
   const acct = await getConfidentialAccount(user.id);
   if (!acct) throw new Error('No private balance');
+  if (destinationAsset && !destination) throw new Error('Enter the address to send to');
   const to = destination || acct.payout_address;
-  const move = await unshield(keysOf(acct), amount, to);
+  const have = await getPrivateNearBalance(keysOf(acct)).catch(() => null);
+  if (have !== null && have < amount) {
+    throw new Error(`Your private balance holds ${(Number(have / 10n ** 18n) / 1e6).toFixed(4)} NEAR, less than this withdrawal.`);
+  }
+  const move = await unshield(keysOf(acct), amount, to, destinationAsset);
   await insertConfidentialMove({
     user_id: user.id,
     kind: 'withdraw',
@@ -1061,7 +1092,7 @@ export async function withdrawPrivate(user: UserRecord, amount: bigint, destinat
     intent_hash: move.intentHash,
     status: 'SUCCESS',
   });
-  return { depositAddress: move.depositAddress, intentHash: move.intentHash };
+  return { depositAddress: move.depositAddress, intentHash: move.intentHash, amountOut: move.amountOut };
 }
 
 // ── Background worker ─────────────────────────────────────────────────────────

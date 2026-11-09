@@ -165,9 +165,11 @@ export async function quoteShieldFromAsset(privateAccountId: string, originAsset
 
 /**
  * Move `amount` from the private account to `recipient` on NEAR (arrives as native NEAR; a new
- * implicit or named account is created/credited). Refunds stay in the private account.
+ * implicit or named account is created/credited). With `destinationAsset` set to another chain's
+ * asset, it arrives as that asset at `recipient` on that chain instead. Refunds stay in the private account.
  */
-export async function unshield(keys: PrivateAccountKeys, amount: bigint, recipient: string): Promise<MoveQuote & { intentHash: string }> {
+export async function unshield(keys: PrivateAccountKeys, amount: bigint, recipient: string,
+                               destinationAsset: string = WNEAR_ASSET): Promise<MoveQuote & { intentHash: string }> {
   const token = await session(keys);
   const quote = moveQuote(await api('POST', '/v0/quote', {
     dry: false,
@@ -175,7 +177,7 @@ export async function unshield(keys: PrivateAccountKeys, amount: bigint, recipie
     slippageTolerance: 100,
     originAsset: WNEAR_ASSET,
     depositType: 'CONFIDENTIAL_INTENTS',
-    destinationAsset: WNEAR_ASSET,
+    destinationAsset,
     amount: amount.toString(),
     recipient,
     recipientType: 'DESTINATION_CHAIN',

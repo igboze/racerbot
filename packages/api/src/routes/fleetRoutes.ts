@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { createLogger } from '@racerbot/shared';
 import { verifiedUser } from './verifiedUser.js';
+import { isNearTokenAddress, NEAR_ONLY_MESSAGE } from '../nearOnly.js';
 
 const logger = createLogger('fleet-routes');
 
@@ -189,6 +190,10 @@ export function createFleetRouter(): Router {
         res.status(400).json({ error: 'tokenAddress is required' });
         return;
       }
+      if (!isNearTokenAddress(tokenAddress)) {
+        res.status(400).json({ error: NEAR_ONLY_MESSAGE });
+        return;
+      }
 
       const amount = parseFloat(amountNearPerWallet) || 1.0;
       const slippage = parseFloat(slippagePct) || 3.0;
@@ -222,6 +227,10 @@ export function createFleetRouter(): Router {
       const { tokenAddress, sellPct, slippagePct } = req.body;
       if (!tokenAddress) {
         res.status(400).json({ error: 'tokenAddress is required' });
+        return;
+      }
+      if (!isNearTokenAddress(tokenAddress)) {
+        res.status(400).json({ error: NEAR_ONLY_MESSAGE });
         return;
       }
 
