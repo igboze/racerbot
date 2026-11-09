@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { verifiedUser } from './verifiedUser.js';
 import { startRacerLink, webRacerCard, webRacerCardImage } from '../racerCard.js';
+import type { RacerPeriod } from '../racerRank.js';
+
+/** ?period=week asks for the weekly card; anything else is the all-time card. */
+const periodOf = (q: unknown): RacerPeriod => (q === 'week' ? 'week' : 'all');
 
 /**
  * NEAR Racer Card for the signed-in web user (session token or Mini App
@@ -13,7 +17,7 @@ export function createRacerCardRouter(): Router {
     try {
       const user = await verifiedUser(req);
       if (!user) return void res.status(401).json({ error: 'Sign in to see your Racer Card' });
-      const { json } = await webRacerCard(user);
+      const { json } = await webRacerCard(user, periodOf(req.query?.period));
       res.set('Cache-Control', 'private, no-store');
       res.json(json);
     } catch (err: any) {
@@ -26,7 +30,7 @@ export function createRacerCardRouter(): Router {
     try {
       const user = await verifiedUser(req);
       if (!user) return void res.status(401).json({ error: 'Sign in to see your Racer Card' });
-      const png = await webRacerCardImage(user);
+      const png = await webRacerCardImage(user, periodOf(req.query?.period));
       if (!png) return void res.status(503).json({ error: 'Card image is not available right now' });
       res.set('Content-Type', 'image/png');
       res.set('Cache-Control', 'private, max-age=300');

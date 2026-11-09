@@ -26,13 +26,17 @@ import {
   BADGE_LABELS,
   TIERS,
   buildRacerProfile,
+  buildWeeklyRacerProfile,
   executorFills,
   fillNearValue,
   isAnnounceableRankUp,
   racerVolume,
   rankKeyBeforeLatestFill,
   rankKeyFor,
+  weekFills,
+  weekKey,
   type RacerFill,
+  type RacerPeriod,
   type RacerProfile,
 } from './racerRank.js';
 import {
@@ -87,12 +91,14 @@ export function publicBaseUrl(): string {
 /**
  * Public card page that X and Telegram unfurl into the card image. The rank
  * key is in the URL so a rank-up is a new URL (X caches previews for days).
+ * The weekly card adds the week (w=2026-11-09), so each week is a new URL too.
  * Null without a public URL or a real referral code: share the bot link then.
  */
-export function racerCardPageUrl(code: string | null, rankKey: number): string | null {
+export function racerCardPageUrl(code: string | null, rankKey: number, period: RacerPeriod = 'all'): string | null {
   const base = publicBaseUrl();
   if (!base || !code) return null;
-  return `${base}/c/${encodeURIComponent(code)}?r=${rankKey}`;
+  const week = period === 'week' ? `&w=${weekKey()}` : '';
+  return `${base}/c/${encodeURIComponent(code)}?r=${rankKey}${week}`;
 }
 const FINISH_NAMES = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold', holo: 'Holo' } as const;
 
@@ -110,14 +116,16 @@ export function toRacerFill(row: NearRacerFillRow): RacerFill {
 
 // Percentiles compare against every NEAR racer; a few minutes stale is fine.
 const VOLUME_CACHE_MS = 5 * 60 * 1000;
-let volumeCache: { at: number; volumes: number[] } | null = null;
+let volumeCache: { at: number; week: string; volumes: number[]; weekVolumes: number[] } | null = null;
 
 export function clearRacerVolumeCache(): void {
   volumeCache = null;
 }
 
-async function allNetVolumes(): Promise<number[]> {
-  if (volumeCache && Date.now() - volumeCache.at < VOLUME_CACHE_MS) return volumeCache.volumes;
+/** Every racer's net volume: all time, and this week (for the weekly card). */
+async function allRacerVolumes(): Promise<{ volumes: number[]; weekVolumes: number[] }> {
+  const week = weekKey();
+  if (volumeCache && volumeCache.week === week && Date.now() - volumeCache.at < VOLUME_CACHE_MS) return volumeCache;
   const [rows, executors, links] = await Promise.all([
     getNearRacerFills(),
     getConfidentialRacerExecutors(),
@@ -132,9 +140,15 @@ async function allNetVolumes(): Promise<number[]> {
   };
   for (const row of rows) add(row.user_id, [toRacerFill(row)]);
   for (const e of executors) add(e.user_id, executorFills(e));
-  const volumes = [...byRacer.values()].map(fills => racerVolume(fills).net);
-  volumeCache = { at: Date.now(), volumes };
-  return volumes;
+  const racers = [...byRacer.values()];
+  const volumes = racers.map(fills => racerVolume(fills).net);
+  const weekVolumes = racers.map(fills => racerVolume(weekFills(fills)).net);
+  volumeCache = { at: Date.now(), week, volumes, weekVolumes };
+  return volumeCache;
+}
+
+async function allNetVolumes(): Promise<number[]> {
+  return (await allRacerVolumes()).volumes;
 }
 
 type CardUser = {
@@ -173,20 +187,44 @@ async function referralFor(user: CardUser) {
   return { code: code || 'racerbot', link: code ? `${BOT_LINK}?start=${encodeURIComponent(code)}` : BOT_LINK };
 }
 
-export function racerShareText(p: RacerProfile): string {
+export function racerShareText(p: RacerProfile, period: RacerPeriod = 'all'): string {
+  if (period === 'week') {
+    if (!p.hasTrades) return 'New racing week on @racertradingbot 🏁 Come trade NEAR with me.';
+    const top = p.topPercent !== null ? ` Top ${p.topPercent}% of NEAR racers this week.` : '';
+    return `This week I'm a ${p.rank.name} on @racertradingbot 🏁${top} Think you can catch me?`;
+  }
   if (!p.hasTrades) return 'Just joined the race on @racertradingbot 🏁 Come trade NEAR with me.';
   const top = p.topPercent !== null ? ` Top ${p.topPercent}% of NEAR racers.` : '';
   return `I'm a ${p.rank.name} on @racertradingbot 🏁${top} Think you can catch me?`;
 }
 
 /** With `pageUrl` (the card page) the post shows the card image; else the bot link. */
-export function racerShareLinks(p: RacerProfile, link: string, pageUrl: string | null = null): { x: string; telegram: string } {
-  const text = racerShareText(p);
+export function racerShareLinks(
+  p: RacerProfile,
+  link: string,
+  pageUrl: string | null = null,
+  period: RacerPeriod = 'all',
+): { x: string; telegram: string } {
+  const text = racerShareText(p, period);
   const url = pageUrl ?? link;
   return {
     x: `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}`,
     telegram: `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`,
   };
+}
+
+/** The weekly card's caption: this week's rank, starting over every Monday. */
+export function weeklyRacerCardCaption(p: RacerProfile): string {
+  const resets = 'Weekly ranks start over every Monday at 00:00 UTC.';
+  if (!p.hasTrades) {
+    return `📅 <b>Your weekly Racer Card: ${p.rank.name}</b>\n\n`
+      + `No NEAR trades yet this week. Trade to climb this week's ranks.\n\n${resets}`;
+  }
+  const lines: string[] = [`📅 <b>This week: ${p.rank.name}</b> · ${FINISH_NAMES[p.finish]} finish`];
+  if (p.topPercent !== null) lines.push(`🏆 Top ${p.topPercent}% of NEAR racers this week`);
+  if (p.rank.nextLevelName) lines.push(`📈 ${p.rank.progressPct}% of the way to ${p.rank.nextLevelName}`);
+  lines.push('', resets, 'Share your card. Friends who join with your link earn you referral rewards.');
+  return lines.join('\n');
 }
 
 export function racerCardCaption(p: RacerProfile, rankedUp = false): string {
@@ -204,13 +242,18 @@ export function racerCardCaption(p: RacerProfile, rankedUp = false): string {
   return lines.join('\n');
 }
 
-export function racerCardKeyboard(p: RacerProfile, link: string, pageUrl: string | null = null) {
-  const share = racerShareLinks(p, link, pageUrl);
+const PERIOD_ACTION: Record<RacerPeriod, string> = { all: 'racer_card', week: 'racer_card_week' };
+
+export function racerCardKeyboard(p: RacerProfile, link: string, pageUrl: string | null = null, period: RacerPeriod = 'all') {
+  const share = racerShareLinks(p, link, pageUrl, period);
   const base = publicBaseUrl();
+  const other = period === 'week'
+    ? Markup.button.callback('🏁 All-time card', PERIOD_ACTION.all)
+    : Markup.button.callback('📅 Weekly card', PERIOD_ACTION.week);
   return Markup.inlineKeyboard([
     [Markup.button.url('𝕏 Share on X', share.x), Markup.button.url('✈️ Share on Telegram', share.telegram)],
-    ...(base ? [[Markup.button.url('🏆 Racer Leaderboard', `${base}/racers`)]] : []),
-    [Markup.button.callback('🔄 Refresh', 'racer_card'), Markup.button.callback('🏠 Menu', 'menu_home')],
+    [other, ...(base ? [Markup.button.url('🏆 Racer Leaderboard', `${base}/racers`)] : [])],
+    [Markup.button.callback('🔄 Refresh', PERIOD_ACTION[period]), Markup.button.callback('🏠 Menu', 'menu_home')],
   ]);
 }
 
@@ -219,6 +262,8 @@ interface RacerState {
   racerId: string;
   fills: RacerFill[];
   volumes: number[];
+  /** Every racer's net volume this week */
+  weekVolumes: number[];
   stored: RacerRankRecord | null;
 }
 
@@ -230,18 +275,26 @@ async function loadRacerState(userId: string): Promise<RacerState> {
   const link = await getRacerLinkFor(userId);
   const racerId = link ? link.telegram_user_id : userId;
   const members = link ? [link.telegram_user_id, link.wallet_user_id] : [userId];
-  const [rowLists, executors, volumes, stored] = await Promise.all([
+  const [rowLists, executors, all, stored] = await Promise.all([
     Promise.all(members.map(id => getNearRacerFills(id))),
     getConfidentialRacerExecutors(members),
-    allNetVolumes(),
+    allRacerVolumes(),
     getRacerRank(racerId),
   ]);
   const fills = [...rowLists.flat().map(toRacerFill), ...executors.flatMap(executorFills)];
-  return { racerId, fills, volumes, stored };
+  return { racerId, fills, volumes: all.volumes, weekVolumes: all.weekVolumes, stored };
 }
 
-function cardImageData(profile: RacerProfile, ref: { code: string; link: string }): RacerCardImageData {
+/** The profile a card shows: the lifetime rank (never drops) or this week's. */
+function profileFor(state: RacerState, period: RacerPeriod): RacerProfile {
+  return period === 'week'
+    ? buildWeeklyRacerProfile(state.fills, state.weekVolumes, foundingCutoff())
+    : buildRacerProfile(state.fills, state.volumes, foundingCutoff(), state.stored?.best_key ?? 0);
+}
+
+function cardImageData(profile: RacerProfile, ref: { code: string; link: string }, period: RacerPeriod = 'all'): RacerCardImageData {
   return {
+    period,
     rankTitle: profile.rank.title,
     levelLabel: profile.rank.levelLabel,
     tierIndex: profile.rank.tierIndex,
@@ -257,18 +310,18 @@ function cardImageData(profile: RacerProfile, ref: { code: string; link: string 
   };
 }
 
-async function renderRacerCard(user: CardUser, profile: RacerProfile, rankedUp: boolean) {
+async function renderRacerCard(user: CardUser, profile: RacerProfile, rankedUp: boolean, period: RacerPeriod = 'all') {
   const ref = await referralFor(user);
-  const data = cardImageData(profile, ref);
+  const data = cardImageData(profile, ref, period);
   const image = await generateRacerCardImage(data);
-  const pageUrl = ref.link !== BOT_LINK ? racerCardPageUrl(ref.code, profile.rank.key) : null;
+  const pageUrl = ref.link !== BOT_LINK ? racerCardPageUrl(ref.code, profile.rank.key, period) : null;
   // Warm the share page so X's crawler gets the preview without waiting on a render
   if (image && pageUrl) rememberShareImages(ref.code, data, image);
   return {
     profile,
     image,
-    caption: racerCardCaption(profile, rankedUp),
-    keyboard: racerCardKeyboard(profile, ref.link, pageUrl),
+    caption: period === 'week' ? weeklyRacerCardCaption(profile) : racerCardCaption(profile, rankedUp),
+    keyboard: racerCardKeyboard(profile, ref.link, pageUrl, period),
   };
 }
 
@@ -286,13 +339,14 @@ const shareCache = new Map<string, ShareImages>();
  */
 function shareImages(code: string, data: RacerCardImageData, rendered?: Buffer): ShareImages {
   const sig = JSON.stringify(data);
-  const hit = shareCache.get(code);
+  const key = `${code}:${data.period ?? 'all'}`;
+  const hit = shareCache.get(key);
   if (hit && hit.sig === sig && Date.now() - hit.at < SHARE_CACHE_MS) return hit;
   const card = rendered ? Promise.resolve(rendered) : generateRacerCardImage(data).catch(() => null);
   const preview = card.then(png => (png ? generateRacerCardOgImage(data, png) : null)).catch(() => null);
   const entry: ShareImages = { sig, at: Date.now(), card, preview };
-  shareCache.delete(code);
-  shareCache.set(code, entry);
+  shareCache.delete(key);
+  shareCache.set(key, entry);
   // A Map iterates oldest first: trim from the front
   while (shareCache.size > SHARE_CACHE_MAX) shareCache.delete(shareCache.keys().next().value!);
   return entry;
@@ -310,13 +364,12 @@ export function clearRacerShareCache(): void {
  * What a public card shows. Read-only: viewing someone's page never stores or
  * announces a rank. Only an exact referral code matches.
  */
-async function publicCardData(code: string): Promise<RacerCardImageData | null> {
+async function publicCardData(code: string, period: RacerPeriod = 'all'): Promise<RacerCardImageData | null> {
   const user = await getUserByExactReferralCode(code);
   if (!user?.referral_code) return null;
-  const { fills, volumes, stored } = await loadRacerState(user.id);
-  const profile = buildRacerProfile(fills, volumes, foundingCutoff(), stored?.best_key ?? 0);
+  const profile = profileFor(await loadRacerState(user.id), period);
   const refCode = user.referral_code;
-  return cardImageData(profile, { code: refCode, link: `${BOT_LINK}?start=${encodeURIComponent(refCode)}` });
+  return cardImageData(profile, { code: refCode, link: `${BOT_LINK}?start=${encodeURIComponent(refCode)}` }, period);
 }
 
 function escHtml(s: string): string {
@@ -324,20 +377,25 @@ function escHtml(s: string): string {
 }
 
 /** The page X / Telegram crawl: card-image meta tags, then on to the bot. */
-export function racerCardPageHtml(data: RacerCardImageData, rankParam: string): string {
+export function racerCardPageHtml(data: RacerCardImageData, rankParam: string, weekParam = ''): string {
   const base = publicBaseUrl();
+  const weekly = data.period === 'week';
   const rank = `${data.rankTitle} ${data.levelLabel}`;
-  const title = data.hasTrades ? `${rank} on RacerBot` : 'Join the race on RacerBot';
+  const when = weekly ? ' this week' : '';
+  const title = data.hasTrades ? `${rank}${when} on RacerBot` : 'Join the race on RacerBot';
   const desc = data.hasTrades
-    ? `${data.topPercent !== null ? `Top ${data.topPercent}% of NEAR racers. ` : ''}Think you can catch me? Trade NEAR on RacerBot.`
+    ? `${data.topPercent !== null ? `Top ${data.topPercent}% of NEAR racers${when}. ` : ''}Think you can catch me? Trade NEAR on RacerBot.`
     : 'Trade NEAR on RacerBot and climb the Racer ranks.';
-  const q = rankParam ? `?r=${encodeURIComponent(rankParam)}` : '';
+  const params = new URLSearchParams();
+  if (rankParam) params.set('r', rankParam);
+  if (weekly) params.set('w', weekParam || weekKey());
+  const q = params.size ? `?${params.toString()}` : '';
   const c = encodeURIComponent(data.referralCode);
   const page = `${base}/c/${c}${q}`;
   const previewImage = `${base}/c/${c}/preview.png${q}`;
   const cardImage = `${base}/c/${c}/card.png${q}`;
   const bot = data.referralLink;
-  const alt = `NEAR Racer Card: ${rank}`;
+  const alt = `${weekly ? 'Weekly' : 'NEAR'} Racer Card: ${rank}`;
   const level = levelNumber(data.levelLabel);
   const accent = LEVEL_COLORS[level - 1];
   // Dark text on the silver and gold buttons, light on purple
@@ -389,10 +447,13 @@ const CODE_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 /** Express routes for the public card page and its two images. */
 export function registerRacerCardPages(app: Express): void {
   const rankParam = (q: unknown) => (typeof q === 'string' && /^\d{1,2}$/.test(q) ? q : '');
+  // w=2026-11-09 marks a weekly card link; the page shows the current week
+  const weekParam = (q: unknown) => (typeof q === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : '');
+  const periodOf = (q: unknown): RacerPeriod => (weekParam(q) ? 'week' : 'all');
 
   app.get('/c/:code', async (req, res) => {
     try {
-      const data = CODE_RE.test(req.params.code) ? await publicCardData(req.params.code) : null;
+      const data = CODE_RE.test(req.params.code) ? await publicCardData(req.params.code, periodOf(req.query.w)) : null;
       if (!data) {
         res.status(404).set('Content-Type', 'text/html; charset=utf-8')
           .send(`<!doctype html><meta charset="utf-8"><title>RacerBot</title><p>Card not found. <a href="${BOT_LINK}">Open RacerBot</a></p>`);
@@ -402,7 +463,7 @@ export function registerRacerCardPages(app: Express): void {
       res.set('Cache-Control', 'public, max-age=300');
       // Start the render now: the crawler asks for the image right after the page
       shareImages(data.referralCode, data);
-      res.send(racerCardPageHtml(data, rankParam(req.query.r)));
+      res.send(racerCardPageHtml(data, rankParam(req.query.r), weekParam(req.query.w)));
     } catch (err: any) {
       console.error('[RACER_CARD] Card page failed:', err?.message);
       res.redirect(302, BOT_LINK);
@@ -411,7 +472,7 @@ export function registerRacerCardPages(app: Express): void {
 
   app.get(['/c/:code/card.png', '/c/:code/preview.png'], async (req, res) => {
     try {
-      const data = CODE_RE.test(req.params.code) ? await publicCardData(req.params.code) : null;
+      const data = CODE_RE.test(req.params.code) ? await publicCardData(req.params.code, periodOf(req.query.w)) : null;
       const share = data ? shareImages(data.referralCode, data) : null;
       const png = share ? await (req.path.endsWith('/preview.png') ? share.preview : share.card) : null;
       if (!png) {
@@ -449,7 +510,13 @@ export async function buildRacerCard(user: CardUser) {
   return renderRacerCard(user, profile, rankedUp);
 }
 
-export async function sendRacerCard(ctx: Context): Promise<void> {
+/** The user's weekly card: this week's volume only. Read-only, never announced. */
+export async function buildWeeklyRacerCard(user: CardUser) {
+  const profile = profileFor(await loadRacerState(user.id), 'week');
+  return renderRacerCard(user, profile, false, 'week');
+}
+
+export async function sendRacerCard(ctx: Context, period: RacerPeriod = 'all'): Promise<void> {
   const telegramId = ctx.from?.id;
   if (!telegramId) return;
   const user = await getUserByTelegramId(telegramId).catch(() => null);
@@ -458,7 +525,7 @@ export async function sendRacerCard(ctx: Context): Promise<void> {
     return;
   }
   try {
-    const card = await buildRacerCard(user);
+    const card = period === 'week' ? await buildWeeklyRacerCard(user) : await buildRacerCard(user);
     const extra = { caption: card.caption, parse_mode: 'HTML' as const, reply_markup: card.keyboard.reply_markup };
     if (card.image) {
       await ctx.replyWithPhoto({ source: card.image }, extra);
@@ -549,17 +616,21 @@ export function scheduleRankUpCheck(userId: string, delaysMs: number[] = [0]): v
  * account's. Read-only. Shares use the Telegram account's referral code when
  * a wallet account is linked to one.
  */
-export async function webRacerCard(user: CardUser) {
-  const { racerId, fills, volumes, stored } = await loadRacerState(user.id);
-  const profile = buildRacerProfile(fills, volumes, foundingCutoff(), stored?.best_key ?? 0);
+export async function webRacerCard(user: CardUser, period: RacerPeriod = 'all') {
+  const state = await loadRacerState(user.id);
+  const { racerId } = state;
+  const profile = profileFor(state, period);
   const racer: CardUser = racerId === user.id ? user : ((await getUserById(racerId).catch(() => null)) ?? user);
   const ref = await referralFor(racer);
-  const data = cardImageData(profile, ref);
-  const pageUrl = ref.link !== BOT_LINK ? racerCardPageUrl(ref.code, profile.rank.key) : null;
+  const data = cardImageData(profile, ref, period);
+  const pageUrl = ref.link !== BOT_LINK ? racerCardPageUrl(ref.code, profile.rank.key, period) : null;
   const linked = racerId !== user.id || !!(await getRacerLinkFor(user.id));
   return {
     data,
     json: {
+      period,
+      /** Monday 00:00 UTC the weekly card counts from */
+      weekStart: weekKey(),
       hasTrades: profile.hasTrades,
       rank: {
         name: profile.rank.name,
@@ -575,7 +646,7 @@ export async function webRacerCard(user: CardUser) {
       badges: profile.badges.map(b => BADGE_LABELS[b]),
       referralCode: ref.code,
       shareUrl: pageUrl ?? ref.link,
-      share: racerShareLinks(profile, ref.link, pageUrl),
+      share: racerShareLinks(profile, ref.link, pageUrl, period),
       linked,
       canLink: !user.telegram_id && !linked,
     },
@@ -583,8 +654,8 @@ export async function webRacerCard(user: CardUser) {
 }
 
 /** The web user's card PNG (cached with the public page's images). */
-export async function webRacerCardImage(user: CardUser): Promise<Buffer | null> {
-  const { data } = await webRacerCard(user);
+export async function webRacerCardImage(user: CardUser, period: RacerPeriod = 'all'): Promise<Buffer | null> {
+  const { data } = await webRacerCard(user, period);
   return shareImages(data.referralCode, data).card;
 }
 
@@ -678,6 +749,11 @@ export function registerRacerCard(bot: Telegraf): void {
   bot.action('racer_card', async ctx => {
     await ctx.answerCbQuery().catch(() => {});
     await sendRacerCard(ctx);
+  });
+  bot.command(['weekly', 'weeklycard'], ctx => sendRacerCard(ctx, 'week'));
+  bot.action('racer_card_week', async ctx => {
+    await ctx.answerCbQuery().catch(() => {});
+    await sendRacerCard(ctx, 'week');
   });
 
   // /start rclink_<code>; every other /start goes on to the main handler

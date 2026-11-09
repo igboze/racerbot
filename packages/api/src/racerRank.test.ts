@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { buildWeeklyRacerProfile, weekFills, weekKey, weekStart } from './racerRank.js';
 import {
   fillNearValue, washFillIndexes, racerVolume, rankFor, topPercent, realizedRoiPct, finishFor,
   badgesFor, longestDayStreak, buildRacerProfile, rankKeyBeforeLatestFill, rankKeyFor, isAnnounceableRankUp,
@@ -270,5 +271,28 @@ describe('confidential trades (executorFills)', () => {
     const fills = executorFills(exec({ status: 'exited', returned_amount: N(9.9), exited_at: min(2) }));
     // 10 in, 9.9 back within 2 minutes: both legs excluded
     expect(racerVolume(fills)).toMatchObject({ net: 0, washLegs: 2 });
+  });
+});
+
+describe('weekly card', () => {
+  const fill = (at: string, nearValue: number) => ({ side: 'buy' as const, token: 't', venue: 'rhea', at: new Date(at), nearValue });
+
+  it('starts the racing week on Monday 00:00 UTC', () => {
+    expect(weekStart(new Date('2026-11-09T00:00:00Z')).toISOString()).toBe('2026-11-09T00:00:00.000Z'); // Monday
+    expect(weekStart(new Date('2026-11-15T23:59:59Z')).toISOString()).toBe('2026-11-09T00:00:00.000Z'); // Sunday
+    expect(weekStart(new Date('2026-11-16T00:00:01Z')).toISOString()).toBe('2026-11-16T00:00:00.000Z');
+    expect(weekKey(new Date('2026-11-12T10:00:00Z'))).toBe('2026-11-09');
+  });
+
+  it('ranks from this week\'s volume only, starting over each Monday', () => {
+    const now = new Date('2026-11-12T10:00:00Z');
+    const fills = [fill('2026-11-01T10:00:00Z', 5_000), fill('2026-11-10T10:00:00Z', 30)];
+    expect(weekFills(fills, now)).toHaveLength(1);
+    const week = buildWeeklyRacerProfile(fills, [30], null, now);
+    expect(week.rank.name).toBe('Street Racer II');
+    // A new week with no trades is back at the start
+    const next = buildWeeklyRacerProfile(fills, [], null, new Date('2026-11-17T10:00:00Z'));
+    expect(next.hasTrades).toBe(false);
+    expect(next.rank.name).toBe('Rookie I');
   });
 });

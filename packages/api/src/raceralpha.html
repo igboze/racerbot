@@ -2754,6 +2754,10 @@
     .rc-chip.rc-silver { color: #DCE3EC; }
     .rc-chip.rc-gold { color: var(--color-racer-gold); }
     .rc-chip.rc-holo { color: var(--color-racer-purple-light); }
+    .rc-period { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--color-surface-card); border: 1px solid var(--color-border); align-self: flex-start; }
+    .rc-period button { min-height: 40px; padding: 0 16px; border: 0; border-radius: 8px; background: transparent; color: var(--color-text-muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .rc-period button[aria-pressed="true"] { background: var(--color-primary); color: #0F1320; }
+    .rc-period button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
     .rc-h3 { font-size: 15px; font-weight: 700; color: var(--color-text); margin: 0 0 10px; }
     .rc-progress-label { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; color: var(--color-text-muted); margin-bottom: 8px; }
     .rc-bar { height: 10px; border-radius: 999px; background: var(--color-surface-card); overflow: hidden; }
@@ -5620,7 +5624,11 @@
       <section id="view-card" class="rc-view" aria-labelledby="rc-title">
         <div class="receipts-head">
           <h2 id="rc-title">My Racer Card</h2>
-          <p>Your lifetime NEAR rank on RacerBot, from bot and confidential trades. The card never shows amounts, tokens or wallet addresses.</p>
+          <p id="rc-intro">Your lifetime NEAR rank on RacerBot, from bot and confidential trades. The card never shows amounts, tokens or wallet addresses.</p>
+        </div>
+        <div class="rc-period" role="group" aria-label="Card period">
+          <button type="button" id="rc-period-all" aria-pressed="true" onclick="setRacerCardPeriod('all')">All time</button>
+          <button type="button" id="rc-period-week" aria-pressed="false" onclick="setRacerCardPeriod('week')">This week</button>
         </div>
         <p class="rc-status" id="rc-status" role="status">Loading your card…</p>
         <div class="rc-body" id="rc-body" hidden>
@@ -6176,7 +6184,23 @@
       el.hidden = !text;
     }
 
+    let rcPeriod = 'all';
+    const RC_INTRO = {
+      all: 'Your lifetime NEAR rank on RacerBot, from bot and confidential trades. The card never shows amounts, tokens or wallet addresses.',
+      week: 'Your NEAR rank from this week\'s trades only. It starts over every Monday at 00:00 UTC. The card never shows amounts, tokens or wallet addresses.',
+    };
+
+    function setRacerCardPeriod(period) {
+      if (period === rcPeriod) return;
+      rcPeriod = period === 'week' ? 'week' : 'all';
+      document.getElementById('rc-period-all').setAttribute('aria-pressed', String(rcPeriod === 'all'));
+      document.getElementById('rc-period-week').setAttribute('aria-pressed', String(rcPeriod === 'week'));
+      document.getElementById('rc-intro').textContent = RC_INTRO[rcPeriod];
+      loadRacerCard();
+    }
+
     async function loadRacerCard() {
+      const period = rcPeriod;
       const body = document.getElementById('rc-body');
       if (!getAuthHeaders().Authorization && window.RacerConnect?.activeNearWallet && typeof window.RacerConnect.ensureWalletSession === 'function') {
         try { await window.RacerConnect.ensureWalletSession(); } catch (e) {}
@@ -6188,11 +6212,13 @@
       }
       rcStatus('Loading your card…');
       try {
-        const res = await fetch('/api/racer-card', { headers: getAuthHeaders() });
+        const res = await fetch(`/api/racer-card?period=${period}`, { headers: getAuthHeaders() });
         const card = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(card.error || 'Could not load your Racer Card');
+        if (period !== rcPeriod) return;
+        const weekly = period === 'week';
 
-        document.getElementById('rc-rank').textContent = card.rank.name;
+        document.getElementById('rc-rank').textContent = weekly ? `This week: ${card.rank.name}` : card.rank.name;
         const chips = [];
         if (card.hasTrades) chips.push(`<span class="rc-chip rc-${card.finish}">${RC_FINISH[card.finish] || ''}</span>`);
         if (card.topPercent !== null) chips.push(`<span class="rc-chip">Top ${Number(card.topPercent)}%</span>`);
@@ -6200,7 +6226,7 @@
 
         const pct = Math.max(0, Math.min(100, Number(card.rank.progressPct) || 0));
         document.getElementById('rc-progress-wrap').hidden = !card.rank.nextLevelName;
-        document.getElementById('rc-next').textContent = card.hasTrades ? `Next: ${card.rank.nextLevelName || ''}` : 'Make a first NEAR trade to climb the ranks';
+        document.getElementById('rc-next').textContent = card.hasTrades ? `Next: ${card.rank.nextLevelName || ''}` : (weekly ? 'No NEAR trades yet this week' : 'Make a first NEAR trade to climb the ranks');
         document.getElementById('rc-pct').textContent = `${pct}%`;
         document.getElementById('rc-bar').setAttribute('aria-valuenow', String(pct));
         document.getElementById('rc-bar-fill').style.width = `${pct}%`;
@@ -6216,10 +6242,12 @@
         document.getElementById('rc-link').hidden = !card.canLink;
 
         const img = document.getElementById('rc-card-img');
-        img.alt = `NEAR Racer Card: ${card.rank.name}`;
+        img.alt = `${weekly ? 'Weekly' : 'NEAR'} Racer Card: ${card.rank.name}`;
         body.hidden = false;
         rcStatus('');
-        const imgRes = await fetch('/api/racer-card/image.png', { headers: getAuthHeaders() });
+        const imgRes = await fetch(`/api/racer-card/image.png?period=${period}`, { headers: getAuthHeaders() });
+        // A newer request (the other period) wins
+        if (period !== rcPeriod) return;
         if (imgRes.ok) {
           if (rcImageUrl) URL.revokeObjectURL(rcImageUrl);
           rcImageUrl = URL.createObjectURL(await imgRes.blob());

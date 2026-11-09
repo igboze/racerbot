@@ -362,6 +362,43 @@ export function buildRacerProfile(
   };
 }
 
+// ── Weekly card ──────────────────────────────────────────────────────────────
+
+export type RacerPeriod = 'all' | 'week';
+
+/** Start of the racing week holding `now`: Monday 00:00 UTC. */
+export function weekStart(now: Date = new Date()): Date {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const sinceMonday = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - sinceMonday);
+  return d;
+}
+
+/** "2026-11-09": names the week in share URLs, so each week is a new link preview. */
+export function weekKey(now: Date = new Date()): string {
+  return weekStart(now).toISOString().slice(0, 10);
+}
+
+/** Fills from this racing week only. */
+export function weekFills(fills: RacerFill[], now: Date = new Date()): RacerFill[] {
+  const start = weekStart(now).getTime();
+  return fills.filter(f => f.at.getTime() >= start);
+}
+
+/**
+ * The weekly card: the same ranks, from this week's volume alone. It starts
+ * over every Monday, so there is no stored best and no rank-up announcement.
+ * `allWeekVolumes` is every racer's net volume this week, for the percentile.
+ */
+export function buildWeeklyRacerProfile(
+  fills: RacerFill[],
+  allWeekVolumes: number[],
+  foundingCutoff: Date | null,
+  now: Date = new Date(),
+): RacerProfile {
+  return buildRacerProfile(weekFills(fills, now), allWeekVolumes, foundingCutoff, 0);
+}
+
 /** Rank key from every fill except the most recent one (0 with no fills). */
 export function rankKeyBeforeLatestFill(fills: RacerFill[]): number {
   if (!fills.length) return 0;

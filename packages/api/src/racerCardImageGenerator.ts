@@ -4,13 +4,15 @@ import { html } from 'satori-html';
 import { Resvg } from '@resvg/resvg-js';
 import fs from 'fs';
 import { resolveAsset, resolveFont } from './pnlCardImageGenerator.js';
-import type { Finish } from './racerRank.js';
+import type { Finish, RacerPeriod } from './racerRank.js';
 
 /**
  * Everything the Racer Card shows. By design there are no amounts, token names
  * or addresses here — only the rank, finish, percentile and badges.
  */
 export interface RacerCardImageData {
+  /** All-time rank (default) or this week's; the card art is the same for both */
+  period?: RacerPeriod;
   rankTitle: string;
   levelLabel: string;
   tierIndex: number;
@@ -228,16 +230,17 @@ export async function generateRacerCardOgImage(d: RacerCardImageData, cardPng: B
     const title = d.rankTitle.toUpperCase();
     const cardH = OG_H - 50;
     const cardW = Math.round((cardH * CARD_W) / CARD_H);
-    const tagline = d.hasTrades ? 'Think you can catch me?' : 'Just joined the race';
+    const weekly = d.period === 'week';
+    const tagline = d.hasTrades ? 'Think you can catch me?' : weekly ? 'New racing week' : 'Just joined the race';
     const top = d.topPercent !== null
-      ? `<div style="display: flex; margin-top: 28px; padding: 10px 22px; border-radius: 30px; background: ${accent}; color: ${CARD_NAVY}; font-size: 22px; font-weight: 900; letter-spacing: 2px;">TOP ${d.topPercent}% OF NEAR RACERS</div>`
+      ? `<div style="display: flex; margin-top: 28px; padding: 10px 22px; border-radius: 30px; background: ${accent}; color: ${CARD_NAVY}; font-size: 22px; font-weight: 900; letter-spacing: 2px;">TOP ${d.topPercent}% ${weekly ? 'THIS WEEK' : 'OF NEAR RACERS'}</div>`
       : '';
 
     const ogHtml = html(`
       <div style="display: flex; align-items: center; width: ${OG_W}px; height: ${OG_H}px; font-family: Orbitron; color: ${CARD_INK}; background-color: ${CARD_NAVY}; border-left: 12px solid ${accent};">
         <img src="__RACER_CARD__" style="width: ${cardW}px; height: ${cardH}px; margin-left: 40px;" />
         <div style="display: flex; flex-direction: column; align-items: flex-start; margin-left: 56px; width: ${OG_W - cardW - 150}px;">
-          <div style="display: flex; font-size: 24px; font-weight: 900; letter-spacing: 4px; color: ${accent};">NEAR RACER CARD</div>
+          <div style="display: flex; font-size: 24px; font-weight: 900; letter-spacing: 4px; color: ${accent};">${weekly ? 'WEEKLY RACER CARD' : 'NEAR RACER CARD'}</div>
           <div style="display: flex; margin-top: 18px; font-size: ${title.length > 12 ? 60 : 72}px; font-weight: 900; line-height: 1;">${esc(title)}</div>
           <div style="display: flex; margin-top: 14px; font-size: 30px; font-weight: 500; letter-spacing: 6px;">LEVEL ${esc(d.levelLabel)}</div>
           ${top}
