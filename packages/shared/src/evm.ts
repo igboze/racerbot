@@ -52,6 +52,20 @@ export const EVM_BPS_DIVISOR = 10000n;
 
 export type EvmChain = 'hyperevm' | 'elysium';
 
+/** HyperEVM and Elysium positions and fills store human token amounts ("423000.5"), not raw units */
+export function isEvmChainName(chain: unknown): chain is EvmChain {
+  return chain === 'hyperevm' || chain === 'elysium';
+}
+
+/**
+ * The whole-token amount of a stored position quantity or fill amount on an EVM chain. Those are saved as
+ * human amounts, so they must never be divided by 10^decimals the way NEAR's raw amounts are.
+ */
+export function evmStoredAmount(stored: unknown): number {
+  const n = parseFloat(String(stored ?? '0'));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export interface GeneratedEvmWallet {
   address: string;
   privateKey: string;

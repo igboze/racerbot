@@ -198,9 +198,10 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       const currentPrice = Number(data.current_price || 0);
       const entryPrice = Number(data.entry_price || 0);
       const isSolana = data.chain === 'solana';
-      const isStarknet = !isSolana && (data.chain === 'starknet' || (typeof token === 'string' && token.startsWith('0x') && !token.includes('::')));
-      const isSui = !isSolana && !isStarknet && (data.chain === 'sui' || (typeof token === 'string' && token.includes('::')));
-      const unit = isSolana ? 'SOL' : isStarknet ? 'STRK' : isSui ? 'SUI' : 'NEAR';
+      const isEvm = data.chain === 'hyperevm' || data.chain === 'elysium';
+      const isStarknet = !isSolana && !isEvm && (data.chain === 'starknet' || (typeof token === 'string' && token.startsWith('0x') && token.length !== 42 && !token.includes('::')));
+      const isSui = !isSolana && !isStarknet && !isEvm && (data.chain === 'sui' || (typeof token === 'string' && token.includes('::')));
+      const unit = isSolana ? 'SOL' : isEvm ? 'HYPE' : isStarknet ? 'STRK' : isSui ? 'SUI' : 'NEAR';
 
       let sym = 'TOKEN';
       let decimals = isSolana ? 6 : isStarknet ? 18 : isSui ? 9 : 18;
@@ -214,7 +215,7 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
       let humanQty = 0;
       try {
         const rawBig = BigInt(String(data.quantity_held || '0').split('.')[0]);
-        humanQty = Number(rawBig) / Math.pow(10, decimals);
+        humanQty = isEvm ? parseFloat(String(data.quantity_held || '0')) || 0 : Number(rawBig) / Math.pow(10, decimals);
       } catch {
         humanQty = parseFloat(String(data.quantity_held || '0'));
       }
