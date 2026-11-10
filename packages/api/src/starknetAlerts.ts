@@ -26,7 +26,7 @@ import {
   LAUNCHY_PLATFORM_FEE_SHARE_PCT,
   LAUNCHY_EKUBO_FEE_SHARE_PCT,
 } from '@racerbot/shared';
-import { escapeHtml, generateEmojiWaterfall, formatDisplayMarketCap } from './buyAlerts.js';
+import { escapeHtml, generateEmojiWaterfall, formatDisplayMarketCap, getBuyAlertEmojiTheme } from './buyAlerts.js';
 import { getTokenInfo } from './wallet.js';
 
 export const STARKNET_ALERTS_CHANNEL = process.env.STARKNET_ALERTS_CHANNEL || '@racerbotalert';
@@ -280,7 +280,7 @@ export async function sendStarknetTokenCreationAlert(params: {
       `💧 <b>Pool Fee:</b> 1% (50% Creator / 30% Launchy / 20% Ekubo)\n` +
       `🛡️ <b>Launch Protection:</b> Max 2% (20M tokens) per buy (First 15 min)\n` +
       `🏛️ <b>Launchpad:</b> 🚀 <b>Launchy</b> (Ekubo DEX)\n` +
-      `📈 <b>Status:</b> 🟢 Bonding Curve Active`;
+      `📈 <b>Status:</b> 🚀 <b>Bonding Curve Active</b>`;
 
     const row2: any[] = [
       Markup.button.url('🚀 starklaunchy.fun', launchyUrl),
@@ -370,7 +370,8 @@ export async function sendStarknetWhaleBuyAlert(params: {
   const buyerUrl = buyerFull && buyerFull !== 'Unknown' ? `https://starkscan.co/contract/${buyerFull}` : '';
   const isLaunchy = params.isLaunchy || isSameStarknetAddress(ca, LAUNCHY_TOKEN_ADDRESS);
 
-  const whaleBar = generateEmojiWaterfall(params.spentUsd, '🟢', '🐋');
+  const theme = getBuyAlertEmojiTheme(params.spentUsd);
+  const whaleBar = generateEmojiWaterfall(params.spentUsd, theme.emoji, theme.endEmoji);
 
   const mcapStr = formatDisplayMarketCap(params.marketCapUsd, isLaunchy) || formatUsdAmount(params.marketCapUsd);
   const priceStr = formatPriceAmount(params.priceUsd);
@@ -383,7 +384,7 @@ export async function sendStarknetWhaleBuyAlert(params: {
   const launchyUrl = `${LAUNCHY_OFFICIAL_URL}/token/${ca}`;
   const buyDeepLink = `https://t.me/${botUsername}?start=token_${ca}`;
 
-  const headerTitle = `🟢 <b>${escapeHtml(name.toUpperCase())} BUY!</b>`;
+  const headerTitle = `${theme.headerIcon} <b>${escapeHtml(name.toUpperCase())} BUY!</b>`;
 
   const venueLine = isLaunchy
     ? `🏛️ <b>Venue:</b> 🚀 <b>Launchy</b> (starklaunchy.fun)`

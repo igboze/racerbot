@@ -29,16 +29,16 @@ function emojiCount(s: string): number {
 
 describe('wealth tiers', () => {
   it('picks the documented emoji for each buy size', () => {
-    expect(getWealthTier(120).emoji).toBe('🪙');
-    expect(getWealthTier(499.99).emoji).toBe('🪙');
-    expect(getWealthTier(500).emoji).toBe('💵');
-    expect(getWealthTier(999).emoji).toBe('💵');
-    expect(getWealthTier(1_000).emoji).toBe('💰');
-    expect(getWealthTier(1_100).emoji).toBe('💰');
-    expect(getWealthTier(1_999).emoji).toBe('💰');
-    expect(getWealthTier(2_000).emoji).toBe('💎');
-    expect(getWealthTier(5_000).emoji).toBe('👑');
-    expect(getWealthTier(10_000).emoji).toBe('🏦');
+    expect(getWealthTier(120).emoji).toBe('🏎️');
+    expect(getWealthTier(499.99).emoji).toBe('🏎️');
+    expect(getWealthTier(500).emoji).toBe('🚀');
+    expect(getWealthTier(999).emoji).toBe('🚀');
+    expect(getWealthTier(1_000).emoji).toBe('🔥');
+    expect(getWealthTier(1_100).emoji).toBe('🔥');
+    expect(getWealthTier(1_999).emoji).toBe('🔥');
+    expect(getWealthTier(2_000).emoji).toBe('💰');
+    expect(getWealthTier(5_000).emoji).toBe('💎');
+    expect(getWealthTier(10_000).emoji).toBe('👑');
     expect(getWealthTier(25_000).emoji).toBe('🐋');
     expect(getWealthTier(5_000_000).emoji).toBe('🐋');
   });
@@ -69,8 +69,8 @@ describe('wealth tiers', () => {
     expect(getWealthEmojiCount(1_450)).toBe(23);
     expect(getWealthEmojiCount(1_999)).toBe(30);
     expect(getWealthEmojiCount(3_000)).toBe(30);
-    expect(buildWealthBar(1_450)).toBe('💰'.repeat(23));
-    expect(buildWealthBar(850)).toBe('💵'.repeat(18));
+    expect(buildWealthBar(1_450)).toBe('🔥'.repeat(23));
+    expect(buildWealthBar(850)).toBe('🚀'.repeat(18));
   });
 
   it('caps the bar so huge buys stay bounded', () => {
@@ -81,9 +81,9 @@ describe('wealth tiers', () => {
   });
 
   it('handles bad input without crashing', () => {
-    expect(buildWealthBar(NaN)).toBe('🪙'.repeat(4));
-    expect(buildWealthBar(-5)).toBe('🪙'.repeat(4));
-    expect(buildWealthBar(0)).toBe('🪙'.repeat(4));
+    expect(buildWealthBar(NaN)).toBe('🏎️'.repeat(4));
+    expect(buildWealthBar(-5)).toBe('🏎️'.repeat(4));
+    expect(buildWealthBar(0)).toBe('🏎️'.repeat(4));
   });
 });
 
@@ -126,7 +126,7 @@ describe('buildChannelBuyAlertText', () => {
     const text = buildChannelBuyAlertText(base);
     expect(text).toBe(
       [
-        `${'💰'.repeat(23)} <b>BIG BUY</b> · NEAR`,
+        `${'🔥'.repeat(23)} <b>BIG BUY</b> · NEAR`,
         '<b>Black Dragon</b> $BLACKDRAGON',
         '💸 <b>$1,450</b> (290 NEAR) → 25B',
         '📊 MC <b>$3.4M</b> ($3,400,000) · 💲0.000000034',

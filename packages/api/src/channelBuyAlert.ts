@@ -39,12 +39,12 @@ export interface WealthTier {
 export const MAX_WEALTH_EMOJIS = 60;
 
 export const WEALTH_TIERS: readonly WealthTier[] = [
-  { minUsd: 0, emoji: '🪙', label: 'BUY', baseCount: 4, stepUsd: 60, maxCount: 12 },
-  { minUsd: 500, emoji: '💵', label: 'NICE BUY', baseCount: 10, stepUsd: 40, maxCount: 22 },
-  { minUsd: 1_000, emoji: '💰', label: 'BIG BUY', baseCount: 16, stepUsd: 60, maxCount: 30 },
-  { minUsd: 2_000, emoji: '💎', label: 'HUGE BUY', baseCount: 22, stepUsd: 120, maxCount: 40 },
-  { minUsd: 5_000, emoji: '👑', label: 'ROYAL BUY', baseCount: 30, stepUsd: 200, maxCount: 48 },
-  { minUsd: 10_000, emoji: '🏦', label: 'MEGA BUY', baseCount: 38, stepUsd: 350, maxCount: 54 },
+  { minUsd: 0, emoji: '🏎️', label: 'BUY', baseCount: 4, stepUsd: 60, maxCount: 12 },
+  { minUsd: 500, emoji: '🚀', label: 'NICE BUY', baseCount: 10, stepUsd: 40, maxCount: 22 },
+  { minUsd: 1_000, emoji: '🔥', label: 'BIG BUY', baseCount: 16, stepUsd: 60, maxCount: 30 },
+  { minUsd: 2_000, emoji: '💰', label: 'HUGE BUY', baseCount: 22, stepUsd: 120, maxCount: 40 },
+  { minUsd: 5_000, emoji: '💎', label: 'DIAMOND BUY', baseCount: 30, stepUsd: 200, maxCount: 48 },
+  { minUsd: 10_000, emoji: '👑', label: 'ROYAL BUY', baseCount: 38, stepUsd: 350, maxCount: 54 },
   { minUsd: 25_000, emoji: '🐋', label: 'WHALE BUY', baseCount: 46, stepUsd: 600, maxCount: MAX_WEALTH_EMOJIS },
 ];
 

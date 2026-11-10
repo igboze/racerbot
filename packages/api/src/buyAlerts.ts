@@ -335,7 +335,33 @@ export function formatDisplayMarketCap(mcapUsd?: number | null, isBondingCurve =
   return `<b>${exact}</b> (${compact})${suffix}`;
 }
 
-export function generateEmojiWaterfall(spentUsd: number, emoji = '🟢', endEmoji = '🐋'): string {
+export interface BuyAlertEmojiTheme {
+  emoji: string;
+  headerIcon: string;
+  endEmoji: string;
+  tierLabel: string;
+}
+
+/**
+ * Returns dynamic, attention-grabbing crypto-native emojis tailored to the buy size.
+ * Replaces generic dull green circles with high-energy racing and wealth icons.
+ */
+export function getBuyAlertEmojiTheme(spentUsd: number): BuyAlertEmojiTheme {
+  const v = Number.isFinite(spentUsd) && spentUsd > 0 ? spentUsd : 0;
+  if (v >= 25_000) return { emoji: '🐋', headerIcon: '🚨🐋', endEmoji: '🌊', tierLabel: 'WHALE BUY' };
+  if (v >= 10_000) return { emoji: '👑', headerIcon: '👑', endEmoji: '🏆', tierLabel: 'ROYAL BUY' };
+  if (v >= 5_000)  return { emoji: '💎', headerIcon: '💎', endEmoji: '✨', tierLabel: 'DIAMOND BUY' };
+  if (v >= 2_000)  return { emoji: '💰', headerIcon: '💰', endEmoji: '🤑', tierLabel: 'HUGE BUY' };
+  if (v >= 1_000)  return { emoji: '🔥', headerIcon: '🔥', endEmoji: '💥', tierLabel: 'BIG BUY' };
+  if (v >= 500)    return { emoji: '🚀', headerIcon: '🚀', endEmoji: '🌕', tierLabel: 'NICE BUY' };
+  return { emoji: '🏎️', headerIcon: '🏎️💨', endEmoji: '🏁', tierLabel: 'BUY' };
+}
+
+export function generateEmojiWaterfall(spentUsd: number, emoji?: string, endEmoji?: string): string {
+  const theme = getBuyAlertEmojiTheme(spentUsd);
+  const activeEmoji = (!emoji || emoji === '🟢' || emoji === '🪙') ? theme.emoji : emoji;
+  const activeEnd = (!endEmoji || (endEmoji === '🐋' && activeEmoji !== '🐋')) ? theme.endEmoji : endEmoji;
+
   // Generous scaling so buyers feel the impact of large purchases
   // $100 -> ~10 emojis
   // $250 -> ~22 emojis (1 full row)
@@ -362,11 +388,11 @@ export function generateEmojiWaterfall(spentUsd: number, emoji = '🟢', endEmoj
   let remaining = count;
   while (remaining > 0) {
     const take = Math.min(remaining, lineLength);
-    lines.push(emoji.repeat(take));
+    lines.push(activeEmoji.repeat(take));
     remaining -= take;
   }
-  if (endEmoji && lines.length > 0) {
-    lines[lines.length - 1] += endEmoji;
+  if (activeEnd && lines.length > 0) {
+    lines[lines.length - 1] += activeEnd;
   }
   return lines.join('\n');
 }
@@ -452,9 +478,10 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     ? resolvedName.trim()
     : (event.token_address.split('.')[0] || symbol).toUpperCase();
 
+  const theme = getBuyAlertEmojiTheme(event.spent_usd);
   const headingTitle = `${escapeHtml(cleanName.toUpperCase())} BUY!`;
 
-  const whaleBar = generateEmojiWaterfall(event.spent_usd, '🟢', '🐋');
+  const whaleBar = generateEmojiWaterfall(event.spent_usd, theme.emoji, theme.endEmoji);
 
   const spentUsdStr = event.spent_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const priceFormatted = priceUsd && priceUsd > 0 ? formatPriceUsd(priceUsd) : '';
@@ -474,7 +501,7 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
   const mcapFormatted = formatDisplayMarketCap(mcapUsd, isBondingCurve);
 
   const text =
-    `🟢 <b>${headingTitle}</b>\n` +
+    `${theme.headerIcon} <b>${headingTitle}</b>\n` +
     `${whaleBar}\n\n` +
     `<blockquote>` +
     `💰 <b>Spent:</b> <b>$${spentUsdStr}</b> <code>(${escapeHtml(spentNativeClean)})</code>\n` +
@@ -1269,7 +1296,7 @@ export async function handleBuyAlertAction(ctx: Context): Promise<void> {
     }
 
     case 'ba_cycle_emoji': {
-      const emojis = ['🏎️', '🚀', '🟢', '🔥', '💎', '🐂', '⚡', '💰'];
+      const emojis = ['🏎️', '🚀', '🔥', '💎', '👑', '⚡', '💰', '🐂', '🐋'];
       const curIdx = emojis.indexOf(currentAlert.emoji);
       const nextEmoji = curIdx === -1 || curIdx >= emojis.length - 1 ? emojis[0] : emojis[curIdx + 1];
       const updated = await updateGroupBuyAlert(alertId, { emoji: nextEmoji });

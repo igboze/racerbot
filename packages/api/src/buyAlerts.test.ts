@@ -451,9 +451,10 @@ describe('Group Buy Alerts Engine', () => {
       expect(mockSendMessage).toHaveBeenCalledTimes(1);
       const [channel, msgText, extra] = mockSendMessage.mock.calls[0];
       expect(channel).toBe('@racerbotalert');
-      expect(msgText).toContain('🟢 <b>BLACK DRAGON BUY!</b>');
-      expect(msgText).toContain('🟢');
-      expect(msgText).toContain('🐋');
+      expect(msgText).toContain('🚀 <b>BLACK DRAGON BUY!</b>');
+      expect(msgText).toContain('🚀');
+      expect(msgText).toContain('🌕');
+      expect(msgText).not.toContain('🟢');
       expect(msgText).toContain('<b>Black Dragon</b>');
       expect(msgText).toContain('$BLACKDRAGON');
       expect(msgText).toContain('<b>$850.00</b>');
