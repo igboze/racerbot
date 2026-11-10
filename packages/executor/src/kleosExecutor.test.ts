@@ -377,5 +377,19 @@ describe('executeKleosSwap', () => {
     await executeKleosSwap({ ...event('sell', '500'), venue: 'univ4' } as any, TREASURY);
     expect(shared.ascendSellApprovals).toHaveBeenCalled();
   });
+
+  it('refuses to buy a coin whose pool pays sellers almost nothing (GASCOIN), checked at the real buy size', async () => {
+    const shared = await import('@racerbot/shared');
+    const route = { quote: shared.ASCEND.whype, quoteSymbol: 'WHYPE', marketPriceHype: 9.09e-7,
+      launchKey: { currency0: COIN, currency1: shared.ASCEND.whype, fee: 100, tickSpacing: 1, hooks: '0xF85360B74b9122f919B84655760bF26c29768144' } };
+    vi.mocked(shared.resolveKleosRoute).mockResolvedValueOnce({ kind: 'univ4', router: shared.ASCEND.universalRouter, hopFee: 0, ascend: route } as any);
+    vi.mocked(shared.quoteKleos).mockResolvedValueOnce(ethers.parseEther('10000'));
+    vi.mocked(shared.simulateV4RoundTrip).mockClear().mockResolvedValueOnce('sells_return_little');
+    state.l2Balances = [ethers.parseEther('1')];
+    const res = await executeKleosSwap({ ...event('buy', '0.01'), venue: 'univ4' } as any, TREASURY);
+    expect(res.reason).toMatch(/selling right after buying gave back less than half.*Nothing was spent/);
+    expect(vi.mocked(shared.simulateV4RoundTrip).mock.calls[0][3]).toBe(ethers.parseEther('0.00985'));
+    expect(state.l2Sent).toHaveLength(0);
+  });
 });
 
