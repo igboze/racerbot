@@ -9,6 +9,8 @@ import {
   encodeAscendSell,
   UNIVERSAL_ROUTER_ABI,
   findElysiumV4Route,
+  isSaneV4Fee,
+  quoteMatchesMarket,
   type AscendRoute,
 } from './ascend.js';
 import { vi } from 'vitest';
@@ -138,15 +140,18 @@ describe('Coins from other Elysium launchpads (any Uniswap v4 pool against HYPE)
     vi.unstubAllGlobals();
   });
 
-  it('takes a pool from the Kleos app only when its settings hash to the pool id it names (HELIOS)', async () => {
+  it('takes a pool from the Kleos app only when it hashes to the pool id it names and is the deepest pool (HELIOS)', async () => {
     const HELIOS = '0x875E0130b52404c75f594EA8451597dd16C6B6e4';
     const HOOK = '0x10F11002b148BE522005f9b5D666bef339392aEC';
     const goodKey = { currency0: ethers.ZeroAddress, currency1: HELIOS, fee: 0, tickSpacing: 200, hooks: HOOK };
     const asset = (poolId: string) => ({ venue: 'v4', router: ASCEND.universalRouter, hooks: HOOK, fee: 0, tickSpacing: 200, pool: { id: poolId, v4: true } });
     const provider = { getBlockNumber: vi.fn(async () => 1), getLogs: vi.fn(async () => []) } as any;
 
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(asset(v4PoolId(goodKey))), { status: 200 })));
-    expect(await findElysiumV4Route(provider, HELIOS)).toEqual({ quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: goodKey });
+    // Accepted because it is also DexScreener's deepest HYPE pool for the coin
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('thekleos')
+      ? asset(v4PoolId(goodKey))
+      : { pairs: [{ chainId: 'elysium', pairAddress: v4PoolId(goodKey), baseToken: { address: HELIOS }, quoteToken: { address: ethers.ZeroAddress }, liquidity: { usd: 61540 }, priceNative: '0.0000034' }] }), { status: 200 })));
+    expect(await findElysiumV4Route(provider, HELIOS)).toEqual({ quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: goodKey, marketPriceHype: 0.0000034 });
     expect(provider.getLogs).not.toHaveBeenCalled(); // no slow log search
 
     // Settings that do not hash to the pool id are ignored (and DexScreener lists nothing here)
@@ -154,6 +159,39 @@ describe('Coins from other Elysium launchpads (any Uniswap v4 pool against HYPE)
     vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('thekleos') ? asset('0x' + '2'.repeat(64)) : { pairs: [] }), { status: 200 })));
     expect(await findElysiumV4Route(provider, OTHER)).toBeNull();
     vi.unstubAllGlobals();
+  });
+
+  it('never routes into a decoy pool: GASCOIN has 80-98% fee HYPE pools with dollars in them, and a real WHYPE pool', async () => {
+    const GAS = '0xa1b087191256bc33beea43a875da6a571c465ae3';
+    const trapKey = { currency0: ethers.ZeroAddress, currency1: ethers.getAddress(GAS), fee: 890000, tickSpacing: 200, hooks: ethers.ZeroAddress };
+    const realKey = { currency0: ethers.getAddress(GAS), currency1: ASCEND.whype, fee: 100, tickSpacing: 1, hooks: '0xF85360B74b9122f919B84655760bF26c29768144' };
+    const iface = new ethers.Interface(['event Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1, uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)']);
+    const logFor = (k: any) => ({ ...iface.encodeEventLog('Initialize', [v4PoolId(k), k.currency0, k.currency1, k.fee, k.tickSpacing, k.hooks, 1n, 0]), address: ASCEND.poolManager });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.includes('thekleos')
+      // The Kleos app names the decoy pool
+      ? { venue: 'v4', router: ASCEND.universalRouter, hooks: ethers.ZeroAddress, fee: 890000, tickSpacing: 200, pool: { id: v4PoolId(trapKey) } }
+      : { pairs: [
+        { chainId: 'elysium', pairAddress: v4PoolId(trapKey), baseToken: { address: GAS }, quoteToken: { address: ethers.ZeroAddress }, liquidity: { usd: 2.3 }, priceNative: '0.00000008' },
+        { chainId: 'elysium', pairAddress: v4PoolId(realKey), baseToken: { address: GAS }, quoteToken: { address: ASCEND.whype }, liquidity: { usd: 13767 }, priceNative: '0.0000006771' },
+      ] }), { status: 200 })));
+    const provider = {
+      getBlockNumber: async () => 100,
+      getLogs: vi.fn(async (f: any) => [f.topics[1] === v4PoolId(realKey) ? logFor(realKey) : logFor(trapKey)]),
+    } as any;
+    const route = await findElysiumV4Route(provider, GAS);
+    expect(route).toMatchObject({ quote: ASCEND.whype, launchKey: { fee: 100 }, marketPriceHype: 0.0000006771 });
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects trap fees and quotes far below the market price', () => {
+    expect(isSaneV4Fee(890000)).toBe(false);
+    expect(isSaneV4Fee(30000)).toBe(true);
+    expect(isSaneV4Fee(0x800000)).toBe(true);
+    const hypeIn = ethers.parseEther('0.01');
+    // Market: 0.01 HYPE at 6.771e-7 HYPE per coin = ~14,769 coins
+    expect(quoteMatchesMarket(hypeIn, ethers.parseEther('14500'), 18, 0.0000006771)).toBe(true);
+    expect(quoteMatchesMarket(hypeIn, ethers.parseEther('1500'), 18, 0.0000006771)).toBe(false);
+    expect(quoteMatchesMarket(hypeIn, 1n, 18, undefined)).toBe(true);
   });
 });
 

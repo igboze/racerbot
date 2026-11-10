@@ -81,6 +81,7 @@ vi.mock('@racerbot/shared', async (importOriginal) => {
     }),
     resolveKleosRoute: vi.fn(async () => ({ kind: 'v4', router: V4_ROUTER, hopFee: 0 })),
     ascendSellApprovals: vi.fn(async () => []),
+    simulateV4RoundTrip: vi.fn(async () => 'ok'),
     montraSellApprovals: vi.fn(async () => []),
     quoteKleos: vi.fn(async (_p: unknown, _r: unknown, _t: string, side: string) => (side === 'buy' ? ethers.parseEther('1000') : ethers.parseEther('0.05'))),
   };
@@ -340,6 +341,41 @@ describe('executeKleosSwap', () => {
     expect(res).toMatchObject({ success: true });
     expect(state.l2Sent.map(t => t.to)).toEqual([COIN, LR, TREASURY]);
     expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'montra' }));
+  });
+
+  it('refuses a buy through a pool that would give far fewer coins than the market price (a decoy pool)', async () => {
+    const shared = await import('@racerbot/shared');
+    const route = { quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', marketPriceHype: 0.0000006771,
+      launchKey: { currency0: ethers.ZeroAddress, currency1: COIN, fee: 890000, tickSpacing: 200, hooks: ethers.ZeroAddress } };
+    vi.mocked(shared.resolveKleosRoute).mockResolvedValueOnce({ kind: 'univ4', router: shared.ASCEND.universalRouter, hopFee: 0, ascend: route } as any);
+    state.l2Balances = [ethers.parseEther('1')];
+    const res = await executeKleosSwap({ ...event('buy', '0.01'), venue: 'univ4' } as any, TREASURY);
+    expect(res.success).toBe(false);
+    expect(res.reason).toMatch(/far fewer coins than the market price.*Nothing was spent/);
+    expect(state.l2Sent).toHaveLength(0);
+  });
+
+  it('refuses to buy a coin from an unknown launchpad when a test buy-then-sell shows it cannot be sold', async () => {
+    const shared = await import('@racerbot/shared');
+    const route = { quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: { currency0: ethers.ZeroAddress, currency1: COIN, fee: 0x800000, tickSpacing: 200, hooks: '0x6b1216A40B65c83e9c9e18a562C446697B8cf8EC' } };
+    vi.mocked(shared.resolveKleosRoute).mockResolvedValueOnce({ kind: 'univ4', router: shared.ASCEND.universalRouter, hopFee: 0, ascend: route } as any);
+    vi.mocked(shared.simulateV4RoundTrip).mockResolvedValueOnce('sell_blocked');
+    state.l2Balances = [ethers.parseEther('1')];
+    const res = await executeKleosSwap({ ...event('buy', '0.01'), venue: 'univ4' } as any, TREASURY);
+    expect(res.success).toBe(false);
+    expect(res.reason).toMatch(/won't buy this coin.*honeypot.*Nothing was spent/);
+    expect(state.l2Sent).toHaveLength(0);
+  });
+
+  it('sells a Uniswap v4 coin through Permit2, not a plain approval (its router pulls coins via Permit2)', async () => {
+    const shared = await import('@racerbot/shared');
+    const route = { quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: { currency0: ethers.ZeroAddress, currency1: COIN, fee: 0, tickSpacing: 200, hooks: '0x10F11002b148BE522005f9b5D666bef339392aEC' } };
+    vi.mocked(shared.resolveKleosRoute).mockResolvedValueOnce({ kind: 'univ4', router: shared.ASCEND.universalRouter, hopFee: 0, ascend: route } as any);
+    vi.mocked(shared.ascendSellApprovals).mockClear();
+    state.coinBalance = ethers.parseEther('500');
+    state.l2Balances = [ethers.parseEther('0.01'), ethers.parseEther('0.06')];
+    await executeKleosSwap({ ...event('sell', '500'), venue: 'univ4' } as any, TREASURY);
+    expect(shared.ascendSellApprovals).toHaveBeenCalled();
   });
 });
 
