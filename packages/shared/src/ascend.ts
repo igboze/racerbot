@@ -6,6 +6,7 @@
  * Addresses come from Ascend's app bundle (deployment for chain 99901, deployBlock 422319).
  */
 import { ethers } from 'ethers';
+import { FailoverJsonRpcProvider, getElysiumMainnetRpcUrls } from './evm.js';
 
 const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
 
@@ -307,15 +308,39 @@ const V4_MISS_TTL_MS = 3 * 60_000;
  * The pool key behind a pool id, from the PoolManager's Initialize event. Searches back from the newest block,
  * where launchpad pools usually are, in chunks an RPC accepts.
  */
+let logProvider: ethers.JsonRpcProvider | null = null;
+function elysiumLogProvider(): ethers.JsonRpcProvider {
+  const network = new ethers.Network('elysium', 99901);
+  logProvider ??= new ethers.JsonRpcProvider(getElysiumMainnetRpcUrls()[0], network, { staticNetwork: network, batchMaxCount: 1 });
+  return logProvider;
+}
+
+/** A log search tried up to three times, with a short pause, since public RPCs drop some under load */
+async function getLogsWithRetry(provider: ethers.Provider, filter: ethers.Filter): Promise<ethers.Log[]> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await provider.getLogs(filter);
+    } catch (err) {
+      lastErr = err;
+      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 export async function findV4PoolKey(provider: ethers.Provider, poolId: string, chunk = 150_000): Promise<V4PoolKey | null> {
   const iface = new ethers.Interface(INITIALIZE_ABI);
   const topic = iface.getEvent('Initialize')!.topicHash;
-  const latest = await provider.getBlockNumber();
+  // The bot's Elysium provider batches requests and can fail over to a node that caps log searches at 10,000
+  // blocks; log searches get their own plain connection to the first RPC instead
+  const logSource = provider instanceof FailoverJsonRpcProvider ? elysiumLogProvider() : provider;
+  const latest = await logSource.getBlockNumber();
   for (let to = latest; to >= 0; to -= chunk) {
     const from = Math.max(0, to - chunk + 1);
     const filter = { address: ASCEND.poolManager, topics: [topic, poolId], fromBlock: from, toBlock: to };
     // A busy RPC can time out on a log search: try each chunk twice before giving up
-    const logs = await provider.getLogs(filter).catch(() => provider.getLogs(filter));
+    const logs = await getLogsWithRetry(logSource, filter);
     if (logs.length > 0) {
       const e = iface.parseLog(logs[0])!;
       return { currency0: e.args.currency0, currency1: e.args.currency1, fee: Number(e.args.fee), tickSpacing: Number(e.args.tickSpacing), hooks: e.args.hooks };
@@ -336,11 +361,14 @@ export async function findElysiumV4Route(provider: ethers.Provider, token: strin
   const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ethers.getAddress(token)}`, { signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`DexScreener returned ${res.status}`);
   const data: any = await res.json();
+  // A busy DexScreener can answer with no pairs at all: that is not proof there is no pool, so it is not remembered
+  if (!Array.isArray(data?.pairs) || data.pairs.length === 0) return null;
   const hypeQuotes = new Set([NATIVE, ASCEND.whype.toLowerCase()]);
   // The coin's HYPE / WHYPE pools, deepest first. A coin can have decoy pools with tiny liquidity and huge
   // fees, so only the deepest pool is the market; a shallower one is used only if the deepest can't be read.
   const pools = (data?.pairs ?? [])
-    .filter((p: any) => p.chainId === 'elysium' && /^0x[0-9a-fA-F]{64}$/.test(p.pairAddress ?? '')
+    // Only Uniswap's pools live on this PoolManager (BOXA, ElysPump etc. list their own dexId and PoolManager)
+    .filter((p: any) => p.chainId === 'elysium' && (p.dexId === 'uniswap' || !p.dexId) && /^0x[0-9a-fA-F]{64}$/.test(p.pairAddress ?? '')
       && p.baseToken?.address?.toLowerCase() === key && hypeQuotes.has(String(p.quoteToken?.address).toLowerCase()))
     .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
   const top = pools[0];

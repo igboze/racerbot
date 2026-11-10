@@ -391,5 +391,20 @@ describe('executeKleosSwap', () => {
     expect(vi.mocked(shared.simulateV4RoundTrip).mock.calls[0][3]).toBe(ethers.parseEther('0.00985'));
     expect(state.l2Sent).toHaveLength(0);
   });
+
+  it('still buys with Elysium HYPE when HyperEVM keeps answering "invalid block height"', async () => {
+    const lagging = Object.assign(new Error('could not coalesce error'), { error: { code: -32603, message: 'invalid block height: 50880334' } });
+    l1.getBlock.mockRejectedValue(lagging);
+    try {
+      state.l2Balances = [ethers.parseEther('1')];
+      state.tokenBalances = [0n, ethers.parseEther('990')];
+      const res = await executeKleosSwap(event('buy', '0.01') as any, TREASURY);
+      expect(res).toMatchObject({ success: true });
+      expect(state.l2Sent).toHaveLength(1);
+      expect(state.l1Sent).toHaveLength(0);
+    } finally {
+      l1.getBlock.mockReset().mockImplementation(async () => ({ baseFeePerGas: 100_000_000n }));
+    }
+  });
 });
 

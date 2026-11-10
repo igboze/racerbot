@@ -229,12 +229,15 @@ export class FailoverJsonRpcProvider extends ethers.JsonRpcProvider {
 
   override async _send(payload: ethers.JsonRpcPayload | ethers.JsonRpcPayload[]): Promise<ethers.JsonRpcResult[]> {
     let lastErr: unknown;
+    // Log searches go to the first RPC first: some public nodes (Kleos's) cap a log search at 10,000 blocks
+    const hasLogSearch = (Array.isArray(payload) ? payload : [payload]).some(p => p.method === 'eth_getLogs');
+    const start = hasLogSearch ? 0 : this.preferred;
     for (let i = 0; i < this.backends.length; i++) {
-      const at = (this.preferred + i) % this.backends.length;
+      const at = (start + i) % this.backends.length;
       try {
         const results = await withRpcTimeout(this.backends[at]._send(payload), ELYSIUM_RPC_TIMEOUT_MS);
         if (!results.some(isTransientRpcError)) {
-          this.preferred = at; // stick with an RPC that answers
+          if (!hasLogSearch) this.preferred = at; // stick with an RPC that answers
           return results;
         }
         lastErr = new Error(`RPC ${at} is busy`);
@@ -261,7 +264,9 @@ function isTransientRpcError(result: any): boolean {
   if (!err) return false;
   const msg = String(err.message || '').toLowerCase();
   return err.code === -32005 || err.code === 429 || msg.includes('rate limit') || msg.includes('too many requests') ||
-    msg.includes('timeout') || msg.includes('timed out') || msg.includes('unavailable') || msg.includes('overloaded');
+    msg.includes('timeout') || msg.includes('timed out') || msg.includes('unavailable') || msg.includes('overloaded') ||
+    // A node that caps log searches ("Log range exceeds 10,000 blocks"): another node can answer the same search
+    (msg.includes('range') && (msg.includes('exceed') || msg.includes('too large') || msg.includes('limit') || msg.includes('pieces')));
 }
 
 export function getEvmProvider(chain: EvmChain, isTestnet = false): ethers.JsonRpcProvider {

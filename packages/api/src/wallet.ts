@@ -1211,7 +1211,9 @@ export async function lookupKleosToken(address: string, boardCoin?: any): Promis
     // A Kleos router that quotes it proves it is Kleos's; otherwise say plainly that it can't be traded here.
     // Kleos's own routers only: other launchpads' coins are looked up next (BOXA, ElysPump, any Uniswap v4 pool),
     // which also price them. Allowing those here would label them Kleos coins priced at 0.
-    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address, undefined, { allowUniV4: false }).then(() => true).catch(() => false);
+    const kleosKinds = ['classic', 'v4', 'v5', 'pair', 'hop'];
+    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address, undefined, { allowUniV4: false })
+      .then(r => kleosKinds.includes(r.kind)).catch(() => false);
     if (!routed) {
       noRouteReason = 'RacerBot could not find a HYPE pool for this Elysium token yet, so it cannot be bought here right now.';
     }
@@ -1903,16 +1905,19 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
       if (!tokenMeta && !dexscreenerData) {
         // Elysium mainnet launchpads: RonsPad, Montra and Ascend name their launches on chain, then Kleos coins newer than its board
-        let kleos = (await lookupRonsPadToken(tokenAddress).catch(() => null))
-          ?? (await lookupMontraToken(tokenAddress, null).catch(() => null))
-          ?? (await lookupAscendToken(tokenAddress).catch(() => null))
-          ?? await lookupKleosToken(tokenAddress, null).catch(() => null);
-        // Not a Kleos coin either: another launchpad's coin trades through its Uniswap v4 pool against HYPE
-        if (!kleos || (kleos.venue === 'kleos' && kleos.trade_block_reason)) {
-          kleos = (await lookupPadToken(tokenAddress).catch(() => null))
-            ?? (await lookupUniV4Token(tokenAddress).catch(() => null))
-            ?? kleos;
-        }
+        // Every launchpad is asked at once (one after another took 15-20s, past Telegram's patience), then the
+        // answer is picked in this order: RonsPad, Montra, Ascend, a Kleos coin, BOXA / ElysPump, any Uniswap v4
+        // pool, and last a Kleos read-only card that says why it can't be traded
+        const [ronsPad, montra, ascend, kleosCard, pad, univ4] = await Promise.all([
+          lookupRonsPadToken(tokenAddress).catch(() => null),
+          lookupMontraToken(tokenAddress, null).catch(() => null),
+          lookupAscendToken(tokenAddress).catch(() => null),
+          lookupKleosToken(tokenAddress, null).catch(() => null),
+          lookupPadToken(tokenAddress).catch(() => null),
+          lookupUniV4Token(tokenAddress).catch(() => null),
+        ]);
+        const kleosTradeable = kleosCard && !kleosCard.trade_block_reason ? kleosCard : null;
+        const kleos = ronsPad ?? montra ?? ascend ?? kleosTradeable ?? pad ?? univ4 ?? kleosCard;
         if (kleos) {
           tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
           tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });

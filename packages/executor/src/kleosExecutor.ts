@@ -118,6 +118,23 @@ const notYetConfirmed = (what: string, elysiumTx: string): string =>
   `${what} was sent to Elysium (${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${elysiumTx}) but no confirmation arrived yet. ` +
   `Check your balance before trying again, so you don't trade twice.`;
 
+/**
+ * A read tried up to three times with a short pause: public RPCs answer some calls from a node that is a block
+ * behind ("invalid block height") or busy, and one such answer must not stop a trade.
+ */
+async function retryRead<T>(read: () => Promise<T>, tries = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      return await read();
+    } catch (err) {
+      lastErr = err;
+      await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 const isAlreadyKnown = (err: any): boolean =>
   /already known|known transaction/i.test(String(err?.info?.error?.message || err?.error?.message || err?.shortMessage || err?.message || ''));
 
@@ -178,7 +195,7 @@ export async function executeKleosSwap(
   const venueName = elysiumPadName(fillVenue);
 
   const direct = isElysiumDirectSend();
-  const l2Block = await l2.getBlock('latest');
+  const l2Block = await retryRead(() => l2.getBlock('latest'));
   const l2MaxFee = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);
   // A direct transaction runs within seconds; an inbox message can wait up to the 24h force-inclusion delay
   const deadline = BigInt(Math.floor(Date.now() / 1000) + (direct ? 20 * 60 : INBOX_DEADLINE_SEC));
@@ -252,7 +269,12 @@ export async function executeKleosSwap(
     }
     const minOut = calculateSlippageMin(expectedOut, slippage_pct);
 
-    const [l1Balance, l2Balance, l1Block] = await Promise.all([l1.getBalance(userAddress), l2.getBalance(userAddress), l1.getBlock('latest')]);
+    // HyperEVM only matters for a buy paid from HyperEVM HYPE: if it can't be read, pay from Elysium HYPE alone
+    const [l2Balance, [l1Balance, l1Block]] = await Promise.all([
+      retryRead(() => l2.getBalance(userAddress)),
+      Promise.all([retryRead(() => l1.getBalance(userAddress)), retryRead(() => l1.getBlock('latest'))])
+        .catch(() => [0n, null] as [bigint, ethers.Block | null]),
+    ]);
     const topUp = l2Balance < KLEOS_SELL_GAS_TOPUP ? KLEOS_SELL_GAS_TOPUP : 0n;
     const swap = encodeKleosBuy(route, token, netTradeAmount, minOut, userAddress, deadline);
     const signedCall = encodeKleosBuyWithTransfers([{ to: treasury, value: feeAmount }], swap);
@@ -406,7 +428,7 @@ export async function executeKleosSwap(
   calls.push({ call: sell, gasLimit: KLEOS_INBOX_TRADE_GAS });
 
   const gasNeeded = calls.reduce((sum, c) => sum + c.gasLimit, 0n) * l2MaxFee;
-  const [l1Balance, l2Before] = await Promise.all([l1.getBalance(userAddress), l2.getBalance(userAddress)]);
+  const [l1Balance, l2Before] = await Promise.all([retryRead(() => l1.getBalance(userAddress)), retryRead(() => l2.getBalance(userAddress))]);
   if (l1Balance < HYPEREVM_INBOX_GAS_RESERVE) {
     return fail(`Selling on Kleos needs about ${ethers.formatEther(HYPEREVM_INBOX_GAS_RESERVE)} HYPE on HyperEVM for the inbox transaction. You have ${ethers.formatEther(l1Balance)}.`);
   }
@@ -435,7 +457,7 @@ export async function executeKleosSwap(
   /** Approve (when needed), then sell, each sent straight to Elysium and confirmed before the next */
   async function sellDirect(): Promise<EvmSwapExecutionResult> {
     const gasNeeded = (ELYSIUM_DIRECT_APPROVE_GAS * BigInt(approvals.length) + ELYSIUM_DIRECT_TRADE_GAS) * l2MaxFee;
-    const l2Before = await l2.getBalance(userAddress);
+    const l2Before = await retryRead(() => l2.getBalance(userAddress));
     if (l2Before < gasNeeded) {
       return fail(
         `Selling needs about ${ethers.formatEther(gasNeeded)} HYPE on Elysium for gas; you have ${ethers.formatEther(l2Before)}. ` +
