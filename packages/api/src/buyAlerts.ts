@@ -23,6 +23,7 @@ import {
   type GroupBuyAlertRecord,
 } from '@racerbot/db';
 import { getTokenInfo, isSuiToken } from './wallet.js';
+import { buildChannelBuyAlertText } from './channelBuyAlert.js';
 
 let _bot: Telegraf | null = null;
 
@@ -310,14 +311,6 @@ export function isNearMemeToken(
   return true;
 }
 
-function formatCompactUsd(val?: number): string {
-  if (!val || isNaN(val) || val <= 0) return '';
-  if (val >= 1_000_000_000) return `$${(val / 1_000_000_000).toFixed(2)}B`;
-  if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(2)}M`;
-  if (val >= 10_000) return `$${(val / 1_000).toFixed(1)}K`;
-  return `$${val.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-}
-
 function resolveNearVenueLabel(tokenAddress: string, cachedVenue?: string | null): string {
   const addr = (tokenAddress || '').toLowerCase();
   const v = (cachedVenue || '').toLowerCase();
@@ -330,15 +323,6 @@ function resolveNearVenueLabel(tokenAddress: string, cachedVenue?: string | null
   if (addr.includes('gaypad.j1-racing.near') || v.includes('gaypad')) return '🏁 J1 Gaypad';
   if (addr.includes('shoremarkets.near') || v.includes('shoremarkets')) return '🌊 ShoreMarkets';
   return '⚡ Rhea Finance';
-}
-
-function formatSpentNativeClean(spentNative: string): string {
-  const m = String(spentNative || '').trim().match(/^([0-9.,]+)\s*(.*)$/);
-  if (!m) return spentNative;
-  const num = parseFloat(m[1].replace(/,/g, ''));
-  const unit = m[2] || 'NEAR';
-  if (isNaN(num)) return spentNative;
-  return `${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
 }
 
 /**
@@ -399,44 +383,26 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     ? resolvedName.trim()
     : (event.token_address.split('.')[0] || symbol).toUpperCase();
 
-  const headingTitle = `${escapeHtml(cleanName.toUpperCase())} BUY!`;
-
-  const greenDotsCount = Math.min(18, Math.max(3, Math.round(event.spent_usd / 250)));
-  const whaleBar = `${'🟢'.repeat(greenDotsCount)}🐋`;
-
-  const spentUsdStr = event.spent_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const priceFormatted = priceUsd && priceUsd > 0 ? formatPriceUsd(priceUsd) : '';
   const venueLabel = resolveNearVenueLabel(event.token_address, tokenCache?.venue);
-  const spentNativeClean = formatSpentNativeClean(event.spent_amount_native);
-
-  const buyerDisplay = maskAddress(event.buyer_address);
   const buyerUrl = event.buyer_address && event.buyer_address !== 'Unknown'
     ? `https://nearblocks.io/address/${encodeURIComponent(event.buyer_address)}`
     : '';
-  const buyerLinkHtml = buyerUrl
-    ? `<a href="${buyerUrl}">${escapeHtml(buyerDisplay)}</a>`
-    : `<code>${escapeHtml(buyerDisplay)}</code>`;
-  const buyerBalSuffix = event.buyer_near_balance != null && event.buyer_near_balance > 0
-    ? ` • <code>${Number(event.buyer_near_balance).toLocaleString('en-US', { maximumFractionDigits: 1 })} NEAR</code>`
-    : '';
 
-  const mcapFormatted = mcapUsd && mcapUsd > 0
-    ? `<b>${formatCompactUsd(mcapUsd)}</b> <code>($${mcapUsd.toLocaleString('en-US', { maximumFractionDigits: 0 })})</code>`
-    : '';
-
-  const text =
-    `🟢 <b>${headingTitle}</b>\n` +
-    `${whaleBar}\n\n` +
-    `<blockquote>` +
-    `💰 <b>Spent:</b> <b>$${spentUsdStr}</b> <code>(${escapeHtml(spentNativeClean)})</code>\n` +
-    `📦 <b>Bought:</b> <b>${escapeHtml(event.tokens_received)}</b>\n` +
-    (priceFormatted ? `💵 <b>Price:</b> <code>$${priceFormatted}</code>\n` : '') +
-    (mcapFormatted ? `📊 <b>Market Cap:</b> ${mcapFormatted}\n` : '') +
-    `🏛️ <b>Venue:</b> ${venueLabel}` +
-    `</blockquote>\n\n` +
-    `🪙 <b>Token:</b> <b>${escapeHtml(cleanName)}</b> (<code>$${escapeHtml(symbol)}</code>)\n` +
-    `👤 <b>Buyer:</b> ${buyerLinkHtml}${buyerBalSuffix}\n` +
-    `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>`;
+  // Compact mobile layout + wealth-tier emoji bar (see channelBuyAlert.ts)
+  const text = buildChannelBuyAlertText({
+    chainLabel: 'NEAR',
+    tokenName: cleanName,
+    tokenSymbol: symbol,
+    tokenAddress: event.token_address,
+    spentUsd: event.spent_usd,
+    spentNative: event.spent_amount_native,
+    tokensReceived: event.tokens_received,
+    priceUsd,
+    marketCapUsd: mcapUsd,
+    buyerAddress: event.buyer_address,
+    buyerUrl,
+    venue: venueLabel,
+  });
 
   const explorerUrl = event.tx_hash
     ? `https://nearblocks.io/txns/${event.tx_hash}`
@@ -446,17 +412,13 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     : `https://dexscreener.com/near/${event.token_address}`;
   const buyDeepLink = `https://t.me/${botUsername}?start=${getShortTokenKey(event.token_address)}`;
 
-  const row2Buttons = [
-    Markup.button.url('📈 Chart', chartUrl),
-    Markup.button.url('🔍 Tx', explorerUrl),
-  ];
-  if (buyerUrl) {
-    row2Buttons.push(Markup.button.url('👤 Buyer', buyerUrl));
-  }
-
+  // Buyer is already a link in the text, so two buttons are enough here.
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.url(`⚡ Buy $${symbol} on RacerBot`, buyDeepLink)],
-    row2Buttons,
+    [
+      Markup.button.url('📈 Chart', chartUrl),
+      Markup.button.url('🔍 Tx', explorerUrl),
+    ],
   ]);
 
   await _bot.telegram.sendMessage(NEAR_WHALE_CHANNEL, text, {
@@ -561,31 +523,8 @@ export async function dispatchBuyAlert(event: BuyAlertEvent): Promise<void> {
     }
   }
 
-  // Forward Starknet Whale Buys to @racerbotalert channel ($1000+ for >400k MC, $200+ for new / <=400k MC)
-  if (event.chain === 'starknet') {
-    try {
-      const { sendStarknetWhaleBuyAlert, getStarknetWhaleThreshold } = await import('./starknetAlerts.js');
-      const threshold = getStarknetWhaleThreshold(event.market_cap_usd);
-      if (event.spent_usd >= threshold) {
-        await sendStarknetWhaleBuyAlert({
-          tokenAddress: event.token_address,
-          tokenName: event.token_name || 'Starknet Token',
-          tokenSymbol: event.token_symbol || 'TOKEN',
-          buyerAddress: event.buyer_address,
-          spentUsd: event.spent_usd,
-          spentNative: event.spent_amount_native,
-          tokensReceived: event.tokens_received,
-          priceUsd: event.price_usd,
-          marketCapUsd: event.market_cap_usd,
-          txHash: event.tx_hash,
-        });
-      }
-    } catch (e: any) {
-      console.warn('[BUY_ALERTS] Starknet whale channel broadcast failed:', e?.message);
-    }
-  }
-
-  // Forward NEAR whale buys ($500+) to the public alerts channel
+  // Only NEAR whale buys ($500+) go to the public alerts channel.
+  // Starknet buys are intentionally NOT posted there any more.
   if (event.chain === 'near' && event.spent_usd >= NEAR_WHALE_CHANNEL_MIN_USD) {
     await sendNearWhaleChannelAlert(event).catch((e: any) =>
       console.warn('[BUY_ALERTS] NEAR whale channel broadcast failed:', e?.message)
