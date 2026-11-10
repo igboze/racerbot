@@ -1669,7 +1669,7 @@
     async function pollRestData() {
       try {
         const [compRes, snapRes] = await Promise.all([
-          fetch('/api/competition/kookdog').then(r => r.json()).catch(() => null),
+          fetch('/api/competition-data?id=kookdog').then(r => r.ok ? r.json() : null).catch(() => null),
           fetch('/api/competition-snapshots').then(r => r.json()).catch(() => null)
         ]);
 
