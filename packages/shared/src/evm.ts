@@ -46,8 +46,9 @@ export const ELYSIUM_TESTNET_EXPLORER_URL = 'https://elysium.kinetiq.xyz/testnet
 // Default EVM Treasury Wallet for platform fees
 export const DEFAULT_EVM_TREASURY_ADDRESS = '0xb1f9551E64e1addF18462B09f04E14DC131451b1';
 
-// Platform Fee: 1.5% (150 BPS)
+// Platform Fee: 1.5% (150 BPS) on buys; 2.0% (200 BPS) on Elysium sells
 export const EVM_PLATFORM_FEE_BPS = 150n;
+export const ELYSIUM_SELL_FEE_BPS = 200n;
 export const EVM_BPS_DIVISOR = 10000n;
 
 export type EvmChain = 'hyperevm' | 'elysium';
@@ -431,6 +432,24 @@ export function calculateEvmTradeFee(hypeAmountIn: bigint): {
     feeAmount,
     netTradeAmount,
     feeBps: Number(EVM_PLATFORM_FEE_BPS),
+  };
+}
+
+/**
+ * Computes Elysium sell platform fee (2.0%) and net proceeds in native HYPE.
+ */
+export function calculateElysiumSellFee(hypeAmountOut: bigint): {
+  feeAmount: bigint;
+  netProceeds: bigint;
+  feeBps: number;
+} {
+  const safeOut = hypeAmountOut > 0n ? hypeAmountOut : 0n;
+  const feeAmount = (safeOut * ELYSIUM_SELL_FEE_BPS) / EVM_BPS_DIVISOR;
+  const netProceeds = safeOut - feeAmount;
+  return {
+    feeAmount,
+    netProceeds,
+    feeBps: Number(ELYSIUM_SELL_FEE_BPS),
   };
 }
 

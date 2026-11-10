@@ -6,6 +6,7 @@ import {
   getErc20TokenInfo,
   getErc20Balance,
   calculateEvmTradeFee,
+  calculateElysiumSellFee,
   calculateSlippageMin,
   ERC20_ABI,
   ELYSIUM_INBOX_ABI,
@@ -37,8 +38,6 @@ import {
   elysiumPadName,
   ascendSellApprovals,
   montraSellApprovals,
-  padSellApprovals,
-  simulateV4RoundTrip,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -115,11 +114,8 @@ const notYetConfirmed = (what: string, elysiumTx: string): string =>
   `${what} was sent to Elysium (${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${elysiumTx}) but no confirmation arrived yet. ` +
   `Check your balance before trying again, so you don't trade twice.`;
 
-const isAlreadyKnown = (err: any): boolean =>
-  /already known|known transaction/i.test(String(err?.info?.error?.message || err?.error?.message || err?.shortMessage || err?.message || ''));
-
 /** A signed Elysium transaction the RPC refused (or would revert); its message is already in plain language */
-class ElysiumSendError extends Error {}
+class ElysiumSendError extends Error { }
 
 /**
  * Buy or sell a Kleos (or RonsPad) coin on Elysium mainnet. Signed transactions go straight to Elysium
@@ -169,9 +165,8 @@ export async function executeKleosSwap(
   } catch (err: any) {
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
-  // RonsPad, Ascend, Montra and Uniswap v4 coins trade through the same Elysium flow
-  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'montra' ? 'montra'
-    : route.kind === 'pad' ? route.pad!.pad.name : route.kind === 'padv3' ? 'elyspump' : route.kind === 'univ4' ? 'univ4' : 'kleos';
+  // RonsPad, Ascend and Montra coins trade through the same Elysium flow
+  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'montra' ? 'montra' : 'kleos';
   const venueName = elysiumPadName(fillVenue);
 
   const direct = isElysiumDirectSend();
@@ -200,8 +195,7 @@ export async function executeKleosSwap(
     try {
       await l2.send('eth_sendRawTransaction', [raw]);
     } catch (err) {
-      // A backup RPC saying "already known" means an earlier attempt did reach Elysium: it is sent
-      if (!isAlreadyKnown(err)) throw new ElysiumSendError(describeElysiumSendError(err));
+      throw new ElysiumSendError(describeElysiumSendError(err));
     }
     return ethers.keccak256(raw);
   };
@@ -231,15 +225,6 @@ export async function executeKleosSwap(
       return fail(`${venueName} could not quote this buy: ${describeKleosRevert(err)} Nothing was spent.`);
     }
     if (expectedOut <= 0n) return fail(`${venueName} quoted zero coins for this buy. Nothing was spent.`);
-    // A plain Uniswap v4 pool can carry any hook: make sure the coin can be sold back before buying it
-    if (route.kind === 'univ4') {
-      onProgress?.('simulating');
-      const roundTrip = await simulateV4RoundTrip(l2, route.ascend!, token);
-      if (roundTrip === 'sell_blocked') {
-        return fail(`RacerBot won't buy this coin: a test buy followed by a sell failed, so its pool may not let you sell it back (a possible honeypot). Nothing was spent.`);
-      }
-      if (roundTrip === 'buy_blocked') return fail(`This coin's pool is not accepting buys right now. Nothing was spent.`);
-    }
     const minOut = calculateSlippageMin(expectedOut, slippage_pct);
 
     const [l1Balance, l2Balance, l1Block] = await Promise.all([l1.getBalance(userAddress), l2.getBalance(userAddress), l1.getBlock('latest')]);
@@ -333,7 +318,7 @@ export async function executeKleosSwap(
       }).catch(() => null);
       if (fill?.fillId && fill.inserted) {
         const feeHype = ethers.formatEther(feeAmount);
-        await recordFee(fill.fillId, feeHype).catch(() => {});
+        await recordFee(fill.fillId, feeHype).catch(() => { });
         await distributeTradeFeeRewards({
           userId: user.id,
           chain: 'elysium',
@@ -371,10 +356,8 @@ export async function executeKleosSwap(
   const minOut = calculateSlippageMin(expectedHype, slippage_pct);
   const sell = encodeKleosSell(route, token, amountIn, minOut, userAddress, deadline);
 
-  // Exactly this amount, as the launchpads' own apps approve. Ascend, univ4 and multi-hop Montra pull coins through Permit2 (two approvals).
-  const approvals: EvmCall[] = route.kind === 'pad'
-    ? await padSellApprovals(l2, route.pad!, userAddress, amountIn)
-    : route.kind === 'ascend' || route.kind === 'univ4'
+  // Exactly this amount, as the launchpads' own apps approve. Ascend and multi-hop Montra pull coins through Permit2 (two approvals).
+  const approvals: EvmCall[] = route.kind === 'ascend'
     ? await ascendSellApprovals(l2, token, userAddress, amountIn)
     : route.kind === 'montra'
       ? await montraSellApprovals(l2, route.montra!, token, userAddress, amountIn)
@@ -465,19 +448,41 @@ export async function executeKleosSwap(
     // HYPE received = balance change plus the gas every transaction paid
     const l2After = await l2.getBalance(userAddress);
     const gasPaid = receipts.reduce((sum, r) => sum + r.gasUsed * (r.gasPrice ?? 0n), 0n);
-    const receivedRaw = l2After + gasPaid - l2Before;
-    const receivedHype = Number(ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n));
-    const priceHype = receivedHype / (Number(soldQty) || 1);
+    const grossReceivedRaw = l2After + gasPaid > l2Before ? l2After + gasPaid - l2Before : 0n;
+    const { feeAmount, netProceeds } = calculateElysiumSellFee(grossReceivedRaw);
+
+    if (direct && treasury && ethers.isAddress(treasury) && feeAmount > 0n) {
+      try {
+        const feeHash = await sendDirect({ to: treasury, data: '0x', value: feeAmount });
+        await waitForElysiumReceipt(l2, feeHash);
+      } catch (err: any) {
+        console.warn('[KLEOS_EXECUTOR] Sell fee transfer warning:', err?.message);
+      }
+    }
+
+    const receivedHype = Number(ethers.formatEther(netProceeds));
+    const priceHype = Number(ethers.formatEther(grossReceivedRaw)) / (Number(soldQty) || 1);
+    const feeHype = ethers.formatEther(feeAmount);
 
     const openPositions = await getOpenPositions(user!.id);
     const pos = openPositions.find(p => p.token_address === token && p.chain === (chain as any));
     if (pos) {
       const fill = await createFill({
         user_id: user!.id, position_id: pos.id, chain: chain as any, side: 'sell', token_address: token,
-        amount: soldQty, price: priceHype.toString(), fee_paid: '0',
-        input_amount: ethers.formatEther(receivedRaw > 0n ? receivedRaw : 0n), venue: fillVenue, tx_hash: sellReceipt.hash,
+        amount: soldQty, price: priceHype.toString(), fee_paid: feeHype,
+        input_amount: ethers.formatEther(netProceeds), venue: fillVenue, tx_hash: sellReceipt.hash,
       }).catch(() => null);
-      if (fill?.fillId && fill.inserted) await recordFee(fill.fillId, '0').catch(() => {});
+      if (fill?.fillId && fill.inserted) {
+        await recordFee(fill.fillId, feeHype).catch(() => {});
+        if (feeAmount > 0n) {
+          await distributeTradeFeeRewards({
+            userId: user!.id,
+            chain: 'elysium',
+            feeAmount: feeHype,
+            tokenAddress: token,
+          }).catch((err) => console.warn('[KLEOS_EXECUTOR] Sell fee distribution error:', err?.message));
+        }
+      }
     }
 
     return {

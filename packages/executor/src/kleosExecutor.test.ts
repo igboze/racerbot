@@ -82,7 +82,6 @@ vi.mock('@racerbot/shared', async (importOriginal) => {
     resolveKleosRoute: vi.fn(async () => ({ kind: 'v4', router: V4_ROUTER, hopFee: 0 })),
     ascendSellApprovals: vi.fn(async () => []),
     montraSellApprovals: vi.fn(async () => []),
-    simulateV4RoundTrip: vi.fn(async () => 'ok'),
     quoteKleos: vi.fn(async (_p: unknown, _r: unknown, _t: string, side: string) => (side === 'buy' ? ethers.parseEther('1000') : ethers.parseEther('0.05'))),
   };
 });
@@ -93,7 +92,7 @@ vi.mock('@racerbot/db', () => ({
   getOpenPositions: vi.fn(async () => [{ id: 'pos-1', token_address: COIN, chain: 'elysium' }]),
   createPosition: vi.fn(async () => ({ id: 'pos-1' })),
   createFill: vi.fn(async () => ({ fillId: 'f1', inserted: true })),
-  recordFee: vi.fn(async () => {}),
+  recordFee: vi.fn(async () => { }),
 }));
 
 const { executeKleosSwap, chooseKleosBuyFunding, KLEOS_SELL_GAS_TOPUP } = await import('./kleosExecutor.js');
@@ -212,8 +211,8 @@ describe('executeKleosSwap', () => {
 
     const res = await executeKleosSwap(event('sell', '500') as any, TREASURY);
     expect(res).toMatchObject({ success: true });
-    // 0.0507 - 0.001 + 250k gas at 0.3 gwei = 0.049775 HYPE
-    expect(res.hypeSpentOrReceived).toBeCloseTo(0.049775, 9);
+    // Gross: 0.0507 - 0.001 + 250k gas at 0.3 gwei = 0.049775 HYPE; 2% sell fee = 0.0009955 HYPE -> net 0.0487795 HYPE
+    expect(res.hypeSpentOrReceived).toBeCloseTo(0.0487795, 9);
 
     const [message] = inboxIface.decodeFunctionData('sendL2Message', state.l1Sent[0].data).toArray();
     const bytes = ethers.getBytes(message);
@@ -224,7 +223,7 @@ describe('executeKleosSwap', () => {
     expect([sell.nonce, sell.to, sell.from]).toEqual([8, V4_ROUTER, USER]);
     const [, amountIn, minOut, recipient] = v4.decodeFunctionData('sell', sell.data).toArray();
     expect([amountIn, minOut, recipient]).toEqual([ethers.parseEther('500'), ethers.parseEther('0.049'), USER]);
-    expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'kleos', fee_paid: '0' }));
+    expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'kleos', fee_paid: '0.0009955' }));
   });
 
   it('asks for Elysium gas before selling when the wallet has none', async () => {
@@ -269,26 +268,27 @@ describe('executeKleosSwap', () => {
     expect(db.createFill).not.toHaveBeenCalled();
   });
 
-  it('sells straight on Elysium: approves first, waits for it, checks the sell, then sells', async () => {
+  it('sells straight on Elysium: approves first, waits for it, checks the sell, sells, and sends the 2% fee to treasury', async () => {
     state.l1Balance = 0n; // no HyperEVM HYPE needed any more
     state.coinBalance = ethers.parseEther('500');
     state.allowance = 0n;
     state.l2Balances = [ethers.parseEther('0.001'), ethers.parseEther('0.0507')];
-    state.l2Answers = [{ gasUsed: 50_000n }, { gasUsed: 200_000n }];
+    state.l2Answers = [{ gasUsed: 50_000n }, { gasUsed: 200_000n }, { gasUsed: 21_000n }];
     const res = await executeKleosSwap(event('sell', '500') as any, TREASURY);
     expect(res).toMatchObject({ success: true });
-    // 0.0507 - 0.001 + 250k gas at 0.1 gwei = 0.049725 HYPE
-    expect(res.hypeSpentOrReceived).toBeCloseTo(0.049725, 9);
+    // Gross: 0.0507 - 0.001 + 250k gas at 0.1 gwei = 0.049725 HYPE; 2% sell fee = 0.0009945 HYPE -> net 0.0487305 HYPE
+    expect(res.hypeSpentOrReceived).toBeCloseTo(0.0487305, 9);
     expect(state.l1Sent).toHaveLength(0);
-    const [approve, sell] = state.l2Sent;
+    const [approve, sell, feeTx] = state.l2Sent;
     expect([approve.to, approve.from]).toEqual([COIN, USER]);
     expect(erc20Approve.decodeFunctionData('approve', approve.data).toArray()).toEqual([V4_ROUTER, ethers.parseEther('500')]);
     expect([sell.to, sell.from]).toEqual([V4_ROUTER, USER]);
     const [, amountIn, minOut, recipient] = v4.decodeFunctionData('sell', sell.data).toArray();
     expect([amountIn, minOut, recipient]).toEqual([ethers.parseEther('500'), ethers.parseEther('0.049'), USER]);
+    expect([feeTx.to, feeTx.from, feeTx.value]).toEqual([TREASURY, USER, ethers.parseEther('0.0009945')]);
     // The sell was simulated after the approval landed
     expect(state.ethCalls.some(c => c.method === 'eth_call' && c.params[0].to === V4_ROUTER)).toBe(true);
-    expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'kleos', fee_paid: '0' }));
+    expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'kleos', fee_paid: '0.0009945' }));
   });
 
   it('keeps the coins and says so when the sell reverts on Elysium', async () => {
@@ -315,20 +315,8 @@ describe('executeKleosSwap', () => {
     state.l2Answers = [{ gasUsed: 46_000n }, { gasUsed: 50_000n }, { gasUsed: 195_000n }];
     const res = await executeKleosSwap({ ...event('sell', '500'), venue: 'ascend' } as any, TREASURY);
     expect(res).toMatchObject({ success: true });
-    expect(state.l2Sent.map(t => t.to)).toEqual([COIN, shared.ASCEND.permit2, UR]);
+    expect(state.l2Sent.map(t => t.to)).toEqual([COIN, shared.ASCEND.permit2, UR, TREASURY]);
     expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'ascend' }));
-  });
-
-  it('refuses to buy a coin from an unknown launchpad when a test buy-then-sell shows it cannot be sold', async () => {
-    const shared = await import('@racerbot/shared');
-    const route = { quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', launchKey: { currency0: ethers.ZeroAddress, currency1: COIN, fee: 0x800000, tickSpacing: 200, hooks: '0x6b1216A40B65c83e9c9e18a562C446697B8cf8EC' } };
-    vi.mocked(shared.resolveKleosRoute).mockResolvedValueOnce({ kind: 'univ4', router: shared.ASCEND.universalRouter, hopFee: 0, ascend: route } as any);
-    vi.mocked(shared.simulateV4RoundTrip).mockResolvedValueOnce('sell_blocked');
-    state.l2Balances = [ethers.parseEther('1')];
-    const res = await executeKleosSwap({ ...event('buy', '0.01'), venue: 'univ4' } as any, TREASURY);
-    expect(res.success).toBe(false);
-    expect(res.reason).toMatch(/won't buy this coin.*honeypot.*Nothing was spent/);
-    expect(state.l2Sent).toHaveLength(0);
   });
 
   it('sells a Montra coin: runs Montra approvals and executes the sell on Elysium', async () => {
@@ -350,7 +338,7 @@ describe('executeKleosSwap', () => {
     state.l2Answers = [{ gasUsed: 46_000n }, { gasUsed: 185_000n }];
     const res = await executeKleosSwap({ ...event('sell', '500'), venue: 'montra' } as any, TREASURY);
     expect(res).toMatchObject({ success: true });
-    expect(state.l2Sent.map(t => t.to)).toEqual([COIN, LR]);
+    expect(state.l2Sent.map(t => t.to)).toEqual([COIN, LR, TREASURY]);
     expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'montra' }));
   });
 });
