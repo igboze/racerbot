@@ -16,7 +16,6 @@ import { registerRacerLeaderboard } from './racerLeaderboard.js';
 import { setInFlightRedis } from './inflight.js';
 import { setBotInstance, startNotifyListener } from './notify.js';
 import { startBuyAlertListener } from './buyAlerts.js';
-import { startStarknetAlertsEngine } from './starknetAlerts.js';
 import { warmTokenInfoCache, syncUserTokenDeposits } from './wallet.js';
 import { startDepositWatcher, stopDepositWatcher, markUserActiveForDeposit } from './depositWatcher.js';
 import { startMultichainDepositPoller } from './multichainDeposit.js';
@@ -491,12 +490,8 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Start Starknet Alerts Engine (@racerbotalert) ─────────────────────────
-  try {
-    await startStarknetAlertsEngine(bot);
-  } catch (err: any) {
-    console.warn('[API] Starknet alerts engine inactive:', err?.message || err);
-  }
+  // Starknet alerts (launches + whale buys) are no longer posted to
+  // @racerbotalert; the engine in starknetAlerts.ts is intentionally not started.
 
   // ── Start background sync for external token deposits ─────────────────────
   // Sync all users' external deposits every 15 minutes to detect purchases from other wallets

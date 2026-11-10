@@ -451,15 +451,44 @@ describe('Group Buy Alerts Engine', () => {
       expect(mockSendMessage).toHaveBeenCalledTimes(1);
       const [channel, msgText, extra] = mockSendMessage.mock.calls[0];
       expect(channel).toBe('@racerbotalert');
-      expect(msgText).toContain('🟢 <b>BLACK DRAGON BUY!</b>');
-      expect(msgText).not.toContain('NEAR WHALE BUY DETECTED');
-      expect(msgText).not.toContain('($500+)');
-      expect(msgText).toContain('💰 <b>Spent:</b> <b>$850.00</b> <code>(170.00 NEAR)</code>');
-      expect(msgText).toContain('📦 <b>Bought:</b> <b>25,000,000,000 BLACKDRAGON</b>');
-      expect(msgText).toContain('📊 <b>Market Cap:</b> <b>$3.40M</b>');
+      // Compact layout: $850 is the 💵 tier (4 emojis), no generic green dots
+      expect(msgText.split('\n')[0]).toBe('💵💵💵💵 <b>NICE BUY</b> · NEAR');
+      expect(msgText).not.toContain('🟢');
+      expect(msgText).toContain('<b>Black Dragon</b> $BLACKDRAGON');
+      expect(msgText).toContain('💸 <b>$850</b> (170 NEAR) → 25B');
+      expect(msgText).toContain('MC <b>$3.4M</b>');
       expect(msgText).toContain('dragonwhale.near');
-      expect(msgText).toContain('1,450.5 NEAR');
+      expect(msgText).toContain('<code>blackdragon.tkn.near</code>');
+      expect(msgText.split('\n').length).toBeLessThanOrEqual(6);
       expect(extra.reply_markup.inline_keyboard[0][0].text).toBe('⚡ Buy $BLACKDRAGON on RacerBot');
+    });
+
+    it('does not post Starknet buys to @racerbotalert, even big ones', async () => {
+      const mockSendMessage = vi.fn().mockResolvedValue({});
+      const mockBot: any = {
+        botInfo: { username: 'racertradingbot' },
+        telegram: { sendMessage: mockSendMessage, sendPhoto: vi.fn().mockResolvedValue({}) },
+      };
+      (await import('./buyAlerts.js')).setBotInstance(mockBot);
+      vi.mocked(db.getGroupBuyAlertsByToken).mockResolvedValue([]);
+
+      await dispatchBuyAlert({
+        type: 'buy_alert',
+        chain: 'starknet',
+        token_address: '0x0124aeb495b947201f5fac96fd1138e326ad86195b98df6dec9009158a533b49',
+        token_name: 'Lords',
+        token_symbol: 'LORDS',
+        buyer_address: '0x04a3f9c2b1d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4d3c2b1a0f9e8d7c6b5a4f3e2',
+        spent_amount_native: '20000 STRK',
+        spent_usd: 25_000,
+        tokens_received: '1,000,000 LORDS',
+        price_usd: 0.025,
+        market_cap_usd: 5_000_000,
+        tx_hash: 'tx-starknet-whale-1',
+        timestamp: Date.now(),
+      });
+
+      expect(mockSendMessage).not.toHaveBeenCalled();
     });
   });
 });
