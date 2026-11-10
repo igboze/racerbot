@@ -61,19 +61,19 @@ describe('wealth tiers', () => {
   });
 
   it('adds more emojis as the amount rises inside a tier', () => {
-    expect(getWealthEmojiCount(500)).toBe(1);
-    expect(getWealthEmojiCount(650)).toBe(2);
-    expect(getWealthEmojiCount(850)).toBe(4);
-    expect(getWealthEmojiCount(999)).toBe(5);
-    expect(getWealthEmojiCount(1_000)).toBe(1);
-    expect(getWealthEmojiCount(1_450)).toBe(3);
-    expect(getWealthEmojiCount(1_999)).toBe(5);
-    expect(getWealthEmojiCount(3_000)).toBe(3);
-    expect(buildWealthBar(1_450)).toBe('💰💰💰');
-    expect(buildWealthBar(850)).toBe('💵💵💵💵');
+    expect(getWealthEmojiCount(500)).toBe(10);
+    expect(getWealthEmojiCount(650)).toBe(13);
+    expect(getWealthEmojiCount(850)).toBe(18);
+    expect(getWealthEmojiCount(999)).toBe(22);
+    expect(getWealthEmojiCount(1_000)).toBe(16);
+    expect(getWealthEmojiCount(1_450)).toBe(23);
+    expect(getWealthEmojiCount(1_999)).toBe(30);
+    expect(getWealthEmojiCount(3_000)).toBe(30);
+    expect(buildWealthBar(1_450)).toBe('💰'.repeat(23));
+    expect(buildWealthBar(850)).toBe('💵'.repeat(18));
   });
 
-  it('caps the bar so huge buys stay on one mobile line', () => {
+  it('caps the bar so huge buys stay bounded', () => {
     for (const usd of [25_000, 60_000, 250_000, 10_000_000]) {
       expect(getWealthEmojiCount(usd)).toBeLessThanOrEqual(MAX_WEALTH_EMOJIS);
     }
@@ -81,9 +81,9 @@ describe('wealth tiers', () => {
   });
 
   it('handles bad input without crashing', () => {
-    expect(buildWealthBar(NaN)).toBe('🪙');
-    expect(buildWealthBar(-5)).toBe('🪙');
-    expect(buildWealthBar(0)).toBe('🪙');
+    expect(buildWealthBar(NaN)).toBe('🪙'.repeat(4));
+    expect(buildWealthBar(-5)).toBe('🪙'.repeat(4));
+    expect(buildWealthBar(0)).toBe('🪙'.repeat(4));
   });
 });
 
@@ -101,7 +101,7 @@ describe('formatters', () => {
     expect(compactTokenAmount('1.25M LORDS')).toBe('1.25M');
     expect(compactTokenAmount('Tokens')).toBe('');
     expect(shortWallet('dragonwhale.near')).toBe('dragonwhale.near');
-    expect(shortWallet('0x04a3f9c2b1d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4')).toBe('0x04a3…e5f4');
+    expect(shortWallet('0x04a3f9c2b1d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4')).toBe('0x04a3f9c2b1d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4');
     expect(shortWallet('')).toBe('Anon');
   });
 });
@@ -126,17 +126,17 @@ describe('buildChannelBuyAlertText', () => {
     const text = buildChannelBuyAlertText(base);
     expect(text).toBe(
       [
-        '💰💰💰 <b>BIG BUY</b> · NEAR',
+        `${'💰'.repeat(23)} <b>BIG BUY</b> · NEAR`,
         '<b>Black Dragon</b> $BLACKDRAGON',
         '💸 <b>$1,450</b> (290 NEAR) → 25B',
-        '📊 MC <b>$3.4M</b> · 💲0.000000034',
-        '👤 <a href="https://nearblocks.io/address/dragonwhale.near">dragonwhale.near</a> · 🍳 Meme.Cooking',
+        '📊 MC <b>$3.4M</b> ($3,400,000) · 💲0.000000034',
+        '👤 <a href="https://nearblocks.io/address/dragonwhale.near"><code>dragonwhale.near</code></a> · 🍳 Meme.Cooking',
         '<code>blackdragon.tkn.near</code>',
       ].join('\n')
     );
   });
 
-  it('stays small on a phone for every tier, even with a long contract address', () => {
+  it('stays clean and readable on a phone for every tier', () => {
     for (const usd of [150, 700, 1_500, 4_000, 8_000, 20_000, 2_000_000]) {
       const text = buildChannelBuyAlertText({
         ...base,
@@ -146,13 +146,7 @@ describe('buildChannelBuyAlertText', () => {
       });
       const lines = text.split('\n');
       expect(lines.length).toBeLessThanOrEqual(6);
-      expect(visible(text).length).toBeLessThanOrEqual(260);
-      // Emoji bar line never exceeds the cap (+ nothing else emoji on that line)
       expect(emojiCount(lines[0])).toBeLessThanOrEqual(MAX_WEALTH_EMOJIS);
-      // Every line except the tap-to-copy contract address is short
-      for (const line of lines.slice(0, -1)) {
-        expect(visible(line).length).toBeLessThanOrEqual(48);
-      }
       expect(text).not.toContain('🟢');
     }
   });

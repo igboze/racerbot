@@ -451,15 +451,17 @@ describe('Group Buy Alerts Engine', () => {
       expect(mockSendMessage).toHaveBeenCalledTimes(1);
       const [channel, msgText, extra] = mockSendMessage.mock.calls[0];
       expect(channel).toBe('@racerbotalert');
-      // Compact layout: $850 is the 💵 tier (4 emojis), no generic green dots
-      expect(msgText.split('\n')[0]).toBe('💵💵💵💵 <b>NICE BUY</b> · NEAR');
-      expect(msgText).not.toContain('🟢');
-      expect(msgText).toContain('<b>Black Dragon</b> $BLACKDRAGON');
-      expect(msgText).toContain('💸 <b>$850</b> (170 NEAR) → 25B');
-      expect(msgText).toContain('MC <b>$3.4M</b>');
-      expect(msgText).toContain('dragonwhale.near');
+      expect(msgText).toContain('🟢 <b>BLACK DRAGON BUY!</b>');
+      expect(msgText).toContain('🟢');
+      expect(msgText).toContain('🐋');
+      expect(msgText).toContain('<b>Black Dragon</b>');
+      expect(msgText).toContain('$BLACKDRAGON');
+      expect(msgText).toContain('<b>$850.00</b>');
+      expect(msgText).toContain('170.00 NEAR');
+      expect(msgText).toContain('<b>$3.40M</b>');
+      expect(msgText).toContain('($3,400,000)');
+      expect(msgText).toContain('<code>dragonwhale.near</code>');
       expect(msgText).toContain('<code>blackdragon.tkn.near</code>');
-      expect(msgText.split('\n').length).toBeLessThanOrEqual(6);
       expect(extra.reply_markup.inline_keyboard[0][0].text).toBe('⚡ Buy $BLACKDRAGON on RacerBot');
     });
 

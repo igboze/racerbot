@@ -29,21 +29,23 @@ export interface WealthTier {
   minUsd: number;
   emoji: string;
   label: string;
+  /** Starting count of emojis for this tier. */
+  baseCount: number;
   /** One more emoji is added every `stepUsd` above `minUsd`. */
   stepUsd: number;
   maxCount: number;
 }
 
-export const MAX_WEALTH_EMOJIS = 10;
+export const MAX_WEALTH_EMOJIS = 60;
 
 export const WEALTH_TIERS: readonly WealthTier[] = [
-  { minUsd: 0, emoji: '🪙', label: 'BUY', stepUsd: 100, maxCount: 5 },
-  { minUsd: 500, emoji: '💵', label: 'NICE BUY', stepUsd: 100, maxCount: 6 },
-  { minUsd: 1_000, emoji: '💰', label: 'BIG BUY', stepUsd: 200, maxCount: 5 },
-  { minUsd: 2_000, emoji: '💎', label: 'HUGE BUY', stepUsd: 500, maxCount: 6 },
-  { minUsd: 5_000, emoji: '👑', label: 'ROYAL BUY', stepUsd: 1_000, maxCount: 5 },
-  { minUsd: 10_000, emoji: '🏦', label: 'MEGA BUY', stepUsd: 2_500, maxCount: 6 },
-  { minUsd: 25_000, emoji: '🐋', label: 'WHALE BUY', stepUsd: 5_000, maxCount: MAX_WEALTH_EMOJIS },
+  { minUsd: 0, emoji: '🪙', label: 'BUY', baseCount: 4, stepUsd: 60, maxCount: 12 },
+  { minUsd: 500, emoji: '💵', label: 'NICE BUY', baseCount: 10, stepUsd: 40, maxCount: 22 },
+  { minUsd: 1_000, emoji: '💰', label: 'BIG BUY', baseCount: 16, stepUsd: 60, maxCount: 30 },
+  { minUsd: 2_000, emoji: '💎', label: 'HUGE BUY', baseCount: 22, stepUsd: 120, maxCount: 40 },
+  { minUsd: 5_000, emoji: '👑', label: 'ROYAL BUY', baseCount: 30, stepUsd: 200, maxCount: 48 },
+  { minUsd: 10_000, emoji: '🏦', label: 'MEGA BUY', baseCount: 38, stepUsd: 350, maxCount: 54 },
+  { minUsd: 25_000, emoji: '🐋', label: 'WHALE BUY', baseCount: 46, stepUsd: 600, maxCount: MAX_WEALTH_EMOJIS },
 ];
 
 export function getWealthTier(usd: number): WealthTier {
@@ -55,15 +57,15 @@ export function getWealthTier(usd: number): WealthTier {
   return tier;
 }
 
-/** Number of emojis to show for a buy of `usd` dollars (always ≥ 1). */
+/** Number of emojis to show for a buy of `usd` dollars (always generous). */
 export function getWealthEmojiCount(usd: number): number {
   const tier = getWealthTier(usd);
   const v = Number.isFinite(usd) && usd > 0 ? usd : 0;
-  const count = 1 + Math.floor((v - tier.minUsd) / tier.stepUsd);
-  return Math.max(1, Math.min(count, tier.maxCount, MAX_WEALTH_EMOJIS));
+  const count = tier.baseCount + Math.floor((v - tier.minUsd) / tier.stepUsd);
+  return Math.max(tier.baseCount, Math.min(count, tier.maxCount, MAX_WEALTH_EMOJIS));
 }
 
-/** e.g. $1,450 → "💰💰💰" */
+/** e.g. $1,450 → multiple emojis representing buy volume */
 export function buildWealthBar(usd: number): string {
   return getWealthTier(usd).emoji.repeat(getWealthEmojiCount(usd));
 }
@@ -146,12 +148,10 @@ export function compactTokenAmount(tokensReceived?: string): string {
   return compactNumber(num);
 }
 
-/** Wallet display: keep readable NEAR names, shorten long hex addresses. */
+/** Wallet display: keep readable NEAR names and full addresses unabbreviated for 1-tap copy. */
 export function shortWallet(addr?: string): string {
   const a = String(addr ?? '').trim();
   if (!a || a === 'Unknown') return 'Anon';
-  if ((a.endsWith('.near') || a.endsWith('.tg')) && a.length <= 24) return a;
-  if (a.length > 14) return `${a.slice(0, 6)}…${a.slice(-4)}`;
   return a;
 }
 
@@ -175,6 +175,7 @@ export interface ChannelBuyAlertInput {
   buyerUrl?: string;
   /** Optional short venue name, e.g. "Meme.Cooking". */
   venue?: string;
+  isBondingCurve?: boolean;
 }
 
 /**
@@ -183,7 +184,7 @@ export interface ChannelBuyAlertInput {
  *   💰💰💰 BIG BUY · NEAR
  *   Black Dragon $BLACKDRAGON
  *   💸 $1,450 (290 NEAR) → 25B
- *   📊 MC $3.4M · 💲0.000000034
+ *   📊 MC $3.4M ($3,400,000) · 💲0.000000034
  *   👤 dragonwhale.near · Meme.Cooking
  *   blackdragon.tkn.near            ← tap to copy
  */
@@ -214,14 +215,21 @@ export function buildChannelBuyAlertText(input: ChannelBuyAlertInput): string {
 
   const stats: string[] = [];
   if (input.marketCapUsd && input.marketCapUsd > 0) {
-    stats.push(`MC <b>$${compactNumber(input.marketCapUsd)}</b>`);
+    const compactMc = compactNumber(input.marketCapUsd);
+    const exactMc = `$${Math.round(input.marketCapUsd).toLocaleString('en-US')}`;
+    const mcDisplay = input.marketCapUsd >= 10_000
+      ? `MC <b>$${compactMc}</b> (${exactMc})`
+      : `MC <b>${exactMc}</b> ($${compactMc})`;
+    const suffix = input.isBondingCurve ? ' • <i>Bonding Curve</i>' : '';
+    stats.push(`${mcDisplay}${suffix}`);
   }
   const price = input.priceUsd && input.priceUsd > 0 ? formatPriceUsd(input.priceUsd) : '';
   if (price) stats.push(`💲${price}`);
   if (stats.length) lines.push(`📊 ${stats.join(' · ')}`);
 
-  const wallet = escapeHtml(shortWallet(input.buyerAddress));
-  const walletHtml = input.buyerUrl ? `<a href="${input.buyerUrl}">${wallet}</a>` : wallet;
+  const wallet = shortWallet(input.buyerAddress);
+  const walletCode = wallet !== 'Anon' ? `<code>${escapeHtml(wallet)}</code>` : 'Anon';
+  const walletHtml = input.buyerUrl && wallet !== 'Anon' ? `<a href="${input.buyerUrl}">${walletCode}</a>` : walletCode;
   lines.push(`👤 ${walletHtml}` + (input.venue ? ` · ${escapeHtml(input.venue)}` : ''));
 
   lines.push(`<code>${escapeHtml(input.tokenAddress)}</code>`);

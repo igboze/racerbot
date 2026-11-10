@@ -384,6 +384,16 @@ function resolveNearVenueLabel(tokenAddress: string, cachedVenue?: string | null
   return '⚡ Rhea Finance';
 }
 
+function formatSpentNativeClean(spentNative?: string): string {
+  if (!spentNative) return '';
+  const m = spentNative.match(/^([0-9.,]+)\s*([A-Za-z.$]*)/);
+  if (!m) return spentNative;
+  const num = parseFloat(m[1].replace(/,/g, ''));
+  const unit = m[2] || 'NEAR';
+  if (isNaN(num)) return spentNative;
+  return `${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${unit}`;
+}
+
 /**
  * Posts a NEAR meme token whale buy to the public alerts channel.
  */
