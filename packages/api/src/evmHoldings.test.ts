@@ -7,6 +7,7 @@ const notifyTokenDeposit = vi.fn();
 vi.mock('@racerbot/db', () => ({
   getDb: async () => ({ query }),
   createPosition: (...args: any[]) => createPosition(...args),
+  upsertTokenCache: vi.fn(async () => {}),
   getOpenPositions: vi.fn(async () => []),
   getUserById: vi.fn(),
 }));
