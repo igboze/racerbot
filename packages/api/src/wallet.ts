@@ -4299,8 +4299,8 @@ export async function withdrawFunds(
   const activeNearWallet = await getActiveWallet(user.id, 'near').catch(() => null);
   const subaccountId = activeNearWallet?.address || user.subaccount_id;
   const encryptedKey = activeNearWallet?.encrypted_private_key || user.scoped_key_encrypted;
-  destination = destination.trim();
-  if (!destination || destination === subaccountId) {
+  destination = destination.trim().toLowerCase();
+  if (!destination || !isValidNearAccountId(destination) || destination === subaccountId.toLowerCase()) {
     throw new Error('Invalid destination account address.');
   }
 
@@ -4331,14 +4331,15 @@ export async function withdrawFunds(
   if (user.telegram_id && user.telegram_id > 0) {
     invalidateBalanceCache(Number(user.telegram_id));
   }
-  const reserveYocto = BigInt('50000000000000000000000'); // 0.05 NEAR reserved
-  const fmtNear = (y: bigint) => (Number(y / 1000000000000000000n) / 1e6).toFixed(4);
+  const reserveYocto = BigInt('30000000000000000000000'); // 0.03 NEAR reserved for gas/storage
+  // Floor to 4 decimals so displayed max withdrawable never rounds up above actual balance
+  const fmtNear = (y: bigint) => (Math.floor(Number(y / 1000000000000000000n) / 100) / 1e4).toFixed(4);
   const stillWrappedNote = unwrapError
     ? ` ${fmtNear(wrapBeforeYocto)} wNEAR could not be unwrapped right now (${unwrapError}); tap 🔄 Unwrap in your wallet and try again.`
     : '';
 
   if (currentBalanceYocto <= reserveYocto) {
-    throw new Error(`Insufficient balance to withdraw. A minimum of 0.05 NEAR must remain to cover on-chain account storage.${stillWrappedNote}`);
+    throw new Error(`Insufficient balance to withdraw. A minimum of 0.03 NEAR must remain to cover on-chain account storage and gas.${stillWrappedNote}`);
   }
 
   const maxWithdrawableYocto = currentBalanceYocto - reserveYocto;
@@ -4348,8 +4349,14 @@ export async function withdrawFunds(
     withdrawYocto = maxWithdrawableYocto;
   } else {
     withdrawYocto = BigInt(Math.floor(amountNear * 1e6)) * 1000000000000000000n;
+    // Allow 0.0001 NEAR tolerance in case user typed the 4-decimal rounded balance shown in the UI
+    const roundingToleranceYocto = 100_000_000_000_000_000_000n; // 0.0001 NEAR
     if (withdrawYocto > maxWithdrawableYocto) {
-      throw new Error(`Amount exceeds maximum withdrawable balance (${fmtNear(maxWithdrawableYocto)} NEAR after the 0.05 NEAR storage reserve). Use "all" to send everything.${stillWrappedNote}`);
+      if (withdrawYocto - maxWithdrawableYocto <= roundingToleranceYocto) {
+        withdrawYocto = maxWithdrawableYocto;
+      } else {
+        throw new Error(`Amount exceeds maximum withdrawable balance (${fmtNear(maxWithdrawableYocto)} NEAR after the 0.03 NEAR storage reserve). Use "all" to send everything.${stillWrappedNote}`);
+      }
     }
   }
 
@@ -4930,10 +4937,11 @@ export async function withdrawTokenFunds(
   const nearSenderAccount = activeNearWallet?.address || user.subaccount_id;
   const nearSenderKey = activeNearWallet?.encrypted_private_key || user.scoped_key_encrypted;
 
+  destination = destination.trim().toLowerCase();
   if (!isValidNearAccountId(destination)) {
     throw new Error('Invalid destination NEAR account address.');
   }
-  if (destination === nearSenderAccount) {
+  if (destination === nearSenderAccount.toLowerCase()) {
     throw new Error('Cannot withdraw to your own wallet address.');
   }
 

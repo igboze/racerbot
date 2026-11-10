@@ -3000,6 +3000,10 @@ export function getUserFriendlyError(error: Error | string): string {
   }
 
   // ── NEAR RPC errors ───────────────────────────────────────────────────
+  if (r.includes('accountdoesnotexist') || (r.includes('account') && r.includes('does not exist')))
+    return 'Destination NEAR account does not exist on-chain. Please check the spelling and try again.';
+  if (r.includes('invalidreceiverid') || r.includes('invalidaccountid') || r.includes('is not a valid accountid'))
+    return 'Invalid destination NEAR wallet address. Please check the spelling and try again.';
   if (r.includes('all near rpc broadcast failed'))
     return 'All NEAR RPC nodes rejected the transaction. Please retry in a moment.';
   if (r.includes('signing timed out'))
@@ -13612,19 +13616,21 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         }
 
         const isSolDest = isSolanaAddress(dest);
-        const isNearDest = dest.endsWith('.near') || (!isSolDest && !dest.startsWith('0x') && isValidNearAccountId(dest));
-        const isSuiDest = isValidSuiAddress(dest) && !dest.endsWith('.near');
-        const isStarknetDest = isValidStarknetAddress(dest) && !dest.endsWith('.near');
+        const destLower = dest.trim().toLowerCase();
+        const isNearDest = destLower.endsWith('.near') || (!isSolDest && !destLower.startsWith('0x') && isValidNearAccountId(destLower));
+        const isSuiDest = isValidSuiAddress(dest) && !destLower.endsWith('.near');
+        const isStarknetDest = isValidStarknetAddress(dest) && !destLower.endsWith('.near');
+        const effectiveDest = isNearDest ? destLower : dest;
         const normToken = (tokenToUse || '').toLowerCase();
         const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
         const isSolNative = normToken === 'sol' || (!tokenToUse && isSolDest);
         const isExplicitToken = tokenToUse && normToken !== 'near' && normToken !== 'sui' && normToken !== 'sol' && !isStrkOrEth;
         const targetDesc = isSolNative ? 'SOL' : isExplicitToken ? `token \`${tokenToUse}\`` : (isStrkOrEth ? `Starknet ${normToken.toUpperCase()}` : 'funds');
-        await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${dest}\`...`, { parse_mode: 'Markdown' });
+        await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${effectiveDest}\`...`, { parse_mode: 'Markdown' });
 
         try {
           if (isSolNative) {
-            const result = await withdrawSolanaFunds(telegramId, dest, amt);
+            const result = await withdrawSolanaFunds(telegramId, effectiveDest, amt);
             await ctx.reply(
               `✅ *SOL Withdrawal Successful!*\n\n` +
               `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
@@ -13633,7 +13639,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
               { parse_mode: 'Markdown' }
             );
           } else if (isExplicitToken) {
-            const result = await withdrawTokenFunds(telegramId, tokenToUse, dest, amt);
+            const result = await withdrawTokenFunds(telegramId, tokenToUse, effectiveDest, amt);
             const explorerUrl =
               result.chain === 'solana'
                 ? `https://solscan.io/tx/${result.txHash}`
@@ -13653,7 +13659,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
               { parse_mode: 'Markdown' }
             );
           } else if (isStrkOrEth) {
-            const result = await withdrawStarknetFunds(telegramId, dest, amt, normToken);
+            const result = await withdrawStarknetFunds(telegramId, effectiveDest, amt, normToken);
             await ctx.reply(
               `✅ *Starknet Transfer Successful!*\n\n` +
               `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
@@ -13662,7 +13668,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
               { parse_mode: 'Markdown' }
             );
           } else if (normToken === 'sui') {
-            const result = await withdrawSuiFunds(telegramId, dest, amt);
+            const result = await withdrawSuiFunds(telegramId, effectiveDest, amt);
             await ctx.reply(
               `✅ *SUI Withdrawal Successful!*\n\n` +
               `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
@@ -13678,7 +13684,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
             ]);
 
             if (strkBal.strk > 0n && suiBal.mist === 0n) {
-              const result = await withdrawStarknetFunds(telegramId, dest, amt, 'strk');
+              const result = await withdrawStarknetFunds(telegramId, effectiveDest, amt, 'strk');
               await ctx.reply(
                 `✅ *Starknet Withdrawal Successful!*\n\n` +
                 `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
@@ -13687,7 +13693,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
                 { parse_mode: 'Markdown' }
               );
             } else if (suiBal.mist > 0n && strkBal.strk === 0n) {
-              const result = await withdrawSuiFunds(telegramId, dest, amt);
+              const result = await withdrawSuiFunds(telegramId, effectiveDest, amt);
               await ctx.reply(
                 `✅ *SUI Withdrawal Successful!*\n\n` +
                 `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
@@ -13697,13 +13703,13 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
               );
             } else {
               await ctx.reply(
-                `⚠️ Destination \`${dest}\` is a 0x hex address valid on both SUI and Starknet.\n` +
-                `Please specify the token, e.g. \`${dest} ${amt} STRK\` or \`${dest} ${amt} SUI\``,
+                `⚠️ Destination \`${effectiveDest}\` is a 0x hex address valid on both SUI and Starknet.\n` +
+                `Please specify the token, e.g. \`${effectiveDest} ${amt} STRK\` or \`${effectiveDest} ${amt} SUI\``,
                 { parse_mode: 'Markdown' }
               );
             }
           } else {
-            const result = await withdrawFunds(telegramId, dest, amt);
+            const result = await withdrawFunds(telegramId, effectiveDest, amt);
             await ctx.reply(
               `✅ *Withdrawal Successful!*\n\n` +
               `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
@@ -13713,6 +13719,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
             );
           }
         } catch (err: any) {
+          userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
           await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }
         return;
@@ -14672,16 +14679,18 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
     const withdrawParts = rawText.trim().split(/\s+/);
     if (withdrawParts.length === 2) {
       const possibleDest = withdrawParts[0];
+      const possibleDestLower = possibleDest.toLowerCase();
       const possibleAmtStr = withdrawParts[1].toLowerCase();
       const isSolDest = isSolanaAddress(possibleDest);
-      const isNearDest = possibleDest.endsWith('.near') || (!isSolDest && isValidNearAccountId(possibleDest));
-      const isSuiDest = isValidSuiAddress(possibleDest) && !possibleDest.endsWith('.near');
-      const isStarknetDest = isValidStarknetAddress(possibleDest) && !possibleDest.endsWith('.near');
+      const isNearDest = possibleDestLower.endsWith('.near') || (!isSolDest && !possibleDestLower.startsWith('0x') && isValidNearAccountId(possibleDestLower));
+      const isSuiDest = isValidSuiAddress(possibleDest) && !possibleDestLower.endsWith('.near');
+      const isStarknetDest = isValidStarknetAddress(possibleDest) && !possibleDestLower.endsWith('.near');
       const isAmtValid = possibleAmtStr === 'all' || (!isNaN(parseFloat(possibleAmtStr)) && parseFloat(possibleAmtStr) > 0);
 
       if ((isNearDest || isSuiDest || isStarknetDest || isSolDest) && isAmtValid) {
         const amt: number | 'all' = possibleAmtStr === 'all' ? 'all' : parseFloat(possibleAmtStr);
-        await ctx.reply(`⏳ Processing withdrawal to \`${possibleDest}\`...`, { parse_mode: 'Markdown' });
+        const displayDest = isNearDest ? possibleDestLower : possibleDest;
+        await ctx.reply(`⏳ Processing withdrawal to \`${displayDest}\`...`, { parse_mode: 'Markdown' });
         try {
           if (isSolDest) {
             const result = await withdrawSolanaFunds(telegramId, possibleDest, amt);
@@ -14734,7 +14743,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
               { parse_mode: 'Markdown' }
             );
           } else {
-            const result = await withdrawFunds(telegramId, possibleDest, amt);
+            const result = await withdrawFunds(telegramId, possibleDestLower, amt);
             await ctx.reply(
               `✅ *Withdrawal Successful!*\n\n` +
               `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
