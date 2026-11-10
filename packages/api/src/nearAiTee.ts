@@ -120,6 +120,7 @@ function decodeJwtPayload(jwt: string): any {
 
 /** Intel TDX quote check with Phala's dcap-qvl (pure WebAssembly; rejects debug TDs by default) */
 async function verifyTdxQuoteWithDcap(quoteHex: string): Promise<TdxQuoteResult> {
+  // @ts-ignore - native wasm package without types
   const dcap: any = await import('@phala/dcap-qvl-node');
   const lib = dcap.js_verify ? dcap : dcap.default;
   const raw = Buffer.from(quoteHex.replace(/^0x/i, ''), 'hex');

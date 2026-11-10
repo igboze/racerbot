@@ -3453,7 +3453,7 @@ export async function pollNearTxStatus(
           nodeUrl: formattedUrl,
           headers: hasFastnearKey && isFastnear ? { Authorization: `Bearer ${fastnearApiKey}` } : undefined,
         });
-        const status = await nearConn.connection.provider.txStatus(txHash, accountId);
+        const status = await (nearConn.connection.provider as any).txStatus(txHash, accountId, 'EXECUTED_OPTIMISTIC');
         if (status) {
           if (status.status && ((status.status as any).SuccessValue !== undefined || (status.status as any).SuccessReceiptId !== undefined)) {
             return { success: true, raw: status };

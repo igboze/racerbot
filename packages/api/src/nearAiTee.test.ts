@@ -78,6 +78,7 @@ describe('Intel TDX quote check (dcap-qvl)', () => {
     const quote = readFileSync(dir + 'tdx_quote');
     const collateral = JSON.parse(readFileSync(dir + 'tdx_quote_collateral.json', 'utf8'));
     const issued = Date.parse(JSON.parse(collateral.tcb_info).issueDate) / 1000;
+    // @ts-ignore - native wasm package without types
     const dcap: any = await import('@phala/dcap-qvl-node');
     const lib = dcap.js_verify ? dcap : dcap.default;
     const result = tdxResultFromDcap(lib.js_verify(quote, collateral, BigInt(issued + 60)));
@@ -93,6 +94,7 @@ describe('Intel TDX quote check (dcap-qvl)', () => {
     quote[600] ^= 0xff;
     const collateral = JSON.parse(readFileSync(dir + 'tdx_quote_collateral.json', 'utf8'));
     const issued = Date.parse(JSON.parse(collateral.tcb_info).issueDate) / 1000;
+    // @ts-ignore - native wasm package without types
     const dcap: any = await import('@phala/dcap-qvl-node');
     const lib = dcap.js_verify ? dcap : dcap.default;
     expect(() => lib.js_verify(quote, collateral, BigInt(issued + 60))).toThrow();
