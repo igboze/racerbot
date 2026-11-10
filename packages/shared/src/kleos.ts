@@ -524,11 +524,11 @@ export async function resolveKleosRoute(
   for (const d of KLEOS_V5_DEPLOYMENTS) {
     for (const quote of Object.keys(KLEOS_HOP_KEYS)) add(hopRouteFor(quote, d)!);
   }
-  for (const route of candidates) {
-    try {
-      if ((await quoteKleos(provider, route, token, 'buy', probe)) > 0n) return route;
-    } catch { /* not this router */ }
-  }
+  // Each router only knows its own coins: ask them all at once and take the first, in this order, that quotes
+  const answers = await Promise.all(candidates.map(route =>
+    quoteKleos(provider, route, token, 'buy', probe).then(out => out > 0n).catch(() => false)));
+  const found = answers.findIndex(Boolean);
+  if (found >= 0) return candidates[found];
   // Another launchpad's coin: trade its Uniswap v4 pool against HYPE, if it has one
   if (options.allowUniV4 !== false) {
     // BOXA / ElysPump with other pool settings (from the Kleos app), then ElysPump's earlier v3 pools

@@ -2847,6 +2847,12 @@ export function getUserFriendlyError(error: Error | string): string {
     return errorMsg;
   }
 
+  // ── A public RPC that answered with an error of its own (a lagging or busy node), not a trade problem ──
+  if (r.includes('could not coalesce error') || r.includes('invalid block height') || r.includes('missing response') ||
+      r.includes('elysium rpc timed out') || r.includes('bad response') || r.includes('server_error')) {
+    return 'The network did not answer properly just now. Check your bags before trying again, so you do not trade twice.';
+  }
+
   // ── Wallet not set up ────────────────────────────────────────────────────
   if (r.includes('please run /start') || r.includes('user not found') || r.includes('wallet not found'))
     return 'Wallet not found. Please run /start first.';

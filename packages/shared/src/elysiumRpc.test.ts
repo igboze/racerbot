@@ -38,4 +38,19 @@ describe('Elysium RPC failover', () => {
     vi.spyOn(b, '_send').mockImplementation(async (payload: any) => [{ id: payload.id, error: { code: 3, message: 'execution reverted', data: '0x8698bf37' } }] as any);
     await expect(p.send('eth_call', [{ to: ethers.ZeroAddress, data: '0x' }, 'latest'])).rejects.toMatchObject({ info: { error: { message: 'execution reverted' } } });
   });
+
+  it('sends log searches to the first RPC first, and moves on when a node caps the block range', async () => {
+    const p = make();
+    const [a, b] = backends(p);
+    // b becomes the preferred RPC for ordinary calls
+    vi.spyOn(a, '_send').mockImplementationOnce(async () => { throw new Error('fetch failed'); });
+    vi.spyOn(b, '_send').mockImplementation(async (payload: any) => [{ id: payload.id, result: '0x1' }] as any);
+    await p.send('eth_blockNumber', []);
+    // A log search still starts at a; a's range cap sends it to b
+    vi.spyOn(a, '_send').mockImplementation(async (payload: any) => [{ id: payload.id, error: { code: -32602, message: 'Log range exceeds 10,000 blocks; ask for it in pieces' } }] as any);
+    vi.spyOn(b, '_send').mockImplementation(async (payload: any) => [{ id: payload.id, result: [] }] as any);
+    expect(await p.send('eth_getLogs', [{ fromBlock: '0x0', toBlock: '0x30000' }])).toEqual([]);
+    expect(a._send).toHaveBeenCalled();
+  });
 });
+
