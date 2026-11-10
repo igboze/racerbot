@@ -1184,12 +1184,16 @@ export class SwapExecutor {
           dclPoolId = preloadedNtState?.dclPoolId ?? null;
         } else if (venue === 'rhea' || venue === 'ref') {
           // Zombie-pool guard: only hunt for a DCL pool when NO simple pool is
-          // known. Otherwise an unrelated thin DCL pool sitting far off the
+          // known (except for JustHoot tokens which always graduate to Ref DCL).
+          // Otherwise an unrelated thin DCL pool sitting far off the
           // market price (e.g. JAMBO's |10000 pool, priced ~10× the real AMM
           // pool with <3 NEAR of quote depth) would override the correct
           // simple-pool route and the user would massively overpay.
+          const isJustHootDcl =
+            tokenTarget.endsWith('.launchpad.justhoot.near') ||
+            tokenTarget.endsWith('.v2-launchpad.justhoot.near');
           const pinnedSimplePool = (event as any).pool_id ?? dbCache?.rhea_pool_id ?? null;
-          if (pinnedSimplePool === null || pinnedSimplePool === undefined) {
+          if (pinnedSimplePool === null || pinnedSimplePool === undefined || isJustHootDcl) {
             dclPoolId = await near.findDclPoolId(token_in, token_out).catch(() => null);
           }
         } else if (venue === 'onetokenhub') {

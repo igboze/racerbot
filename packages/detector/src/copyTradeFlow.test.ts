@@ -101,8 +101,22 @@ describe('copy-trade detection from balance changes', () => {
     expect(settle(0)).toEqual([]);
   });
 
-  it('ignores token-for-token swaps', () => {
-    expect(classifyFlow(0n, new Map([['a.near', 5n], ['b.near', -5n]]))).toBeNull();
+  it('classifies token-for-token and quote-token swaps while ignoring multi-token bundles', () => {
+    expect(classifyFlow(0n, new Map([['a.near', 5n], ['b.near', -5n]]))).toEqual({
+      side: 'buy',
+      tokenAddress: 'a.near',
+      tokenIn: 'b.near',
+      tokenOut: 'a.near',
+      amountIn: '5',
+      soldTokenIn: 'b.near',
+    });
+    expect(classifyFlow(0n, new Map([['meme.near', 500n], ['usdt.tether-token.near', -1000000n]]))).toEqual({
+      side: 'buy',
+      tokenAddress: 'meme.near',
+      tokenIn: 'usdt.tether-token.near',
+      tokenOut: 'meme.near',
+      amountIn: '1000000',
+    });
     expect(classifyFlow(-NEAR, new Map([['a.near', 5n], ['b.near', 5n]]))).toBeNull();
   });
 

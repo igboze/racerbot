@@ -1089,7 +1089,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (nearVisible) {
     text += `⬛ NEAR: <b>${b.totalNearFormatted}</b> Ⓝ (${b.totalNearUsd})\n`;
     text += `💵 USDC (NEAR): <b>${b.usdcNearFormatted || '0.00'}</b> USDC (${b.usdcNearUsd || '$0.00'})\n`;
-    text += `• Spendable: <b>${b.nativeNearFormatted} Ⓝ</b> (On-chain: ${b.onChainNearFormatted || b.nativeNearFormatted} Ⓝ, 0.05 Ⓝ reserved for storage)\n`;
+    text += `• Spendable: <b>${b.spendableNearFormatted || b.nativeNearFormatted} Ⓝ</b> (On-chain: ${b.onChainNearFormatted || b.nativeNearFormatted} Ⓝ, 0.03 Ⓝ reserved for gas/storage)\n`;
     if (Number(b.wrapNearFormatted) > 0.0001) {
       text += `• Wrapped: <b>${b.wrapNearFormatted} wNEAR</b>\n`;
     }

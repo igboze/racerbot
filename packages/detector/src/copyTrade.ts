@@ -273,6 +273,26 @@ export interface DetectedSwap {
   tokenIn: string;
   tokenOut: string;
   amountIn?: string;
+  soldTokenIn?: string;
+  dclPoolId?: string;
+}
+
+const QUOTE_ASSETS = new Set<string>([
+  'wrap.near',
+  'near',
+  '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', // native USDC
+  'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near', // USDC.e
+  'usdt.tether-token.near', // native USDT
+  'dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near', // USDT.e
+  'prl.omft.near',
+  'qtc.omft.near',
+  'token.rhealab.near',
+  'token.intear.near',
+]);
+
+export function isQuoteAsset(addr?: string | null): boolean {
+  if (!addr) return false;
+  return QUOTE_ASSETS.has(addr.trim().toLowerCase());
 }
 
 /**
@@ -302,10 +322,14 @@ export async function checkCopyTradeReceipt(
   }
   // Mark flow dedup key so flushCopyFlows skips this swap if balance observer also saw it with another receipt_id
   recentCopyTriggers.set(`flow:${normalizedSigner}:${swap.side}:${swap.tokenAddress.toLowerCase()}`, now);
+  if (swap.soldTokenIn) {
+    recentCopyTriggers.set(`flow:${normalizedSigner}:sell:${swap.soldTokenIn.toLowerCase()}`, now);
+  }
   logger.info('Copy-trade event detected', {
     signer: normalizedSigner,
     side: swap.side,
     token: swap.tokenAddress,
+    soldTokenIn: swap.soldTokenIn,
     txHash,
   });
   await dispatchCopyTrade(normalizedSigner, swap, txHash);
@@ -316,6 +340,25 @@ async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, t
   const signerAccountId = normalizedSigner;
   const now = Date.now();
   const tokenKey = swap.tokenAddress.toLowerCase();
+
+  // If this was a TokenA -> TokenB rotation, also dispatch a copy-SELL for TokenA so followers holding TokenA exit it
+  if (
+    swap.side === 'buy' &&
+    swap.soldTokenIn &&
+    !isQuoteAsset(swap.soldTokenIn) &&
+    swap.soldTokenIn.toLowerCase() !== tokenKey
+  ) {
+    const soldSwap: DetectedSwap = {
+      side: 'sell',
+      tokenAddress: swap.soldTokenIn,
+      tokenIn: swap.soldTokenIn,
+      tokenOut: 'wrap.near',
+      amountIn: swap.amountIn,
+    };
+    dispatchCopyTrade(normalizedSigner, soldSwap, `${txHash}:sell`).catch((err) =>
+      logger.error('Copy-trade token-rotation sell dispatch error', err as Error, { txHash, soldToken: swap.soldTokenIn })
+    );
+  }
 
   // 1. If signer is a registered RacerAlpha Caller, notify API to record signal & trigger Alpha Caller auto-copies
   const alphaTraderId = alphaCallerWallets.get(normalizedSigner);
@@ -347,7 +390,7 @@ async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, t
           side: swap.side.toUpperCase(),
           amount_near: amountNear,
           venue,
-          tx_hash: txHash,
+          tx_hash: txHash.replace(/:sell$/, ''),
         },
       })).catch(() => {});
     }
@@ -367,14 +410,14 @@ async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, t
       try {
         if (target.track_only) {
           // Wallet Tracker mode: Send alert with quick actions without auto-buying/selling
-          await handleTrackerAlert(target, signerAccountId, swap, txHash);
+          await handleTrackerAlert(target, signerAccountId, swap, txHash.replace(/:sell$/, ''));
         } else if (swap.side === 'buy') {
           // Auto-Copy BUY
-          await executeCopyBuy(target, signerAccountId, swap.tokenAddress, txHash);
+          await executeCopyBuy(target, signerAccountId, swap.tokenAddress, txHash, swap.dclPoolId);
         } else if (swap.side === 'sell') {
           // Auto-Copy SELL (if enabled)
           if (target.copy_sells) {
-            await executeCopySell(target, signerAccountId, swap.tokenAddress, txHash);
+            await executeCopySell(target, signerAccountId, swap.tokenAddress, txHash, swap.dclPoolId);
           }
         }
       } catch (err) {
@@ -473,17 +516,54 @@ async function handleTrackerAlert(
   }));
 }
 
+async function resolveCopyTradePools(
+  tokenAddress: string,
+  venue: string,
+  tokenCache: any,
+  hintDclPoolId?: string
+): Promise<{ dclPoolId?: string; rheaPoolId?: number }> {
+  const near = getNear();
+  const lower = tokenAddress.toLowerCase();
+  let dclPoolId: string | undefined = hintDclPoolId || tokenCache?.dcl_pool_id || undefined;
+  const rawRhea = tokenCache?.rhea_pool_id;
+  let rheaPoolId: number | undefined =
+    rawRhea != null && rawRhea !== '' && !Number.isNaN(Number(rawRhea)) ? Number(rawRhea) : undefined;
+
+  const isJustHoot = lower.endsWith('.launchpad.justhoot.near') || lower.endsWith('.v2-launchpad.justhoot.near');
+  if (!dclPoolId) {
+    if (venue === 'nearlytrade' || lower.endsWith('.nearlytrade.near')) {
+      const ntState = await near.getNearlytradeTokenState(tokenAddress).catch(() => null);
+      if (ntState?.dclPoolId) dclPoolId = ntState.dclPoolId;
+    } else if (venue === 'shoremarkets' || lower.endsWith('.launch.shoremarkets.near')) {
+      const smState = await near.getShoremarketsTokenState(tokenAddress).catch(() => null);
+      if (smState?.dclPoolId) dclPoolId = smState.dclPoolId;
+    } else if (isJustHoot || (!rheaPoolId && (venue === 'rhea' || venue === 'ref'))) {
+      const foundDcl = await near.findDclPoolId('wrap.near', tokenAddress).catch(() => null);
+      if (foundDcl) dclPoolId = foundDcl;
+    }
+  }
+
+  // Clear zombie simple pool IDs when a graduated DCL launchpad pool is present
+  if (dclPoolId && (venue === 'nearlytrade' || venue === 'shoremarkets' || isJustHoot)) {
+    rheaPoolId = undefined;
+  }
+
+  return { dclPoolId, rheaPoolId };
+}
+
 async function executeCopyBuy(
   target: CopyTradeTargetRecord,
   leaderWallet: string,
   tokenAddress: string,
-  sourceTxHash: string
+  sourceTxHash: string,
+  hintDclPoolId?: string
 ): Promise<void> {
+  const cleanSourceTxHash = sourceTxHash.replace(/:sell$/, '');
   // 1. Idempotent fill record - returns null if already processed
   const fill = await recordCopyTradeFill({
     copy_target_id: target.id,
     user_id: target.user_id,
-    source_tx_hash: sourceTxHash,
+    source_tx_hash: cleanSourceTxHash,
     token_address: tokenAddress,
     side: 'buy',
   });
@@ -546,7 +626,7 @@ async function executeCopyBuy(
               side: 'buy',
               amount_near: target.buy_amount_near,
               slippage_pct: slippagePct,
-              source_tx_hash: sourceTxHash,
+              source_tx_hash: cleanSourceTxHash,
             },
           }));
           return;
@@ -572,6 +652,12 @@ async function executeCopyBuy(
       };
     } else {
       const near = getNear();
+      const { dclPoolId: effectiveDclPoolId, rheaPoolId: effectiveRheaPoolId } = await resolveCopyTradePools(
+        tokenAddress,
+        venue,
+        tokenCache,
+        hintDclPoolId
+      );
       const amountInYocto = (BigInt(Math.round(target.buy_amount_near * 1e6)) * 10n ** 18n).toString();
       let minAmountOut = '1';
       try {
@@ -581,8 +667,8 @@ async function executeCopyBuy(
           tokenAddress,
           amountInYocto,
           slippagePct,
-          tokenCache?.rhea_pool_id ?? undefined,
-          tokenCache?.dcl_pool_id ?? undefined
+          effectiveRheaPoolId,
+          effectiveDclPoolId
         );
         if (quote?.minAmountOut) {
           minAmountOut = quote.minAmountOut;
@@ -604,8 +690,8 @@ async function executeCopyBuy(
         min_amount_out: minAmountOut,
         venue,
         timestamp: Date.now(),
-        ...(tokenCache?.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
-        ...(tokenCache?.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
+        ...(effectiveDclPoolId ? { dcl_pool_id: effectiveDclPoolId } : {}),
+        ...(effectiveRheaPoolId != null ? { pool_id: effectiveRheaPoolId } : {}),
       } as SwapEvent;
     }
 
@@ -626,7 +712,7 @@ async function executeCopyBuy(
 
     // 9. Notify copier
     const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
-    const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
+    const nearBlocks = `https://nearblocks.io/txns/${cleanSourceTxHash}`;
     const notifyMsg =
       `🏎️ *Copy Trade Sent (BUY)*\n\n` +
       `🎯 *Copied*: \`${leaderWallet}\`\n` +
@@ -647,7 +733,7 @@ async function executeCopyBuy(
         token_address: tokenAddress,
         token_symbol: tokenSymbol,
         amount_near: target.buy_amount_near,
-        source_tx_hash: sourceTxHash,
+        source_tx_hash: cleanSourceTxHash,
         message: notifyMsg,
       },
     }));
@@ -667,13 +753,15 @@ async function executeCopySell(
   target: CopyTradeTargetRecord,
   leaderWallet: string,
   tokenAddress: string,
-  sourceTxHash: string
+  sourceTxHash: string,
+  hintDclPoolId?: string
 ): Promise<void> {
+  const cleanSourceTxHash = sourceTxHash.replace(/:sell$/, '');
   // 1. Idempotent fill record - returns null if already processed
   const fill = await recordCopyTradeFill({
     copy_target_id: target.id,
     user_id: target.user_id,
-    source_tx_hash: sourceTxHash,
+    source_tx_hash: cleanSourceTxHash,
     token_address: tokenAddress,
     side: 'sell',
   });
@@ -708,7 +796,7 @@ async function executeCopySell(
             venue,
             side: 'sell',
             slippage_pct: target.max_slippage_pct,
-            source_tx_hash: sourceTxHash,
+            source_tx_hash: cleanSourceTxHash,
           },
         }));
         return;
@@ -747,6 +835,12 @@ async function executeCopySell(
         timestamp: Date.now(),
       };
     } else {
+      const { dclPoolId: effectiveDclPoolId, rheaPoolId: effectiveRheaPoolId } = await resolveCopyTradePools(
+        tokenAddress,
+        venue,
+        tokenCache,
+        hintDclPoolId
+      );
       swapEvent = {
         type: 'execute_swap',
         user_id: target.user_id,
@@ -757,8 +851,8 @@ async function executeCopySell(
         venue,
         slippage_pct: target.max_slippage_pct,
         timestamp: Date.now(),
-        ...(tokenCache?.dcl_pool_id ? { dcl_pool_id: tokenCache.dcl_pool_id } : {}),
-        ...(tokenCache?.rhea_pool_id != null ? { pool_id: tokenCache.rhea_pool_id } : {}),
+        ...(effectiveDclPoolId ? { dcl_pool_id: effectiveDclPoolId } : {}),
+        ...(effectiveRheaPoolId != null ? { pool_id: effectiveRheaPoolId } : {}),
       } as SwapEvent;
     }
 
@@ -766,7 +860,7 @@ async function executeCopySell(
     await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
 
     const tokenSymbol = tokenCache?.symbol || tokenAddress.split('.')[0].toUpperCase();
-    const nearBlocks = `https://nearblocks.io/txns/${sourceTxHash}`;
+    const nearBlocks = `https://nearblocks.io/txns/${cleanSourceTxHash}`;
     const notifyMsg =
       `🏎️ *Copy Trade Sent (SELL)*\n\n` +
       `🎯 *Copied*: \`${leaderWallet}\`\n` +
@@ -785,7 +879,7 @@ async function executeCopySell(
         leader_wallet: leaderWallet,
         token_address: tokenAddress,
         token_symbol: tokenSymbol,
-        source_tx_hash: sourceTxHash,
+        source_tx_hash: cleanSourceTxHash,
         message: notifyMsg,
       },
     }));
@@ -921,11 +1015,21 @@ export function extractSwapDetails(
       if (targetReceiver === INTEAR_DEX) {
         const route = intearRoute(msg);
         if (route) {
-          if (isWrapNear(route.tokenIn) && !isWrapNear(route.tokenOut)) {
+          if (isQuoteAsset(route.tokenIn) && !isQuoteAsset(route.tokenOut)) {
             return { side: 'buy', tokenAddress: route.tokenOut, tokenIn: 'wrap.near', tokenOut: route.tokenOut, amountIn };
           }
-          if (!isWrapNear(route.tokenIn) && isWrapNear(route.tokenOut)) {
+          if (!isQuoteAsset(route.tokenIn) && isQuoteAsset(route.tokenOut)) {
             return { side: 'sell', tokenAddress: route.tokenIn, tokenIn: route.tokenIn, tokenOut: 'wrap.near', amountIn };
+          }
+          if (!isQuoteAsset(route.tokenIn) && !isQuoteAsset(route.tokenOut) && route.tokenIn !== route.tokenOut) {
+            return {
+              side: 'buy',
+              tokenAddress: route.tokenOut,
+              tokenIn: route.tokenIn,
+              tokenOut: route.tokenOut,
+              amountIn,
+              soldTokenIn: route.tokenIn,
+            };
           }
           return null;
         }
@@ -933,8 +1037,8 @@ export function extractSwapDetails(
 
       // 1. Target receiver is a Launchpad contract (NearlyTrade, Meme.Cooking, Intear, JustHoot, etc.)
       if (LAUNCHPAD_CONTRACTS.has(targetReceiver)) {
-        if (isWrapNear(tokenTransferred)) {
-          // BUYing unbonded launchpad token with wrap.near
+        if (isQuoteAsset(tokenTransferred)) {
+          // BUYing unbonded launchpad token with wrap.near / quote asset
           let launchpadToken: string | null = null;
           if (typeof msg === 'string') {
             try {
@@ -974,7 +1078,8 @@ export function extractSwapDetails(
       // 2. Standard AMM / DEX parsed messages (Ref Finance, Rhea DEX, JumpDeFi, DCL)
       let isParsedJson = false;
       let isClientEchoPayout = false;
-      let isMultiHopThroughNear = false;
+      let isMultiHopSwap = false;
+      let detectedDclPoolId: string | undefined;
       if (typeof msg === 'string') {
         try {
           const parsed = JSON.parse(msg);
@@ -998,15 +1103,27 @@ export function extractSwapDetails(
             tokenIn = refActions[0]?.token_in || tokenTransferred;
             tokenOut = refActions[refActions.length - 1]?.token_out || null;
             if (refActions[0]?.amount_in) amountIn = refActions[0].amount_in;
-            if (refActions.length > 1 && refActions.some((a: any) => isWrapNear(a?.token_in) || isWrapNear(a?.token_out))) {
-              isMultiHopThroughNear = true;
+            if (refActions.length > 1) {
+              isMultiHopSwap = true;
             }
           } else if (parsed?.Swap?.output_token || parsed?.SwapByOutput?.output_token) {
             // Ref DCL (dclv2.ref-labs.near): {"Swap":{"pool_ids":[...],"output_token":"..."}}
             tokenOut = parsed.Swap?.output_token || parsed.SwapByOutput?.output_token;
             const poolIds: unknown[] = parsed.Swap?.pool_ids ?? parsed.SwapByOutput?.pool_ids ?? [];
-            if (Array.isArray(poolIds) && poolIds.length > 1 && poolIds.some((p) => typeof p === 'string' && p.includes('wrap.near'))) {
-              isMultiHopThroughNear = true;
+            if (Array.isArray(poolIds) && poolIds.length > 0) {
+              if (poolIds.length > 1) {
+                isMultiHopSwap = true;
+              }
+              // Extract DCL pool ID if a pool pairs wrap.near with the target token
+              for (const p of poolIds) {
+                if (typeof p === 'string' && p.includes('wrap.near')) {
+                  if (tokenOut && !isQuoteAsset(tokenOut) && p.includes(tokenOut)) {
+                    detectedDclPoolId = p;
+                  } else if (tokenIn && !isQuoteAsset(tokenIn) && p.includes(tokenIn) && !detectedDclPoolId) {
+                    detectedDclPoolId = p;
+                  }
+                }
+              }
             }
           } else if (parsed?.swap?.token_out || parsed?.swap?.output_token) {
             tokenOut = parsed.swap?.token_out || parsed.swap?.output_token;
@@ -1028,44 +1145,48 @@ export function extractSwapDetails(
         continue;
       }
 
-      // 3. BUY: wrap.near -> Token
-      if (isWrapNear(tokenIn) && tokenOut && !isWrapNear(tokenOut)) {
+      // 3. BUY: Quote Asset (wrap.near / USDC / USDT / PRL / QTC) -> Token
+      if (isQuoteAsset(tokenIn) && tokenOut && !isQuoteAsset(tokenOut)) {
         return {
           side: 'buy',
           tokenAddress: tokenOut,
-          tokenIn,
+          tokenIn: isWrapNear(tokenIn) ? tokenIn : 'wrap.near',
           tokenOut,
           amountIn,
+          ...(detectedDclPoolId ? { dclPoolId: detectedDclPoolId } : {}),
         };
       }
 
-      // 4. SELL: Token -> wrap.near
-      if (!isWrapNear(tokenIn) && tokenOut && isWrapNear(tokenOut)) {
+      // 4. SELL: Token -> Quote Asset (wrap.near / USDC / USDT / PRL / QTC)
+      if (!isQuoteAsset(tokenIn) && tokenIn && tokenOut && isQuoteAsset(tokenOut)) {
         return {
           side: 'sell',
           tokenAddress: tokenIn,
           tokenIn,
-          tokenOut,
+          tokenOut: 'wrap.near',
           amountIn,
+          ...(detectedDclPoolId ? { dclPoolId: detectedDclPoolId } : {}),
         };
       }
 
-      // 4b. Multi-hop BUY routed through wrap.near (e.g. TokenA -> wrap.near -> TokenB or USDC -> wrap.near -> TokenB)
-      if (isMultiHopThroughNear && tokenOut && !isWrapNear(tokenOut)) {
+      // 4b. TokenA -> TokenB swap (single or multi-hop, e.g. TokenA -> wrap.near -> TokenB or TokenA -> PRL -> USDC -> wrap.near -> TokenB)
+      if ((isMultiHopSwap || (tokenIn && tokenOut)) && tokenIn && !isQuoteAsset(tokenIn) && tokenOut && !isQuoteAsset(tokenOut) && tokenIn !== tokenOut) {
         return {
           side: 'buy',
           tokenAddress: tokenOut,
           tokenIn: 'wrap.near',
           tokenOut,
           amountIn,
+          soldTokenIn: tokenIn,
+          ...(detectedDclPoolId ? { dclPoolId: detectedDclPoolId } : {}),
         };
       }
 
-      // 5. Transferred non-wrap.near token with swap message leading to wrap.near
+      // 5. Transferred non-quote token with swap message leading to wrap.near
       // Only use raw string msg.includes('wrap.near') fallback when msg is not structured JSON with a non-NEAR tokenOut
       if (
-        !isWrapNear(tokenTransferred) &&
-        (isWrapNear(tokenOut) || (!isParsedJson && !tokenOut && typeof msg === 'string' && msg.includes('wrap.near')))
+        !isQuoteAsset(tokenTransferred) &&
+        (isQuoteAsset(tokenOut) || (!isParsedJson && !tokenOut && typeof msg === 'string' && msg.includes('wrap.near')))
       ) {
         return {
           side: 'sell',
@@ -1073,17 +1194,19 @@ export function extractSwapDetails(
           tokenIn: tokenTransferred,
           tokenOut: 'wrap.near',
           amountIn,
+          ...(detectedDclPoolId ? { dclPoolId: detectedDclPoolId } : {}),
         };
       }
 
-      // 6. Transferred wrap.near with token_out specified
-      if (isWrapNear(tokenTransferred) && tokenOut && !isWrapNear(tokenOut)) {
+      // 6. Transferred quote asset with token_out specified
+      if (isQuoteAsset(tokenTransferred) && tokenOut && !isQuoteAsset(tokenOut)) {
         return {
           side: 'buy',
           tokenAddress: tokenOut,
           tokenIn: 'wrap.near',
           tokenOut,
           amountIn,
+          ...(detectedDclPoolId ? { dclPoolId: detectedDclPoolId } : {}),
         };
       }
     }
@@ -1093,23 +1216,34 @@ export function extractSwapDetails(
       const tokenIn = args?.token_in ?? args?.input_token ?? null;
       const tokenOut = args?.token_out ?? args?.output_token ?? null;
 
-      if (isWrapNear(tokenIn) && tokenOut && !isWrapNear(tokenOut)) {
+      if (isQuoteAsset(tokenIn) && tokenOut && !isQuoteAsset(tokenOut)) {
         return {
           side: 'buy',
           tokenAddress: tokenOut,
-          tokenIn: tokenIn || 'wrap.near',
+          tokenIn: 'wrap.near',
           tokenOut,
           amountIn: args?.amount_in ?? args?.amount,
         };
       }
 
-      if (!isWrapNear(tokenIn) && tokenIn && isWrapNear(tokenOut)) {
+      if (!isQuoteAsset(tokenIn) && tokenIn && isQuoteAsset(tokenOut)) {
         return {
           side: 'sell',
           tokenAddress: tokenIn,
           tokenIn,
-          tokenOut: tokenOut || 'wrap.near',
+          tokenOut: 'wrap.near',
           amountIn: args?.amount_in ?? args?.amount,
+        };
+      }
+
+      if (!isQuoteAsset(tokenIn) && tokenIn && tokenOut && !isQuoteAsset(tokenOut) && tokenIn !== tokenOut) {
+        return {
+          side: 'buy',
+          tokenAddress: tokenOut,
+          tokenIn: 'wrap.near',
+          tokenOut,
+          amountIn: args?.amount_in ?? args?.amount,
+          soldTokenIn: tokenIn,
         };
       }
     }

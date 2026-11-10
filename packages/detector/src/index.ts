@@ -29,7 +29,7 @@ import {
   getDistinctActiveBuyAlertTokens,
   recordSnipeTrigger,
 } from '@racerbot/db';
-import { initCopyTradeDetector, checkCopyTradeReceipt, observeCopyFlow } from './copyTrade.js';
+import { initCopyTradeDetector, checkCopyTradeReceipt, observeCopyFlow, isTrackedWallet } from './copyTrade.js';
 import { startSolanaCopyTrader } from './solanaCopyTrade.js';
 
 const logger = createLogger('detector');
@@ -208,19 +208,33 @@ async function main() {
         ? null
         : await fetch(`https://mainnet.neardata.xyz/v0/block/${nextHeight}`, {
             headers: getNeardataHeaders(),
-            signal: AbortSignal.timeout(3000),
+            signal: AbortSignal.timeout(2500),
           }).catch(() => null);
 
-      if (!inNeardataCooldown && (!res || res.status === 404)) {
+      if (!inNeardataCooldown && res && res.status === 404) {
+        if (Date.now() - lastTipCheckAt > 2_000 || cachedTipHeight === 0) {
+          const tipHeight = await fetchBlockHeight();
+          if (tipHeight > 0) {
+            cachedTipHeight = tipHeight;
+            lastTipCheckAt = Date.now();
+          }
+        }
+        // If chain tip is already past nextHeight, nextHeight is a skipped slot on NEAR — advance immediately
+        if (cachedTipHeight > nextHeight) {
+          lastBlock = nextHeight;
+          redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
+          continue;
+        }
         // Next block hasn't been produced yet: sleep and retry same height
         await sleep(POLL_INTERVAL_MS);
         continue;
       }
 
-      // Neardata enforces 30 blocks/min on free tier (HTTP 429) while NEAR produces ~100 blocks/min.
+      // Neardata enforces 30 blocks/min on free tier (HTTP 429) while NEAR produces ~100 blocks/min,
+      // and may also time out (!res) or return 5xx.
       // Fall back to standard NEAR JSON-RPC immediately so the detector never stalls behind real-time.
-      if (inNeardataCooldown || (res && (res.status === 429 || res.status >= 500))) {
-        if (res && (res.status === 429 || res.status >= 500)) {
+      if (inNeardataCooldown || !res || res.status === 429 || res.status >= 500) {
+        if (!inNeardataCooldown && (!res || res.status === 429 || res.status >= 500)) {
           neardataCooldownUntil = Date.now() + 2_500;
         }
         if (Date.now() - lastTipCheckAt > 3_000 || cachedTipHeight === 0 || nextHeight > cachedTipHeight) {
@@ -243,11 +257,6 @@ async function main() {
         });
         lastBlock = targetHeight;
         redis.set(LAST_BLOCK_KEY, lastBlock.toString(), 86400).catch(() => {});
-        continue;
-      }
-
-      if (!res) {
-        await sleep(POLL_INTERVAL_MS);
         continue;
       }
 
@@ -441,36 +450,151 @@ async function processBlock(height: number): Promise<void> {
   await processBlockRpc(height);
 }
 
+/** Parse FunctionCall actions from an action list, unwrapping NEP-366 DelegateActions if present */
+function extractParsedFunctionCalls(rawActions: any[]): Array<{ methodName: string; args: Record<string, unknown> }> {
+  const out: Array<{ methodName: string; args: Record<string, unknown> }> = [];
+  for (const a of rawActions ?? []) {
+    const fn = a?.FunctionCall;
+    if (fn?.method_name && fn?.args !== undefined) {
+      try {
+        out.push({
+          methodName: fn.method_name as string,
+          args: JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8')),
+        });
+      } catch { /* ignore non-JSON args */ }
+    }
+    const delActions = a?.Delegate?.delegate_action?.actions;
+    if (Array.isArray(delActions)) {
+      for (const da of delActions) {
+        const dfn = da?.FunctionCall;
+        if (dfn?.method_name && dfn?.args !== undefined) {
+          try {
+            out.push({
+              methodName: dfn.method_name as string,
+              args: JSON.parse(Buffer.from(dfn.args, 'base64').toString('utf8')),
+            });
+          } catch { /* ignore non-JSON args */ }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const inspectedTrackedTxs = new Set<string>();
+
+/**
+ * When a tracked copy-trade wallet submits a transaction during a Neardata 429 RPC fallback window,
+ * fetch EXPERIMENTAL_tx_status a few seconds later so all cross-shard receipts & NEP-141/245 logs are
+ * fed to observeCopyFlow and checkCopyTradeReceipt even without Neardata.
+ */
+function scheduleTrackedTxOutcomeInspection(txHash: string, signerId: string): void {
+  if (!txHash || !signerId || inspectedTrackedTxs.has(txHash)) return;
+  inspectedTrackedTxs.add(txHash);
+  if (inspectedTrackedTxs.size > 2000) {
+    const first = inspectedTrackedTxs.values().next().value;
+    if (first) inspectedTrackedTxs.delete(first);
+  }
+  setTimeout(async () => {
+    const isFree = (u: string) =>
+      u.includes('shitzu') || u.includes('intea') || u.includes('free.rpc.fastnear.com') || u.includes('near.org');
+    const candidates = [...RPC_URLS.filter(isFree).sort(() => Math.random() - 0.5), ...RPC_URLS.filter(u => !isFree(u))];
+    for (const url of candidates.slice(0, 3)) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: getDetectorRpcHeaders(url),
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'copy-tx',
+            method: 'EXPERIMENTAL_tx_status',
+            params: { tx_hash: txHash, sender_account_id: signerId, wait_until: 'EXECUTED_OPTIMISTIC' },
+          }),
+          signal: AbortSignal.timeout(4000),
+        });
+        const data = (await res.json()) as any;
+        const result = data?.result;
+        if (!result) continue;
+        const receiptsById = new Map<string, any>();
+        for (const r of result.receipts ?? []) {
+          if (r?.receipt_id) receiptsById.set(r.receipt_id, r);
+        }
+        for (const ro of result.receipts_outcome ?? []) {
+          const rcptId = ro?.id ?? '';
+          const fullRcpt = receiptsById.get(rcptId);
+          const receiverId: string = fullRcpt?.receiver_id ?? ro?.outcome?.executor_id ?? '';
+          const predecessorId: string = fullRcpt?.predecessor_id ?? signerId;
+          const realSigner: string = fullRcpt?.receipt?.Action?.signer_id ?? signerId;
+          const syntheticItem = {
+            tx_hash: txHash,
+            receipt: fullRcpt ?? {
+              predecessor_id: predecessorId,
+              receiver_id: receiverId,
+              receipt_id: rcptId,
+              receipt: { Action: { signer_id: realSigner, actions: [] } },
+            },
+            execution_outcome: ro,
+          };
+          observeCopyFlow(syntheticItem);
+          const parsedActions = extractParsedFunctionCalls(fullRcpt?.receipt?.Action?.actions ?? []);
+          if (parsedActions.length > 0) {
+            if (realSigner) {
+              checkCopyTradeReceipt(realSigner, receiverId, txHash, parsedActions, predecessorId).catch(() => {});
+            }
+            if (predecessorId && predecessorId !== realSigner) {
+              checkCopyTradeReceipt(predecessorId, receiverId, txHash, parsedActions, predecessorId).catch(() => {});
+            }
+          }
+        }
+        return;
+      } catch {
+        // try next RPC
+      }
+    }
+  }, 3500);
+}
+
 /** Fallback path: standard NEAR JSON-RPC chunk transactions & receipts inspection */
 async function processBlockRpc(height: number): Promise<void> {
-  try {
-    const isFree = (u: string) => u.includes('shitzu') || u.includes('intea') || u.includes('free.rpc.fastnear.com') || u.includes('near.org');
-    const freePool = RPC_URLS.filter(isFree);
-    const rpcUrl = freePool.length > 0
-      ? freePool[Math.floor(Math.random() * freePool.length)]
-      : RPC_URLS[Math.floor(Math.random() * RPC_URLS.length)];
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: getDetectorRpcHeaders(rpcUrl),
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'block',
-        method: 'block',
-        params: { block_id: height },
-      }),
-    });
+  const isFree = (u: string) =>
+    u.includes('shitzu') || u.includes('intea') || u.includes('free.rpc.fastnear.com') || u.includes('near.org');
+  const freePool = RPC_URLS.filter(isFree).sort(() => Math.random() - 0.5);
+  const candidates = [...freePool.slice(0, 2), ...RPC_URLS.filter(u => !isFree(u)).slice(0, 1)];
 
-    const data = (await response.json()) as any;
-    const chunks = data?.result?.chunks ?? [];
+  for (const rpcUrl of candidates) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: getDetectorRpcHeaders(rpcUrl),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'block',
+          method: 'block',
+          params: { block_id: height },
+        }),
+        signal: AbortSignal.timeout(3500),
+      });
 
-    // Chunks are independent — fetch them in parallel for much faster replay
-    await Promise.all(
-      chunks.map((chunk: any) =>
-        processChunk(rpcUrl, chunk.chunk_hash).catch(() => {})
-      )
-    );
-  } catch (err) {
-    console.error(`[DETECTOR] Fallback block ${height} error:`, (err as Error).message);
+      const data = (await response.json()) as any;
+      if (data?.error) {
+        // Unknown Block means skipped slot on NEAR — nothing to process
+        const errName = data.error?.cause?.name || data.error?.name || '';
+        if (String(errName).includes('UNKNOWN_BLOCK')) return;
+        continue;
+      }
+      const chunks = data?.result?.chunks ?? [];
+      if (chunks.length === 0) continue;
+
+      // Chunks are independent — fetch them in parallel for much faster replay
+      await Promise.all(
+        chunks.map((chunk: any) =>
+          processChunk(rpcUrl, chunk.chunk_hash).catch(() => {})
+        )
+      );
+      return;
+    } catch {
+      // try next candidate
+    }
   }
 }
 
@@ -486,6 +610,7 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
         method: 'chunk',
         params: { chunk_id: chunkHash },
       }),
+      signal: AbortSignal.timeout(3500),
     });
 
     const data = (await response.json()) as any;
@@ -498,20 +623,26 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
       const signerId: string = tx?.signer_id ?? '';
       const receiverId: string = tx?.receiver_id ?? '';
       const txHash: string = tx?.hash ?? '';
-      if (txHash && signerId) {
-        signersInChunkTxs.add(signerId.toLowerCase());
-        const parsedActions = ((tx?.actions ?? []) as any[]).map((a: any) => {
-          const fn = a?.FunctionCall;
-          if (!fn) return null;
-          try {
-            return {
-              methodName: fn.method_name as string,
-              args: JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8')),
-            };
-          } catch { return null; }
-        }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
+      const rawActions = (tx?.actions ?? []) as any[];
+      const delegateAction = rawActions.find((a: any) => a?.Delegate?.delegate_action)?.Delegate?.delegate_action;
+      const delegateSender: string = delegateAction?.sender_id ?? '';
+      const effectiveReceiver: string = delegateAction?.receiver_id || receiverId;
+      if (txHash && (signerId || delegateSender)) {
+        if (signerId) signersInChunkTxs.add(signerId.toLowerCase());
+        if (delegateSender) signersInChunkTxs.add(delegateSender.toLowerCase());
+        const parsedActions = extractParsedFunctionCalls(rawActions);
         if (parsedActions.length > 0) {
-          checkCopyTradeReceipt(signerId, receiverId, txHash, parsedActions, signerId).catch(() => {});
+          if (signerId) {
+            checkCopyTradeReceipt(signerId, effectiveReceiver, txHash, parsedActions, signerId).catch(() => {});
+          }
+          if (delegateSender && delegateSender !== signerId) {
+            checkCopyTradeReceipt(delegateSender, effectiveReceiver, txHash, parsedActions, delegateSender).catch(() => {});
+          }
+        }
+        if (signerId && isTrackedWallet(signerId)) {
+          scheduleTrackedTxOutcomeInspection(txHash, signerId);
+        } else if (delegateSender && isTrackedWallet(delegateSender)) {
+          scheduleTrackedTxOutcomeInspection(txHash, delegateSender);
         }
       }
     }
@@ -519,23 +650,21 @@ async function processChunk(rpcUrl: string, chunkHash: string): Promise<void> {
     for (const rcpt of receipts) {
       const receiverId: string = rcpt?.receiver_id ?? '';
       const predecessorId: string = rcpt?.predecessor_id ?? '';
-      const realSigner: string = rcpt?.receipt?.Action?.signer_id ?? '';
+      const rawActions = (rcpt?.receipt?.Action?.actions ?? []) as any[];
+      const delegateAction = rawActions.find((a: any) => a?.Delegate?.delegate_action)?.Delegate?.delegate_action;
+      const realSigner: string = delegateAction?.sender_id || rcpt?.receipt?.Action?.signer_id || '';
       const rcptId: string = rcpt?.receipt_id ?? '';
-      // Only inspect cross-contract receipts when the signer wasn't already handled via a direct tx in this chunk
+      // Inspect cross-contract receipts when the signer/predecessor wasn't already handled via a direct tx in this chunk
       // or when receiver is aggregatedex.near (whose callback_swap holds the decoded swap_request)
-      if (rcptId && realSigner && (!signersInChunkTxs.has(realSigner.toLowerCase()) || receiverId === 'aggregatedex.near')) {
-        const parsedActions = ((rcpt?.receipt?.Action?.actions ?? []) as any[]).map((a: any) => {
-          const fn = a?.FunctionCall;
-          if (!fn) return null;
-          try {
-            return {
-              methodName: fn.method_name as string,
-              args: JSON.parse(Buffer.from(fn.args, 'base64').toString('utf8')),
-            };
-          } catch { return null; }
-        }).filter(Boolean) as Array<{ methodName: string; args: Record<string, unknown> }>;
+      if (rcptId && (realSigner || predecessorId)) {
+        const parsedActions = extractParsedFunctionCalls(rawActions);
         if (parsedActions.length > 0) {
-          checkCopyTradeReceipt(realSigner, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
+          if (realSigner && (!signersInChunkTxs.has(realSigner.toLowerCase()) || receiverId === 'aggregatedex.near')) {
+            checkCopyTradeReceipt(realSigner, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
+          }
+          if (predecessorId && predecessorId !== realSigner && !signersInChunkTxs.has(predecessorId.toLowerCase())) {
+            checkCopyTradeReceipt(predecessorId, receiverId, rcptId, parsedActions, predecessorId).catch(() => {});
+          }
         }
       }
     }

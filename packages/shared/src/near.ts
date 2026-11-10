@@ -1267,7 +1267,7 @@ export class MultiRpcNear {
   }
 
   private async fetchNearBalance(accountId: string): Promise<string> {
-    const fetchBalanceFromProvider = async (provider: RPCProvider, finality = 'optimistic') => {
+    const fetchBalanceFromProvider = async (provider: RPCProvider, finality = 'optimistic', timeoutMs = 1800) => {
       const res = await fetch(provider.url, {
         method: 'POST',
         headers: provider.headers ?? { 'Content-Type': 'application/json' },
@@ -1277,7 +1277,7 @@ export class MultiRpcNear {
           method: 'query',
           params: { request_type: 'view_account', account_id: accountId, finality },
         }),
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       const data: any = await res.json();
       if (data?.result?.amount) return data.result.amount as string;
@@ -1296,7 +1296,7 @@ export class MultiRpcNear {
     if (isTradeRead()) {
       for (const p of this.tradeProviders) {
         try {
-          return await fetchBalanceFromProvider(p, 'optimistic');
+          return await fetchBalanceFromProvider(p, 'optimistic', 2500);
         } catch { /* next provider */ }
       }
     }
@@ -1305,12 +1305,14 @@ export class MultiRpcNear {
       p => isCommunityFree(p) && p.healthy && !p.circuitBreakerOpen
     );
     if (freeProviders.length > 0) {
-      for (const p of freeProviders) {
-        try {
-          return await fetchBalanceFromProvider(p, 'optimistic');
-        } catch {
+      // Race up to 2 free providers concurrently so a single slow node never stalls balance display
+      const primaryBatch = freeProviders.slice(0, 2);
+      try {
+        return await Promise.any(primaryBatch.map(p => fetchBalanceFromProvider(p, 'optimistic', 1500)));
+      } catch {
+        for (const p of freeProviders.slice(2)) {
           try {
-            return await fetchBalanceFromProvider(p, 'final');
+            return await fetchBalanceFromProvider(p, 'optimistic', 1500);
           } catch {}
         }
       }
@@ -1319,10 +1321,10 @@ export class MultiRpcNear {
     // 2. Fallback to trade providers (FastNEAR)
     for (const p of this.tradeProviders) {
       try {
-        return await fetchBalanceFromProvider(p, 'optimistic');
+        return await fetchBalanceFromProvider(p, 'optimistic', 2500);
       } catch {
         try {
-          return await fetchBalanceFromProvider(p, 'final');
+          return await fetchBalanceFromProvider(p, 'final', 2500);
         } catch {}
       }
     }

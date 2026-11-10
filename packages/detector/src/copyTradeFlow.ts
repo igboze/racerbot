@@ -12,6 +12,18 @@
 import type { DetectedSwap } from './copyTrade.js';
 
 const NEAR_LIKE = new Set(['wrap.near', 'near']);
+const QUOTE_TOKENS = new Set([
+  'wrap.near',
+  'near',
+  '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', // native USDC
+  'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near', // USDC.e
+  'usdt.tether-token.near', // native USDT
+  'dac17f958d2ee523a2206206994597c13d831ec7.factory.bridge.near', // USDT.e
+  'prl.omft.near',
+  'qtc.omft.near',
+  'token.rhealab.near',
+  'token.intear.near',
+]);
 /** Smallest NEAR movement that counts as a trade (ignores storage deposits and dust) */
 export const MIN_TRADE_YOCTO = 10n ** 22n; // 0.01 NEAR
 /** A transaction is judged once no receipt of it has been seen for this long */
@@ -76,29 +88,57 @@ export function observeReceipt(item: any, isTracked: (wallet: string) => boolean
 
   // Token movements from NEP-141 events emitted by the token contract (the receipt's receiver)
   // Also handles wrap.near and legacy NEP-141 plain-text logs ("Transfer X from A to B", "Deposit X NEAR to A", "Withdraw X NEAR from A")
-  const credit = (amount: unknown, sign: 1n | -1n) => {
+  const creditToken = (tokenContract: string, amount: unknown, sign: 1n | -1n) => {
+    const cleanToken = tokenContract.replace(/^nep141:/, '').trim().toLowerCase();
+    if (!cleanToken) return;
     const delta = big(amount) * sign;
-    if (NEAR_LIKE.has(receiver)) flow!.near += delta;
-    else add(flow!.tokens, receiver, delta);
+    if (NEAR_LIKE.has(cleanToken)) flow!.near += delta;
+    else add(flow!.tokens, cleanToken, delta);
   };
+  const credit = (amount: unknown, sign: 1n | -1n) => creditToken(receiver, amount, sign);
   for (const log of item?.execution_outcome?.outcome?.logs ?? []) {
     if (typeof log !== 'string') continue;
     if (log.startsWith('EVENT_JSON:')) {
       let ev: any;
       try { ev = JSON.parse(log.slice('EVENT_JSON:'.length)); } catch { continue; }
-      if (ev?.standard !== 'nep141' || !Array.isArray(ev?.data)) continue;
-      for (const d of ev.data) {
-        const from = String(d?.old_owner_id ?? '').toLowerCase();
-        const to = String(d?.new_owner_id ?? '').toLowerCase();
-        const owner = String(d?.owner_id ?? '').toLowerCase();
-        if (ev.event === 'ft_transfer') {
-          if (to === signer && from !== signer) credit(d.amount, 1n);
-          if (from === signer && to !== signer) credit(d.amount, -1n);
-        } else if (ev.event === 'ft_mint' && owner === signer) {
-          credit(d.amount, 1n);
-        } else if (ev.event === 'ft_burn' && owner === signer) {
-          credit(d.amount, -1n);
+      if (ev?.standard === 'nep141' && Array.isArray(ev?.data)) {
+        for (const d of ev.data) {
+          const from = String(d?.old_owner_id ?? '').toLowerCase();
+          const to = String(d?.new_owner_id ?? '').toLowerCase();
+          const owner = String(d?.owner_id ?? '').toLowerCase();
+          if (ev.event === 'ft_transfer') {
+            if (to === signer && from !== signer) credit(d.amount, 1n);
+            if (from === signer && to !== signer) credit(d.amount, -1n);
+          } else if (ev.event === 'ft_mint' && owner === signer) {
+            credit(d.amount, 1n);
+          } else if (ev.event === 'ft_burn' && owner === signer) {
+            credit(d.amount, -1n);
+          }
         }
+        continue;
+      }
+      if (ev?.standard === 'nep245' && Array.isArray(ev?.data)) {
+        for (const d of ev.data) {
+          const from = String(d?.old_owner_id ?? '').toLowerCase();
+          const to = String(d?.new_owner_id ?? '').toLowerCase();
+          const owner = String(d?.owner_id ?? '').toLowerCase();
+          const tokenIds: unknown[] = Array.isArray(d?.token_ids) ? d.token_ids : [];
+          const amounts: unknown[] = Array.isArray(d?.amounts) ? d.amounts : [];
+          for (let i = 0; i < tokenIds.length; i++) {
+            const rawTokenId = String(tokenIds[i] ?? '');
+            const amt = amounts[i];
+            if (!rawTokenId.startsWith('nep141:')) continue;
+            if (ev.event === 'mt_transfer') {
+              if (to === signer && from !== signer) creditToken(rawTokenId, amt, 1n);
+              if (from === signer && to !== signer) creditToken(rawTokenId, amt, -1n);
+            } else if (ev.event === 'mt_mint' && owner === signer) {
+              creditToken(rawTokenId, amt, 1n);
+            } else if (ev.event === 'mt_burn' && owner === signer) {
+              creditToken(rawTokenId, amt, -1n);
+            }
+          }
+        }
+        continue;
       }
       continue;
     }
@@ -135,11 +175,38 @@ export function classifyFlow(near: bigint, tokens: Map<string, bigint>): Detecte
   const spent = [...tokens].filter(([, d]) => d < 0n);
   if (near <= -MIN_TRADE_YOCTO && gained.length === 1 && spent.length === 0) {
     const [token] = gained[0];
-    return { side: 'buy', tokenAddress: token, tokenIn: 'wrap.near', tokenOut: token, amountIn: (-near).toString() };
+    if (!QUOTE_TOKENS.has(token)) {
+      return { side: 'buy', tokenAddress: token, tokenIn: 'wrap.near', tokenOut: token, amountIn: (-near).toString() };
+    }
   }
   if (near >= MIN_TRADE_YOCTO && spent.length === 1 && gained.length === 0) {
     const [token, amount] = spent[0];
-    return { side: 'sell', tokenAddress: token, tokenIn: token, tokenOut: 'wrap.near', amountIn: (-amount).toString() };
+    if (!QUOTE_TOKENS.has(token)) {
+      return { side: 'sell', tokenAddress: token, tokenIn: token, tokenOut: 'wrap.near', amountIn: (-amount).toString() };
+    }
+  }
+  // Token-to-Token or Quote-Token swaps (e.g. TokenA -> wrap.near -> TokenB or USDC -> TokenB) where net NEAR change is ~0
+  if (gained.length === 1 && spent.length === 1) {
+    const [gainedToken] = gained[0];
+    const [spentToken, spentAmt] = spent[0];
+    const gainedIsQuote = QUOTE_TOKENS.has(gainedToken);
+    const spentIsQuote = QUOTE_TOKENS.has(spentToken);
+    if (!gainedIsQuote && spentIsQuote) {
+      return { side: 'buy', tokenAddress: gainedToken, tokenIn: spentToken, tokenOut: gainedToken, amountIn: (-spentAmt).toString() };
+    }
+    if (gainedIsQuote && !spentIsQuote) {
+      return { side: 'sell', tokenAddress: spentToken, tokenIn: spentToken, tokenOut: 'wrap.near', amountIn: (-spentAmt).toString() };
+    }
+    if (!gainedIsQuote && !spentIsQuote && gainedToken !== spentToken) {
+      return {
+        side: 'buy',
+        tokenAddress: gainedToken,
+        tokenIn: spentToken,
+        tokenOut: gainedToken,
+        amountIn: (-spentAmt).toString(),
+        soldTokenIn: spentToken,
+      };
+    }
   }
   return null;
 }

@@ -626,8 +626,56 @@ describe('extractSwapDetails on real venue messages', () => {
     expect(r).toMatchObject({ side: 'sell', tokenAddress: 'cat.near' });
   });
 
-  it('Intear token-to-token swap is neither a buy nor a sell', () => {
-    expect(extractSwapDetails('cat.near', ftCall('dex.intear.near', intearOps('nep141:cat.near', 'nep141:dog.near')))).toBeNull();
+  it('Intear token-to-token swap detects buy of output token and soldTokenIn for rotation', () => {
+    expect(extractSwapDetails('cat.near', ftCall('dex.intear.near', intearOps('nep141:cat.near', 'nep141:dog.near')))).toMatchObject({
+      side: 'buy',
+      tokenAddress: 'dog.near',
+      soldTokenIn: 'cat.near',
+    });
+  });
+
+  it('Ref DCL multi-hop token rotation (dafodil.near pattern: TokenA -> wrap.near -> TokenB and 4-hop via PRL/USDC)', () => {
+    const hop2 = extractSwapDetails(
+      'imeme.nearlytrade.near',
+      ftCall('dclv2.ref-labs.near', {
+        Swap: {
+          pool_ids: [
+            'imeme.nearlytrade.near|wrap.near|10000',
+            'imeme-2.v2-launchpad.justhoot.near|wrap.near|10000',
+          ],
+          output_token: 'imeme-2.v2-launchpad.justhoot.near',
+          min_output_amount: '1',
+        },
+      })
+    );
+    expect(hop2).toMatchObject({
+      side: 'buy',
+      tokenAddress: 'imeme-2.v2-launchpad.justhoot.near',
+      soldTokenIn: 'imeme.nearlytrade.near',
+      dclPoolId: 'imeme-2.v2-launchpad.justhoot.near|wrap.near|10000',
+    });
+
+    const hop4 = extractSwapDetails(
+      'pcat.nearlytrade.near',
+      ftCall('dclv2.ref-labs.near', {
+        Swap: {
+          pool_ids: [
+            'pcat.nearlytrade.near|prl.omft.near|2000',
+            '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1|prl.omft.near|2000',
+            '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1|wrap.near|2000',
+            'imeme-2.v2-launchpad.justhoot.near|wrap.near|10000',
+          ],
+          output_token: 'imeme-2.v2-launchpad.justhoot.near',
+          min_output_amount: '1',
+        },
+      })
+    );
+    expect(hop4).toMatchObject({
+      side: 'buy',
+      tokenAddress: 'imeme-2.v2-launchpad.justhoot.near',
+      soldTokenIn: 'pcat.nearlytrade.near',
+      dclPoolId: 'imeme-2.v2-launchpad.justhoot.near|wrap.near|10000',
+    });
   });
 
   it('intearRoute reads all message forms', () => {

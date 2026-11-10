@@ -3804,6 +3804,7 @@ export interface UserBalances {
   totalNearFormatted: string;
   totalNearUsd: string;
   onChainNearFormatted?: string;
+  spendableNearFormatted?: string;
   usdcNearRaw?: string;
   usdcNearFormatted?: string;
   usdcNearUsd?: string;
@@ -3865,13 +3866,14 @@ export async function getUserBalances(
       const solanaAddress = user.solana_address;
 
       let nativeNearYocto = '0';
+      let nativeNearTimedOut = false;
       let wrapNearYocto = '0';
       let suiMist = 0n;
       let strkBal = '0';
       let ethBal = '0';
 
       const [nativeRes, wrapRes, usdcRes, suiRes, starknetRes, nearUsd, suiUsd, strkUsdRes, ethUsdRes] = await Promise.allSettled([
-        withTimeout(near.getNearBalance(subaccountId), 2500, '0'),
+        withTimeout(near.getNearBalance(subaccountId), 3500, ''),
         withTimeout(near.view<string>('wrap.near', 'ft_balance_of', { account_id: subaccountId }), 2500, '0'),
         withTimeout(near.view<string>(NEAR_USDC_CONTRACT, 'ft_balance_of', { account_id: subaccountId }), 2500, '0'),
         suiAddress
@@ -3899,8 +3901,14 @@ export async function getUserBalances(
       const solPrice = solUsdRes.status === 'fulfilled' ? solUsdRes.value : 150;
       const hypePrice = hypeUsdRes.status === 'fulfilled' && hypeUsdRes.value > 0 ? hypeUsdRes.value : 74.0;
 
-      if (nativeRes.status === 'fulfilled') {
+      if (nativeRes.status === 'fulfilled' && nativeRes.value) {
         nativeNearYocto = nativeRes.value;
+      } else {
+        nativeNearTimedOut = true;
+        const fallbackNear = parseFloat(String((user as any).last_near_balance || '0'));
+        if (Number.isFinite(fallbackNear) && fallbackNear > 0) {
+          nativeNearYocto = (BigInt(Math.round(fallbackNear * 1e6)) * 10n ** 18n).toString();
+        }
       }
       if (wrapRes.status === 'fulfilled') {
         wrapNearYocto = wrapRes.value || '0';
@@ -3923,10 +3931,11 @@ export async function getUserBalances(
       const nativeNear = Number(BigInt(nativeNearYocto) / 1000000000000000000n) / 1e6;
       const wrapNear = Number(BigInt(wrapNearYocto) / 1000000000000000000n) / 1e6;
 
-      // Subtract storage reserve (0.05 NEAR) from display balance to show spendable amount
-      const storageReserve = 0.05;
+      // Display true on-chain balance in nativeNearFormatted & totalNearFormatted so bot matches NearBlocks Explorer,
+      // while exposing spendableNearFormatted (0.03 NEAR gas/storage reserve) for trade sizing breakdown.
+      const storageReserve = 0.03;
       const spendableNativeNear = Math.max(0, nativeNear - storageReserve);
-      const totalNear = spendableNativeNear + wrapNear;
+      const totalNear = nativeNear + wrapNear;
 
       const spendableSui = Number(suiMist) / 1e9;
 
@@ -3941,14 +3950,15 @@ export async function getUserBalances(
       const result: UserBalances = {
         subaccountId,
         nativeNearYocto,
-        nativeNearFormatted: spendableNativeNear.toFixed(4),
-        nativeNearUsd: formatUSD(spendableNativeNear, nearPrice),
+        nativeNearFormatted: nativeNear.toFixed(4),
+        nativeNearUsd: formatUSD(nativeNear, nearPrice),
         wrapNearYocto,
         wrapNearFormatted: wrapNear.toFixed(4),
         wrapNearUsd: formatUSD(wrapNear, nearPrice),
         totalNearFormatted: totalNear.toFixed(4),
         totalNearUsd: formatUSD(totalNear, nearPrice),
         onChainNearFormatted: nativeNear.toFixed(4),
+        spendableNearFormatted: (spendableNativeNear + wrapNear).toFixed(4),
         nearUsd: nearPrice,
         usdcNearRaw,
         usdcNearFormatted: usdcNear.toFixed(2),
@@ -3974,7 +3984,9 @@ export async function getUserBalances(
         hypeUsd: hypePrice,
       };
 
-      balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 30_000 });
+      if (!nativeNearTimedOut) {
+        balanceCache.set(telegramId, { data: result, expiresAt: Date.now() + 30_000 });
+      }
       return result;
     } finally {
       inflightUserBalances.delete(telegramId);
