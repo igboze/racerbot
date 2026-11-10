@@ -73,7 +73,7 @@ function splitList(v: string | undefined): string[] {
 /** Free endpoints used first for every read and broadcast. */
 const READ_RPC_URLS: string[] = (() => {
   const list = splitList(process.env.SOLANA_READ_RPC_URLS);
-  return list.length > 0 ? list : ['https://solana-rpc.publicnode.com', 'https://api.mainnet-beta.solana.com'];
+  return list.length > 0 ? list : ['https://api.mainnet-beta.solana.com', 'https://solana-rpc.publicnode.com'];
 })();
 
 /** Paid endpoint (QuickNode). Only used when all free endpoints fail. */
@@ -1098,11 +1098,15 @@ export async function buildSolanaSwapPlan(params: SolanaSwapParams): Promise<Sol
   if (params.feeFromQuote) feeLamports = params.feeFromQuote(outAmount);
 
   const owner = new PublicKey(params.owner);
-  // Priority price from Jupiter (instruction tag 3 = SetComputeUnitPrice), capped.
-  let priceMicroLamports = 100_000n;
+  // Priority price from Jupiter (instruction tag 3 = SetComputeUnitPrice), with a healthy floor to beat Solana network congestion.
+  const MIN_PRIORITY_MICROLAMPORTS = 100_000n; // 0.00004 SOL min priority fee
+  let priceMicroLamports = MIN_PRIORITY_MICROLAMPORTS;
   for (const ix of (j.computeBudgetInstructions || []) as JupIx[]) {
     const d = Buffer.from(ix.data, 'base64');
-    if (d[0] === 3 && d.length >= 9) priceMicroLamports = d.readBigUInt64LE(1);
+    if (d[0] === 3 && d.length >= 9) {
+      const p = d.readBigUInt64LE(1);
+      if (p > priceMicroLamports) priceMicroLamports = p;
+    }
   }
   if (priceMicroLamports > MAX_PRIORITY_MICROLAMPORTS) priceMicroLamports = MAX_PRIORITY_MICROLAMPORTS;
 
@@ -1392,7 +1396,7 @@ function confirmPollDelay(startedAt: number): number {
 async function broadcastFree(serialized: string): Promise<string | null> {
   const results = await Promise.allSettled(
     READ_RPC_URLS.map((url) =>
-      rpcPost<string>(url, 'sendTransaction', [serialized, { encoding: 'base64', skipPreflight: true, maxRetries: 0 }], 6000),
+      rpcPost<string>(url, 'sendTransaction', [serialized, { encoding: 'base64', skipPreflight: true, maxRetries: 3 }], 6000),
     ),
   );
   for (const r of results) if (r.status === 'fulfilled' && r.value) return r.value;
@@ -1466,8 +1470,9 @@ export async function sendAndConfirmSolanaTransaction(
   onProgress?.('confirming');
   const started = Date.now();
   let lastRebroadcast = Date.now();
-  let lastHeightCheck = 0;
+  let lastValidityCheck = Date.now();
   const HARD_TIMEOUT_MS = 75_000;
+  const recentBlockhash = tx.message?.recentBlockhash;
 
   while (Date.now() - started < HARD_TIMEOUT_MS) {
     await new Promise((r) => setTimeout(r, confirmPollDelay(started)));
@@ -1482,24 +1487,40 @@ export async function sendAndConfirmSolanaTransaction(
       }
     } catch { /* keep polling */ }
 
-    if (Date.now() - lastRebroadcast > 3000) {
+    if (Date.now() - lastRebroadcast > 2500) {
       lastRebroadcast = Date.now();
       void broadcastAll(serialized);
     }
 
-    if (lastValidBlockHeight > 0 && Date.now() - lastHeightCheck > 10_000) {
-      lastHeightCheck = Date.now();
-      try {
-        const height = await solanaRpc<number>('getBlockHeight', [{ commitment: 'confirmed' }], { timeoutMs: 4000, allowPaid: true });
-        if (height > lastValidBlockHeight) {
-          // One last look in history before declaring it dropped.
-          const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: true }], { timeoutMs: 5000, allowPaid: true });
-          const s = st?.value?.[0];
-          if (s && !s.err) return { signature, confirmed: true, error: null };
-          if (s?.err) return { signature, confirmed: false, error: describeSolanaError(s.err) };
-          return { signature, confirmed: false, error: 'Transaction expired before it landed (network congestion). Nothing was spent. Please try again.' };
-        }
-      } catch { /* ignore */ }
+    // Only verify blockhash expiration after at least 15 seconds have passed
+    if (Date.now() - lastValidityCheck > 15_000) {
+      lastValidityCheck = Date.now();
+      if (recentBlockhash) {
+        try {
+          const res = await solanaRpc<any>('isBlockhashValid', [recentBlockhash, { commitment: 'confirmed' }], { timeoutMs: 4000, allowPaid: true });
+          const isValid = res?.value ?? res;
+          if (isValid === false) {
+            // One last look in history before declaring it dropped.
+            const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: true }], { timeoutMs: 5000, allowPaid: true });
+            const s = st?.value?.[0];
+            if (s && !s.err) return { signature, confirmed: true, error: null };
+            if (s?.err) return { signature, confirmed: false, error: describeSolanaError(s.err) };
+            return { signature, confirmed: false, error: 'Transaction expired before it landed (network congestion). Nothing was spent. Please try again.' };
+          }
+        } catch { /* ignore RPC error and continue polling */ }
+      } else if (lastValidBlockHeight > 0) {
+        try {
+          const epoch = await solanaRpc<any>('getEpochInfo', [{ commitment: 'confirmed' }], { timeoutMs: 4000, allowPaid: true });
+          const height = epoch?.blockHeight;
+          if (height && height > lastValidBlockHeight) {
+            const st = await solanaRpc<any>('getSignatureStatuses', [[signature], { searchTransactionHistory: true }], { timeoutMs: 5000, allowPaid: true });
+            const s = st?.value?.[0];
+            if (s && !s.err) return { signature, confirmed: true, error: null };
+            if (s?.err) return { signature, confirmed: false, error: describeSolanaError(s.err) };
+            return { signature, confirmed: false, error: 'Transaction expired before it landed (network congestion). Nothing was spent. Please try again.' };
+          }
+        } catch { /* ignore RPC error and continue polling */ }
+      }
     }
   }
 

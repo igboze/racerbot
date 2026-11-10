@@ -209,8 +209,8 @@ export function buildChannelBuyAlertText(input: ChannelBuyAlertInput): string {
   const got = compactTokenAmount(input.tokensReceived);
   lines.push(
     `💸 <b>${formatBuyUsd(input.spentUsd)}</b>` +
-      (native && !native.startsWith('$') ? ` (${escapeHtml(native)})` : '') +
-      (got ? ` → ${got}` : '')
+    (native && !native.startsWith('$') ? ` (${escapeHtml(native)})` : '') +
+    (got ? ` → ${got}` : '')
   );
 
   const stats: string[] = [];

@@ -3020,6 +3020,8 @@ export function getUserFriendlyError(error: Error | string): string {
     return 'Transaction signing timed out. Please retry.';
   if (r.includes('timeout') || r.includes('timed out'))
     return 'Network timeout \u2014 NEAR RPC is slow right now. Please retry.';
+  if (r.includes('transaction expired before it landed') || r.includes('nothing was spent'))
+    return 'Transaction expired before landing on Solana due to network congestion. No funds were spent. Please retry.';
   if (r.includes('expired') || r.includes('nonce'))
     return 'Transaction expired due to network latency. Please retry.';
 
