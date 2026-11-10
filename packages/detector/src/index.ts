@@ -1226,6 +1226,9 @@ async function handlePoolCreated(
 
   const supplyNum = parseFloat(totalSupply) / Math.pow(10, decimals);
   const marketCap = initialPrice * supplyNum;
+  const nearPriceUsd = await getNearUsdPrice().catch(() => 0);
+  const effectiveNearPrice = nearPriceUsd > 0 ? nearPriceUsd : 5.16;
+  const marketCapUsd = marketCap > 0 ? marketCap * effectiveNearPrice : undefined;
 
   // 1. Update in-memory name cache immediately
   const tokenEvent: TokenDetectedEvent = {
@@ -1237,6 +1240,10 @@ async function handlePoolCreated(
     venue,
     pool_address: poolAddress,
     creator,
+    initial_price: initialPrice > 0 ? initialPrice : undefined,
+    market_cap: marketCap > 0 ? marketCap : undefined,
+    market_cap_usd: marketCapUsd,
+    total_supply: totalSupply,
     timestamp: Date.now(),
   };
   tokenNameCache.set(tokenAddress, tokenEvent);

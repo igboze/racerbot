@@ -3428,6 +3428,50 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
 }
 
 /**
+ * Polls txStatus across multiple NEAR RPC endpoints to verify if a submitted transaction succeeded.
+ */
+export async function pollNearTxStatus(
+  txHash: string,
+  accountId: string,
+  timeoutMs = 6000
+): Promise<{ success: boolean; error?: string; raw?: any } | null> {
+  const start = Date.now();
+  const urls = RPC_URLS.length > 0 ? RPC_URLS : [
+    formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
+    'https://near.drpc.org',
+    'https://rpc.intea.rs',
+  ];
+
+  while (Date.now() - start < timeoutMs) {
+    for (const url of urls) {
+      try {
+        const formattedUrl = formatNearRpcUrl(url);
+        const isFastnear = formattedUrl.includes('fastnear.com');
+        const nearConn = await connect({
+          networkId: 'mainnet',
+          keyStore: new keyStores.InMemoryKeyStore(),
+          nodeUrl: formattedUrl,
+          headers: hasFastnearKey && isFastnear ? { Authorization: `Bearer ${fastnearApiKey}` } : undefined,
+        });
+        const status = await nearConn.connection.provider.txStatus(txHash, accountId);
+        if (status) {
+          if (status.status && ((status.status as any).SuccessValue !== undefined || (status.status as any).SuccessReceiptId !== undefined)) {
+            return { success: true, raw: status };
+          }
+          if (status.status && (status.status as any).Failure) {
+            return { success: false, error: JSON.stringify((status.status as any).Failure), raw: status };
+          }
+        }
+      } catch {
+        // Continue polling next RPC or next iteration
+      }
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
+}
+
+/**
  * Executes an account-based NEAR transaction with automatic RPC failover across all configured endpoints.
  * Prevents 429 rate limit errors from crashing user operations.
  */
@@ -3463,12 +3507,31 @@ export async function connectWithNearRpcFailover<T>(
     } catch (err: any) {
       lastErr = err;
       const msg = String(err?.message || (typeof err === 'object' ? JSON.stringify(err) : err)).toLowerCase();
+      // If transaction was already submitted and broadcasted to NEAR, do not blindly retry write transaction
+      const submittedTxHash = err?.context?.transactionHash || err?.transactionHash;
+      if (submittedTxHash) {
+        console.log(`[NEAR_TX] Transaction ${submittedTxHash} was submitted, checking execution status across RPCs...`);
+        const outcome = await pollNearTxStatus(submittedTxHash, accountId, 8000).catch(() => null);
+        if (outcome?.success) {
+          return {
+            transaction: { hash: submittedTxHash },
+            transaction_outcome: { id: submittedTxHash },
+            status: outcome.raw?.status || { SuccessValue: '' },
+          } as any as T;
+        }
+        if (outcome && !outcome.success) {
+          throw new Error(`Transaction failed on-chain (${submittedTxHash}): ${outcome.error}`);
+        }
+        throw new Error(`Transaction was submitted to NEAR (${submittedTxHash}) but confirmation is taking longer than usual. Please check NearBlocks: https://nearblocks.io/txns/${submittedTxHash}`);
+      }
+
       // Re-throw domain validation/account state errors that will not resolve by changing RPC endpoints
       if (
         msg.includes('does not exist') ||
         msg.includes('insufficient balance') ||
         msg.includes('amount exceeds maximum') ||
-        msg.includes('must be greater than 0')
+        msg.includes('must be greater than 0') ||
+        msg.includes('lackbalanceforstate')
       ) {
         throw err;
       }
@@ -4349,8 +4412,8 @@ export async function withdrawFunds(
     withdrawYocto = maxWithdrawableYocto;
   } else {
     withdrawYocto = BigInt(Math.floor(amountNear * 1e6)) * 1000000000000000000n;
-    // Allow 0.0001 NEAR tolerance in case user typed the 4-decimal rounded balance shown in the UI
-    const roundingToleranceYocto = 100_000_000_000_000_000_000n; // 0.0001 NEAR
+    // Allow 0.0002 NEAR tolerance in case user typed the 4-decimal rounded balance shown in the UI
+    const roundingToleranceYocto = 200_000_000_000_000_000_000n; // 0.0002 NEAR
     if (withdrawYocto > maxWithdrawableYocto) {
       if (withdrawYocto - maxWithdrawableYocto <= roundingToleranceYocto) {
         withdrawYocto = maxWithdrawableYocto;
@@ -4368,14 +4431,30 @@ export async function withdrawFunds(
   const keyPair = KeyPair.fromString(privateKey as any);
 
   return await connectWithNearRpcFailover(subaccountId, keyPair, async (account) => {
-    const res = await account.sendMoney(destination, withdrawYocto);
-    const formattedWithdrawn = (Number(withdrawYocto / 1000000000000000000n) / 1e6).toFixed(4);
+    try {
+      const res = await account.sendMoney(destination, withdrawYocto);
+      const formattedWithdrawn = (Number(withdrawYocto / 1000000000000000000n) / 1e6).toFixed(4);
 
-    return {
-      txHash: res.transaction.hash,
-      amountWithdrawn: formattedWithdrawn,
-      destination,
-    };
+      return {
+        txHash: res.transaction.hash,
+        amountWithdrawn: formattedWithdrawn,
+        destination,
+      };
+    } catch (err: any) {
+      const submittedTxHash = err?.context?.transactionHash || err?.transactionHash;
+      if (submittedTxHash) {
+        const outcome = await pollNearTxStatus(submittedTxHash, subaccountId, 6000).catch(() => null);
+        if (outcome?.success) {
+          const formattedWithdrawn = (Number(withdrawYocto / 1000000000000000000n) / 1e6).toFixed(4);
+          return {
+            txHash: submittedTxHash,
+            amountWithdrawn: formattedWithdrawn,
+            destination,
+          };
+        }
+      }
+      throw err;
+    }
   });
 }
 
@@ -4468,8 +4547,13 @@ export async function withdrawSolanaFunds(
     lamports = max;
   } else {
     lamports = BigInt(Math.floor(amountSol * 1e9));
+    const roundingToleranceLamports = 100_000n; // 0.0001 SOL tolerance for UI rounding
     if (lamports > max) {
-      throw new Error(`Amount exceeds maximum withdrawable balance (${lamportsToSol(max).toFixed(6)} SOL after network fee). Use "all" to send everything.`);
+      if (lamports - max <= roundingToleranceLamports) {
+        lamports = max;
+      } else {
+        throw new Error(`Amount exceeds maximum withdrawable balance (${lamportsToSol(max).toFixed(6)} SOL after network fee). Use "all" to send everything.`);
+      }
     }
     const left = max - lamports;
     if (left > 0n && left < SOLANA_RENT_EXEMPT_MIN_LAMPORTS) {
@@ -4589,9 +4673,14 @@ export async function withdrawSuiFunds(
     withdrawMist = maxWithdrawableMist;
   } else {
     withdrawMist = BigInt(Math.floor(amountSui * 1e9));
+    const roundingToleranceMist = 100_000n; // 0.0001 SUI tolerance for UI rounding
     if (withdrawMist > maxWithdrawableMist) {
-      const maxFormatted = (Number(maxWithdrawableMist) / 1e9).toFixed(4);
-      throw new Error(`Amount exceeds maximum withdrawable balance (${maxFormatted} SUI after gas reserve).`);
+      if (withdrawMist - maxWithdrawableMist <= roundingToleranceMist) {
+        withdrawMist = maxWithdrawableMist;
+      } else {
+        const maxFormatted = (Math.floor(Number(maxWithdrawableMist) / 1e5) / 1e4).toFixed(4);
+        throw new Error(`Amount exceeds maximum withdrawable balance (${maxFormatted} SUI after gas reserve).`);
+      }
     }
   }
 
@@ -4718,12 +4807,25 @@ export async function withdrawStarknetFunds(
     }
   } else {
     rawWithdrawAmount = BigInt(Math.floor(amount * Math.pow(10, decimals)));
-    if (isStrk && rawWithdrawAmount + gasReserve > currentBal) {
-      const maxWithdrawable = (Number(currentBal - gasReserve) / 1e18).toFixed(4);
-      throw new Error(`Amount exceeds maximum withdrawable balance (${maxWithdrawable} STRK after gas reserve).`);
-    } else if (!isStrk && rawWithdrawAmount > currentBal) {
-      const maxWithdrawable = (Number(currentBal) / Math.pow(10, decimals)).toFixed(4);
-      throw new Error(`Amount exceeds available balance (${maxWithdrawable} ${symbol}).`);
+    if (isStrk) {
+      const maxWithdrawableFri = currentBal > gasReserve ? currentBal - gasReserve : 0n;
+      const roundingToleranceFri = 100_000_000_000_000n; // 0.0001 STRK
+      if (rawWithdrawAmount > maxWithdrawableFri) {
+        if (rawWithdrawAmount - maxWithdrawableFri <= roundingToleranceFri) {
+          rawWithdrawAmount = maxWithdrawableFri;
+        } else {
+          const maxWithdrawable = (Math.floor(Number(maxWithdrawableFri) / 1e14) / 1e4).toFixed(4);
+          throw new Error(`Amount exceeds maximum withdrawable balance (${maxWithdrawable} STRK after gas reserve).`);
+        }
+      }
+    } else if (rawWithdrawAmount > currentBal) {
+      const roundingToleranceUnits = BigInt(Math.floor(0.0001 * Math.pow(10, decimals)));
+      if (rawWithdrawAmount - currentBal <= roundingToleranceUnits) {
+        rawWithdrawAmount = currentBal;
+      } else {
+        const maxWithdrawable = (Math.floor((Number(currentBal) / Math.pow(10, decimals)) * 1e4) / 1e4).toFixed(4);
+        throw new Error(`Amount exceeds available balance (${maxWithdrawable} ${symbol}).`);
+      }
     }
   }
 

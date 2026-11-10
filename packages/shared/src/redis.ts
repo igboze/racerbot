@@ -33,6 +33,10 @@ export interface TokenDetectedEvent {
   venue: EventVenue;
   pool_address: string;
   creator: string;
+  initial_price?: number;
+  market_cap?: number;
+  market_cap_usd?: number;
+  total_supply?: string;
   timestamp: number;
 }
 

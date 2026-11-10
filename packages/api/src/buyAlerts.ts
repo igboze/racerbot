@@ -311,6 +311,65 @@ export function isNearMemeToken(
   return true;
 }
 
+function formatCompactUsd(val?: number): string {
+  if (!val || isNaN(val) || val <= 0) return '';
+  if (val >= 1_000_000_000) return `$${(val / 1_000_000_000).toFixed(2)}B`;
+  if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(2)}M`;
+  if (val >= 10_000) return `$${(val / 1_000).toFixed(1)}K`;
+  return `$${val.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+}
+
+export function formatDisplayMarketCap(mcapUsd?: number | null, isBondingCurve = false): string {
+  if (mcapUsd == null || isNaN(mcapUsd) || mcapUsd <= 0) {
+    if (isBondingCurve) {
+      return '<b>~$4.5K</b> <i>(Bonding Curve)</i>';
+    }
+    return '';
+  }
+  const compact = formatCompactUsd(mcapUsd);
+  const exact = `$${Math.round(mcapUsd).toLocaleString('en-US')}`;
+  const suffix = isBondingCurve ? ' • <i>Bonding Curve</i>' : '';
+  if (mcapUsd >= 10_000) {
+    return `<b>${compact}</b> (${exact})${suffix}`;
+  }
+  return `<b>${exact}</b> (${compact})${suffix}`;
+}
+
+export function generateEmojiWaterfall(spentUsd: number, emoji = '🟢', endEmoji = '🐋'): string {
+  // Generous scaling so buyers feel the impact of large purchases
+  // $100 -> ~10 emojis
+  // $250 -> ~22 emojis (1 full row)
+  // $500 -> ~34 emojis (1-2 rows)
+  // $850 -> ~45 emojis (2 rows)
+  // $1,000 -> ~55 emojis (2-3 rows)
+  // $2,500 -> ~85 emojis (4 rows)
+  // $5,000+ -> up to 140-150 emojis (6-7 rows)
+  let count: number;
+  if (spentUsd <= 150) {
+    count = Math.max(10, Math.round(spentUsd / 12));
+  } else if (spentUsd <= 500) {
+    count = Math.round(18 + ((spentUsd - 150) / 350) * 16); // 18 to 34
+  } else if (spentUsd <= 1500) {
+    count = Math.round(34 + ((spentUsd - 500) / 1000) * 32); // 34 to 66
+  } else if (spentUsd <= 5000) {
+    count = Math.round(66 + ((spentUsd - 1500) / 3500) * 44); // 66 to 110
+  } else {
+    count = Math.min(150, Math.round(110 + ((spentUsd - 5000) / 5000) * 30)); // up to 140-150
+  }
+
+  const lineLength = 22; // Neatly wraps in Telegram without jagged mid-emoji line breaks
+  const lines: string[] = [];
+  let remaining = count;
+  while (remaining > 0) {
+    const take = Math.min(remaining, lineLength);
+    lines.push(emoji.repeat(take));
+    remaining -= take;
+  }
+  if (endEmoji && lines.length > 0) {
+    lines[lines.length - 1] += endEmoji;
+  }
+  return lines.join('\n');
+}
 function resolveNearVenueLabel(tokenAddress: string, cachedVenue?: string | null): string {
   const addr = (tokenAddress || '').toLowerCase();
   const v = (cachedVenue || '').toLowerCase();
@@ -383,26 +442,40 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     ? resolvedName.trim()
     : (event.token_address.split('.')[0] || symbol).toUpperCase();
 
+  const headingTitle = `${escapeHtml(cleanName.toUpperCase())} BUY!`;
+
+  const whaleBar = generateEmojiWaterfall(event.spent_usd, '🟢', '🐋');
+
+  const spentUsdStr = event.spent_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const priceFormatted = priceUsd && priceUsd > 0 ? formatPriceUsd(priceUsd) : '';
   const venueLabel = resolveNearVenueLabel(event.token_address, tokenCache?.venue);
-  const buyerUrl = event.buyer_address && event.buyer_address !== 'Unknown'
-    ? `https://nearblocks.io/address/${encodeURIComponent(event.buyer_address)}`
+  const spentNativeClean = formatSpentNativeClean(event.spent_amount_native);
+
+  const buyerFull = (event.buyer_address || 'Unknown').trim();
+  const buyerUrl = buyerFull && buyerFull !== 'Unknown'
+    ? `https://nearblocks.io/address/${encodeURIComponent(buyerFull)}`
+    : '';
+  const buyerDisplay = `<code>${escapeHtml(buyerFull)}</code>`;
+  const buyerBalSuffix = event.buyer_near_balance != null && event.buyer_near_balance > 0
+    ? ` • <code>${Number(event.buyer_near_balance).toLocaleString('en-US', { maximumFractionDigits: 1 })} NEAR</code>`
     : '';
 
-  // Compact mobile layout + wealth-tier emoji bar (see channelBuyAlert.ts)
-  const text = buildChannelBuyAlertText({
-    chainLabel: 'NEAR',
-    tokenName: cleanName,
-    tokenSymbol: symbol,
-    tokenAddress: event.token_address,
-    spentUsd: event.spent_usd,
-    spentNative: event.spent_amount_native,
-    tokensReceived: event.tokens_received,
-    priceUsd,
-    marketCapUsd: mcapUsd,
-    buyerAddress: event.buyer_address,
-    buyerUrl,
-    venue: venueLabel,
-  });
+  const isBondingCurve = event.token_address.endsWith('.nearlytrade.near') || event.token_address.endsWith('.meme-cooking.near');
+  const mcapFormatted = formatDisplayMarketCap(mcapUsd, isBondingCurve);
+
+  const text =
+    `🟢 <b>${headingTitle}</b>\n` +
+    `${whaleBar}\n\n` +
+    `<blockquote>` +
+    `💰 <b>Spent:</b> <b>$${spentUsdStr}</b> <code>(${escapeHtml(spentNativeClean)})</code>\n` +
+    `📦 <b>Bought:</b> <b>${escapeHtml(event.tokens_received)}</b>\n` +
+    (priceFormatted ? `💵 <b>Price:</b> <code>$${priceFormatted}</code>\n` : '') +
+    (mcapFormatted ? `📊 <b>Market Cap:</b> ${mcapFormatted}\n` : '') +
+    `🏛️ <b>Venue:</b> ${venueLabel}` +
+    `</blockquote>\n\n` +
+    `🪙 <b>Token:</b> <b>${escapeHtml(cleanName)}</b> (<code>$${escapeHtml(symbol)}</code>)\n` +
+    `👤 <b>Buyer:</b> ${buyerDisplay}${buyerBalSuffix}\n` +
+    `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>`;
 
   const explorerUrl = event.tx_hash
     ? `https://nearblocks.io/txns/${event.tx_hash}`
@@ -438,6 +511,10 @@ async function sendNearTokenLaunchChannelAlert(event: {
   symbol?: string;
   venue?: string;
   creator?: string;
+  initial_price?: number;
+  market_cap?: number;
+  market_cap_usd?: number;
+  total_supply?: string;
 }): Promise<void> {
   if (!_bot) return;
   const addr = (event.token_address || '').trim().toLowerCase();
@@ -466,14 +543,28 @@ async function sendNearTokenLaunchChannelAlert(event: {
     : `${escapeHtml(cleanName.toUpperCase())} LAUNCHED!`;
 
   const venueLabel = resolveNearVenueLabel(addr, event.venue);
-  const creatorLine = event.creator && event.creator !== 'Unknown'
-    ? `👤 <b>Deployer:</b> <a href="https://nearblocks.io/address/${encodeURIComponent(event.creator)}">${escapeHtml(maskAddress(event.creator))}</a>\n`
+  const isBondingCurve = addr.endsWith('.nearlytrade.near') || addr.endsWith('.meme-cooking.near');
+
+  const creatorFull = (event.creator || '').trim();
+  const creatorUrl = creatorFull && creatorFull !== 'Unknown'
+    ? `https://nearblocks.io/address/${encodeURIComponent(creatorFull)}`
     : '';
+  const creatorLine = creatorFull && creatorFull !== 'Unknown'
+    ? `👤 <b>Creator:</b> <code>${escapeHtml(creatorFull)}</code>\n`
+    : '';
+
+  let initialMcap = event.market_cap_usd || (event.initial_price && event.total_supply ? event.initial_price * Number(event.total_supply) : undefined);
+  if (!initialMcap && isBondingCurve) {
+    initialMcap = 4200; // Standard initial bonding curve market cap on NEAR (~$4.2K)
+  }
+  const mcapDisplay = formatDisplayMarketCap(initialMcap, isBondingCurve);
+  const mcapLine = mcapDisplay ? `📊 <b>Initial MC:</b> ${mcapDisplay}\n` : '';
 
   const text =
     `🚀 <b>${headingTitle}</b>\n` +
     `✨ <b>NEW NEAR MEME TOKEN</b>\n\n` +
     `🪙 <b>Token:</b> <b>${escapeHtml(cleanName)}</b> (<code>$${escapeHtml(symbol)}</code>)\n` +
+    (mcapLine || '') +
     `🏛️ <b>Venue:</b> ${venueLabel}\n` +
     creatorLine +
     `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>`;
@@ -484,12 +575,17 @@ async function sendNearTokenLaunchChannelAlert(event: {
     : `https://dexscreener.com/near/${event.token_address}`;
   const explorerUrl = `https://nearblocks.io/token/${event.token_address}`;
 
+  const row2Buttons = [
+    Markup.button.url('📈 Chart', chartUrl),
+    Markup.button.url('🔍 Contract', explorerUrl),
+  ];
+  if (creatorUrl) {
+    row2Buttons.push(Markup.button.url('👤 Creator', creatorUrl));
+  }
+
   const keyboard = Markup.inlineKeyboard([
     [Markup.button.url(`⚡ Snipe / Buy $${symbol} on RacerBot`, buyDeepLink)],
-    [
-      Markup.button.url('📈 Chart', chartUrl),
-      Markup.button.url('🔍 Contract', explorerUrl),
-    ],
+    row2Buttons,
   ]);
 
   await _bot.telegram.sendMessage(NEAR_WHALE_CHANNEL, text, {

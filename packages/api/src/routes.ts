@@ -3000,6 +3000,16 @@ export function getUserFriendlyError(error: Error | string): string {
   }
 
   // ── NEAR RPC errors ───────────────────────────────────────────────────
+  if (r.includes('lackbalanceforstate'))
+    return 'The network rejected the transaction: insufficient balance to cover the amount and required account storage reserve (0.03 NEAR).';
+  if (r.includes('transaction was submitted') || r.includes('https://nearblocks.io') || r.includes('https://solscan.io'))
+    return errorMsg.slice(0, 320);
+  if (r.includes('server error') && (r.includes('{') || r.includes('actionerror'))) {
+    const match = errorMsg.match(/ExecutionError":\s*"([^"]+)"/) || errorMsg.match(/ErrorMessage":\s*"([^"]+)"/);
+    if (match && match[1]) {
+      return `Transaction rejected on-chain: ${match[1]}`;
+    }
+  }
   if (r.includes('accountdoesnotexist') || (r.includes('account') && r.includes('does not exist')))
     return 'Destination NEAR account does not exist on-chain. Please check the spelling and try again.';
   if (r.includes('invalidreceiverid') || r.includes('invalidaccountid') || r.includes('is not a valid accountid'))
@@ -3025,7 +3035,7 @@ export function getUserFriendlyError(error: Error | string): string {
   if (clean.length > 0 && clean.length < 250) {
     return sanitizeMd(clean);
   }
-  return 'Trading operation could not be completed. Please check your balance and settings, then retry.';
+  return 'The operation could not be completed. Please check your balance and retry in a moment.';
 }
 
 // ── Live stage progress on the "Processing order…" message ───────────────────

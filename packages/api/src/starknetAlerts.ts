@@ -26,7 +26,7 @@ import {
   LAUNCHY_PLATFORM_FEE_SHARE_PCT,
   LAUNCHY_EKUBO_FEE_SHARE_PCT,
 } from '@racerbot/shared';
-import { escapeHtml } from './buyAlerts.js';
+import { escapeHtml, generateEmojiWaterfall, formatDisplayMarketCap } from './buyAlerts.js';
 import { getTokenInfo } from './wallet.js';
 
 export const STARKNET_ALERTS_CHANNEL = process.env.STARKNET_ALERTS_CHANNEL || '@racerbotalert';
@@ -238,7 +238,9 @@ export async function sendStarknetTokenCreationAlert(params: {
   const ca = params.tokenAddress.toLowerCase();
   const symbol = (params.tokenSymbol || 'TOKEN').toUpperCase();
   const name = params.tokenName || symbol;
-  const creator = params.creatorAddress ? maskAddress(params.creatorAddress) : 'Contract Deployer';
+  const creatorFull = (params.creatorAddress || '').trim();
+  const creator = creatorFull ? `<code>${escapeHtml(creatorFull)}</code>` : 'Contract Deployer';
+  const creatorUrl = creatorFull ? `https://starkscan.co/contract/${creatorFull}` : '';
   const isLaunchy = params.isLaunchy !== false && params.launchpad === 'launchy';
   const venue = isLaunchy
     ? 'Launchy (Ekubo Concentrated Liquidity)'
@@ -246,7 +248,7 @@ export async function sendStarknetTokenCreationAlert(params: {
   const quoteSym = params.quoteTokenSymbol || 'STRK';
   const isOfficialLaunchy = isSameStarknetAddress(ca, LAUNCHY_TOKEN_ADDRESS);
 
-  const mcapStr = formatUsdAmount(params.marketCapUsd);
+  const mcapDisplay = formatDisplayMarketCap(params.marketCapUsd || (isLaunchy ? 4200 : null), isLaunchy) || formatUsdAmount(params.marketCapUsd);
   const liqStr = formatUsdAmount(params.liquidityUsd);
   const priceStr = formatPriceAmount(params.priceUsd);
 
@@ -270,9 +272,9 @@ export async function sendStarknetTokenCreationAlert(params: {
       officialBadge +
       `🪙 <b>Token:</b> ${escapeHtml(name)} (<code>$${escapeHtml(symbol)}</code>)\n` +
       `📄 <b>CA:</b> <code>${ca}</code>\n` +
-      `👤 <b>Creator:</b> <code>${creator}</code>\n` +
+      `👤 <b>Creator:</b> ${creator}\n` +
       `🔄 <b>Pair:</b> <code>$${escapeHtml(symbol)} / ${escapeHtml(quoteSym)}</code>\n` +
-      `📊 <b>Initial MC:</b> <b>${mcapStr}</b>\n` +
+      `📊 <b>Initial MC:</b> ${mcapDisplay}\n` +
       `💵 <b>Initial Price:</b> <b>${priceStr}</b>\n` +
       `💧 <b>Liquidity:</b> <b>${liqStr}</b>\n` +
       `💧 <b>Pool Fee:</b> 1% (50% Creator / 30% Launchy / 20% Ekubo)\n` +
@@ -280,12 +282,17 @@ export async function sendStarknetTokenCreationAlert(params: {
       `🏛️ <b>Launchpad:</b> 🚀 <b>Launchy</b> (Ekubo DEX)\n` +
       `📈 <b>Status:</b> 🟢 Bonding Curve Active`;
 
+    const row2: any[] = [
+      Markup.button.url('🚀 starklaunchy.fun', launchyUrl),
+      Markup.button.url('🔍 Starkscan Explorer', explorerUrl),
+    ];
+    if (creatorUrl) {
+      row2.push(Markup.button.url('👤 Creator', creatorUrl));
+    }
+
     keyboardButtons = [
       [Markup.button.url(`🏎️ Buy $${symbol} on RacerBot`, buyDeepLink)],
-      [
-        Markup.button.url('🚀 starklaunchy.fun', launchyUrl),
-        Markup.button.url('🔍 Starkscan Explorer', explorerUrl),
-      ],
+      row2,
     ];
   } else {
     // Standard Starknet On-Chain Token creation / deployment
@@ -294,15 +301,20 @@ export async function sendStarknetTokenCreationAlert(params: {
       `<i>Pure On-Chain Starknet Mainnet Deployment</i>\n\n` +
       `🪙 <b>Token:</b> ${escapeHtml(name)} (<code>$${escapeHtml(symbol)}</code>)\n` +
       `📄 <b>CA:</b> <code>${ca}</code>\n` +
-      `👤 <b>Creator:</b> <code>${creator}</code>\n` +
-      `📊 <b>Market Cap:</b> <b>${mcapStr}</b>\n` +
+      `👤 <b>Creator:</b> ${creator}\n` +
+      `📊 <b>Market Cap:</b> ${mcapDisplay}\n` +
       `💵 <b>Price:</b> <b>${priceStr}</b>\n` +
       `💧 <b>Liquidity:</b> <b>${liqStr}</b>\n` +
       `🏛️ <b>Venue:</b> ${escapeHtml(venue)}`;
 
+    const row2: any[] = [Markup.button.url('🔍 Starkscan Explorer', explorerUrl)];
+    if (creatorUrl) {
+      row2.push(Markup.button.url('👤 Creator', creatorUrl));
+    }
+
     keyboardButtons = [
       [Markup.button.url(`🏎️ Buy $${symbol} on RacerBot`, buyDeepLink)],
-      [Markup.button.url('🔍 Starkscan Explorer', explorerUrl)],
+      row2,
     ];
   }
 
@@ -353,13 +365,14 @@ export async function sendStarknetWhaleBuyAlert(params: {
   const ca = params.tokenAddress.toLowerCase();
   const symbol = (params.tokenSymbol || 'TOKEN').toUpperCase();
   const name = params.tokenName || symbol;
-  const buyer = maskAddress(params.buyerAddress);
+  const buyerFull = (params.buyerAddress || 'Unknown').trim();
+  const buyer = `<code>${escapeHtml(buyerFull)}</code>`;
+  const buyerUrl = buyerFull && buyerFull !== 'Unknown' ? `https://starkscan.co/contract/${buyerFull}` : '';
   const isLaunchy = params.isLaunchy || isSameStarknetAddress(ca, LAUNCHY_TOKEN_ADDRESS);
 
-  const whaleIconsCount = Math.min(25, Math.max(3, Math.round(params.spentUsd / 50)));
-  const whaleBar = '🐋'.repeat(whaleIconsCount);
+  const whaleBar = generateEmojiWaterfall(params.spentUsd, '🟢', '🐋');
 
-  const mcapStr = formatUsdAmount(params.marketCapUsd);
+  const mcapStr = formatDisplayMarketCap(params.marketCapUsd, isLaunchy) || formatUsdAmount(params.marketCapUsd);
   const priceStr = formatPriceAmount(params.priceUsd);
   const spentNative = params.spentNative || `$${params.spentUsd.toFixed(2)}`;
   const gotStr = params.tokensReceived || 'Tokens';
@@ -383,12 +396,15 @@ export async function sendStarknetWhaleBuyAlert(params: {
     `📄 <b>CA:</b> <code>${ca}</code>\n` +
     `💰 <b>Spent:</b> <b>${spentNative}</b> ($${params.spentUsd.toFixed(2)} USD)\n` +
     `📦 <b>Got:</b> ${escapeHtml(gotStr)}\n` +
-    `👤 <b>Buyer:</b> <code>${buyer}</code>\n` +
+    `👤 <b>Buyer:</b> ${buyer}\n` +
     `💵 <b>Price:</b> <b>${priceStr}</b>\n` +
-    `📊 <b>Market Cap:</b> <b>${mcapStr}</b>\n` +
+    `📊 <b>Market Cap:</b> ${mcapStr}\n` +
     venueLine;
 
   const row2Buttons = [Markup.button.url('🔍 Starkscan Tx Explorer', explorerUrl)];
+  if (buyerUrl) {
+    row2Buttons.push(Markup.button.url('👤 Buyer', buyerUrl));
+  }
   if (isLaunchy) {
     row2Buttons.unshift(Markup.button.url('🚀 starklaunchy.fun', launchyUrl));
   }

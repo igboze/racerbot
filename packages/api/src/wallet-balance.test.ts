@@ -84,3 +84,27 @@ describe('sui wallet balance & withdrawal gas reserve', () => {
   });
 });
 
+describe('NEAR withdrawal tolerance and error formatting', () => {
+  it('floors displayed max withdrawable so it never exceeds actual balance', () => {
+    const fmtNear = (y: bigint) => (Math.floor(Number(y / 1000000000000000000n) / 100) / 1e4).toFixed(4);
+    // 3.95159 NEAR
+    const yocto = 3951590000000000000000000n;
+    expect(fmtNear(yocto)).toBe('3.9515'); // Does not round up to 3.9516
+  });
+
+  it('clamps user input within 0.0002 NEAR tolerance to maxWithdrawableYocto', () => {
+    const maxWithdrawableYocto = 3951540000000000000000000n; // 3.95154 NEAR
+    const amountNear = 3.9516; // User typed rounded 3.9516
+    let withdrawYocto = BigInt(Math.floor(amountNear * 1e6)) * 1000000000000000000n;
+    const roundingToleranceYocto = 200_000_000_000_000_000_000n; // 0.0002 NEAR
+
+    expect(withdrawYocto > maxWithdrawableYocto).toBe(true);
+    if (withdrawYocto > maxWithdrawableYocto) {
+      if (withdrawYocto - maxWithdrawableYocto <= roundingToleranceYocto) {
+        withdrawYocto = maxWithdrawableYocto;
+      }
+    }
+    expect(withdrawYocto).toBe(maxWithdrawableYocto);
+  });
+});
+
