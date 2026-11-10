@@ -5076,6 +5076,21 @@ export async function withdrawTokenFunds(
 
 
 /**
+ * Sends NEAR from the treasury, for example a creator's share of a viewing key
+ * the buyer paid straight to the treasury. Signed with the treasury key.
+ */
+export async function payFromTreasury(destination: string, amountYocto: bigint): Promise<{ txHash: string }> {
+  const treasuryKey = (process.env.TREASURY_PRIVATE_KEY || '').trim();
+  if (!treasuryKey) throw new Error('Treasury payouts are not configured on the server.');
+  const recipient = destination.trim().toLowerCase();
+  if (!isValidNearAccountId(recipient) || recipient === TREASURY_ACCOUNT_ID) throw new Error('Invalid payout account.');
+  if (amountYocto <= 0n) throw new Error('Payout amount must be greater than zero.');
+  const keyPair = KeyPair.fromString(treasuryKey as any);
+  const res = await connectWithNearRpcFailover(TREASURY_ACCOUNT_ID, keyPair, async (account) => account.sendMoney(recipient, amountYocto));
+  return { txHash: res.transaction.hash };
+}
+
+/**
  * Pay accrued referral rewards from the treasury wallet to a referrer's
  * RacerBot subaccount. Signed with the treasury key (TREASURY_PRIVATE_KEY env).
  */

@@ -11772,9 +11772,21 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
 
       await ctx.answerCbQuery('💸 Processing your claim...').catch(() => { });
 
-      // Pay first, then record — a failed payout must never mark rewards claimed
-      const { txHash } = await payReferralReward(user.subaccount_id, claimableNear);
-      await createReferralClaim(user.id, claimableNear, txHash);
+      // Record the claim before paying, so a payout can never be claimed twice even if saving
+      // afterwards fails; a payout that fails removes the record again.
+      const claimRow = await db.query(
+        'INSERT INTO referral_claims (referrer_id, amount_near, tx_hash, created_at) VALUES ($1, $2, NULL, NOW()) RETURNING id',
+        [user.id, claimableNear]
+      );
+      const claimId = claimRow.rows[0].id;
+      let txHash: string;
+      try {
+        ({ txHash } = await payReferralReward(user.subaccount_id, claimableNear));
+      } catch (payErr) {
+        await db.query('DELETE FROM referral_claims WHERE id = $1', [claimId]).catch(() => {});
+        throw payErr;
+      }
+      await db.query('UPDATE referral_claims SET tx_hash = $1 WHERE id = $2', [txHash, claimId]).catch(() => {});
       if (cashbackEarned > 0) {
         await recordCashbackClaim(user.id, Math.min(cashbackEarned, claimableNear)).catch(() => {});
       }

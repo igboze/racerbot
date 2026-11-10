@@ -54,6 +54,8 @@ export async function startNotifyListener(redisUrl: string): Promise<void> {
           amountNear: Number(evData.amount_near) || 1.0,
           venue: String(evData.venue || 'rhea'),
           txHash: evData.tx_hash ? String(evData.tx_hash) : undefined,
+          // The share of their position the creator sold, read on-chain by the detector
+          copySellPct: Number(evData.copy_sell_pct) > 0 ? Math.min(100, Number(evData.copy_sell_pct)) : undefined,
         });
       } catch (err: any) {
         console.warn('[NOTIFY] Failed to process alpha_caller_onchain_trade:', err?.message);

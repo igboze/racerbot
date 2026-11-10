@@ -159,4 +159,7 @@ export const nearActions = {
   call(methodName: string, args: object, gasTgas: number, depositYocto: bigint): transactions.Action {
     return transactions.functionCall(methodName, Buffer.from(JSON.stringify(args)), BigInt(gasTgas) * 1_000_000_000_000n, depositYocto);
   },
+  transfer(depositYocto: bigint): transactions.Action {
+    return transactions.transfer(depositYocto);
+  },
 };

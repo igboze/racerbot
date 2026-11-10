@@ -553,8 +553,9 @@ router.post('/alpha/creator/pay-entry-fee', async (req, res) => {
     const { walletAddress, txHash, amountNear } = req.body;
     const { payCreatorEntryFee } = await import('../racerAlpha.js');
     const result = await payCreatorEntryFee(user.id, {
-      walletAddress: walletAddress || user.subaccount_id || user.id,
-      txHash,
+      walletAddress: String(walletAddress || user.subaccount_id || '').trim().toLowerCase(),
+      subaccountId: user.subaccount_id,
+      txHash: typeof txHash === 'string' ? txHash : undefined,
       amountNear,
     });
     if (!result.success) {
@@ -771,6 +772,10 @@ router.post('/alpha/creator/pricing', async (req, res) => {
     }
     const { updateCreatorPricing } = await import('../racerAlpha.js');
     const result = await updateCreatorPricing(user.id, req.body);
+    if (!result?.success) {
+      res.status(400).json({ success: false, error: result?.reason || 'Could not update pricing' });
+      return;
+    }
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to update pricing' });
@@ -2017,7 +2022,7 @@ router.post('/alpha/keys/buy', async (req, res) => {
       res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram to purchase viewing keys.' });
       return;
     }
-    const { traderId, tier, txHash, autoCopyEnabled, autoCopyAmountNear, allocationPct, riskMultiplier, stopLossPct } = req.body;
+    const { traderId, tier, txHash, payerAccountId, autoCopyEnabled, autoCopyAmountNear, allocationPct, riskMultiplier, stopLossPct } = req.body;
     if (!traderId) {
       res.status(400).json({ error: 'traderId is required' });
       return;
@@ -2025,7 +2030,9 @@ router.post('/alpha/keys/buy', async (req, res) => {
     const { buyViewingKey } = await import('../racerAlpha.js');
     const result = await buyViewingKey(user, traderId, {
       tier,
-      txHash,
+      // A browser-wallet payment; buyViewingKey verifies it on-chain before granting the key
+      txHash: typeof txHash === 'string' && txHash.trim() ? txHash.trim() : undefined,
+      payerAccountId: typeof payerAccountId === 'string' ? payerAccountId.trim().toLowerCase() : undefined,
       autoCopyEnabled,
       autoCopyAmountNear,
       allocationPct,

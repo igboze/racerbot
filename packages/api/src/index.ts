@@ -561,6 +561,12 @@ async function main(): Promise<void> {
   const confidentialWorker = startConfidentialWorker(15_000);
   // Racer Alpha profit shares that could not be collected at the sell (empty wallet, NEAR still in an executor)
   const copyFeeRetryWorker = startCopyFeeRetryWorker();
+  // Creators' 95% of browser-wallet key sales that could not be paid at purchase time
+  const creatorPayoutRetryWorker = setInterval(() => {
+    import('./racerAlpha.js')
+      .then(({ retryPendingCreatorPayouts }) => retryPendingCreatorPayouts())
+      .catch((err: any) => logger.warn('Creator payout retry failed', { error: err?.message || String(err) }));
+  }, 10 * 60_000);
 
   // Swarm tranche timers live in memory: pause swarms a restart interrupted so users can resume them
   void import('./swarmExecutor.js')
@@ -580,6 +586,7 @@ async function main(): Promise<void> {
     clearInterval(receiptReconciler);
     if (confidentialWorker) clearInterval(confidentialWorker);
     clearInterval(copyFeeRetryWorker);
+    clearInterval(creatorPayoutRetryWorker);
     if (syncInterval) {
       clearInterval(syncInterval);
       syncInterval = null;
