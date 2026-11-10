@@ -241,9 +241,12 @@ export async function executeKleosSwap(
         return fail(`RacerBot won't buy this coin here: the only pool it could use would give you far fewer coins than the market price (very high pool fee or too little liquidity). Nothing was spent.`);
       }
       onProgress?.('simulating');
-      const roundTrip = await simulateV4RoundTrip(l2, route.ascend!, token);
+      const roundTrip = await simulateV4RoundTrip(l2, route.ascend!, token, netTradeAmount);
       if (roundTrip === 'sell_blocked') {
         return fail(`RacerBot won't buy this coin: a test buy followed by a sell failed, so its pool may not let you sell it back (a possible honeypot). Nothing was spent.`);
+      }
+      if (roundTrip === 'sells_return_little') {
+        return fail(`RacerBot won't buy this coin: in a test, selling right after buying gave back less than half the HYPE, so its pool has almost no HYPE to pay sellers. Nothing was spent.`);
       }
       if (roundTrip === 'buy_blocked') return fail(`This coin's pool is not accepting buys right now. Nothing was spent.`);
     }

@@ -7,6 +7,8 @@
  */
 import { ethers } from 'ethers';
 
+const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
+
 export const ASCEND = {
   launchpad: '0xe0dEF4221b9840a610D4e7d55812a79A6431a8eC',
   poolManager: '0xE2e105d3F7209A9DA11f83cCf3E7398a753823F1',
@@ -386,17 +388,25 @@ async function v4RouteFromKleos(token: string): Promise<AscendRoute | null> {
  * throwaway address, nothing sent). Pools with an unknown hook can block sells; this catches that before any
  * real buy. 'unavailable' when the RPC cannot simulate.
  */
-export async function simulateV4RoundTrip(provider: ethers.JsonRpcProvider, route: AscendRoute, token: string): Promise<'ok' | 'sell_blocked' | 'buy_blocked' | 'unavailable'> {
+export async function simulateV4RoundTrip(
+  provider: ethers.JsonRpcProvider,
+  route: AscendRoute,
+  token: string,
+  /** The real buy size, so a pool whose depth only covers tiny trades is caught too */
+  hypeIn: bigint = 10n ** 15n,
+): Promise<'ok' | 'sell_blocked' | 'buy_blocked' | 'sells_return_little' | 'unavailable'> {
   const sim = '0x000000000000000000000000000000000000bEEF';
-  const hypeIn = 10n ** 15n; // 0.001 HYPE
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
   const out = await quoteAscend(provider, route, token, 'buy', hypeIn).catch(() => 0n);
   if (out <= 0n) return 'buy_blocked';
-  const sellAmount = out / 2n;
+  // Sell back most of what the buy would get (the buy's own minimum is 1, so it may get a little less)
+  const sellAmount = (out * 9n) / 10n;
   const buy = encodeAscendBuy(route, token, hypeIn, 1n, sim, deadline);
   const sell = encodeAscendSell(route, token, sellAmount, 1n, sim, deadline);
   const erc20 = new ethers.Interface(['function approve(address,uint256) returns (bool)']);
   const permit2 = new ethers.Interface(PERMIT2_ABI);
+  const multicall = new ethers.Interface(['function getEthBalance(address addr) view returns (uint256 balance)']);
+  const balanceCall = { from: sim, to: MULTICALL3_ADDRESS, data: multicall.encodeFunctionData('getEthBalance', [sim]) };
   const q = ethers.toQuantity;
   let result: any;
   try {
@@ -407,7 +417,9 @@ export async function simulateV4RoundTrip(provider: ethers.JsonRpcProvider, rout
           { from: sim, to: buy.to, data: buy.data, value: q(buy.value) },
           { from: sim, to: token, data: erc20.encodeFunctionData('approve', [ASCEND.permit2, sellAmount]) },
           { from: sim, to: ASCEND.permit2, data: permit2.encodeFunctionData('approve', [token, ASCEND.universalRouter, sellAmount, deadline]) },
+          balanceCall,
           { from: sim, to: sell.to, data: sell.data, value: '0x0' },
+          balanceCall,
         ],
       }],
       validation: false,
@@ -416,7 +428,17 @@ export async function simulateV4RoundTrip(provider: ethers.JsonRpcProvider, rout
     return 'unavailable';
   }
   const calls = result?.[0]?.calls;
-  if (!Array.isArray(calls) || calls.length !== 4) return 'unavailable';
+  if (!Array.isArray(calls) || calls.length !== 6) return 'unavailable';
   if (calls[0].status !== '0x1') return 'buy_blocked';
-  return calls.every((c: any) => c.status === '0x1') ? 'ok' : 'sell_blocked';
+  if (!calls.every((c: any) => c.status === '0x1')) return 'sell_blocked';
+  // HYPE the sell paid back (the simulation charges no gas), against the 90% of the buy it sold
+  try {
+    const before = BigInt(multicall.decodeFunctionResult('getEthBalance', calls[3].returnData)[0]);
+    const after = BigInt(multicall.decodeFunctionResult('getEthBalance', calls[5].returnData)[0]);
+    const back = after > before ? after - before : 0n;
+    if (back * 2n < (hypeIn * 9n) / 10n) return 'sells_return_little';
+  } catch {
+    return 'unavailable';
+  }
+  return 'ok';
 }
