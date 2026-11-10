@@ -1209,7 +1209,9 @@ export async function lookupKleosToken(address: string, boardCoin?: any): Promis
   } else if (!coin) {
     // Not on the Kleos board: a coin launched in the last minute, or a token from another Elysium launchpad.
     // A Kleos router that quotes it proves it is Kleos's; otherwise say plainly that it can't be traded here.
-    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address).then(() => true).catch(() => false);
+    // Kleos's own routers only: other launchpads' coins are looked up next (BOXA, ElysPump, any Uniswap v4 pool),
+    // which also price them. Allowing those here would label them Kleos coins priced at 0.
+    const routed = await resolveKleosRoute(getEvmProvider('elysium', false), address, undefined, { allowUniV4: false }).then(() => true).catch(() => false);
     if (!routed) {
       noRouteReason = 'RacerBot could not find a HYPE pool for this Elysium token yet, so it cannot be bought here right now.';
     }

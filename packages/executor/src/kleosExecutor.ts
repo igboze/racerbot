@@ -38,6 +38,10 @@ import {
   elysiumPadName,
   ascendSellApprovals,
   montraSellApprovals,
+  padSellApprovals,
+  simulateV4RoundTrip,
+  isSaneV4Fee,
+  quoteMatchesMarket,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -114,6 +118,9 @@ const notYetConfirmed = (what: string, elysiumTx: string): string =>
   `${what} was sent to Elysium (${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${elysiumTx}) but no confirmation arrived yet. ` +
   `Check your balance before trying again, so you don't trade twice.`;
 
+const isAlreadyKnown = (err: any): boolean =>
+  /already known|known transaction/i.test(String(err?.info?.error?.message || err?.error?.message || err?.shortMessage || err?.message || ''));
+
 /** A signed Elysium transaction the RPC refused (or would revert); its message is already in plain language */
 class ElysiumSendError extends Error { }
 
@@ -165,8 +172,9 @@ export async function executeKleosSwap(
   } catch (err: any) {
     return fail(`${err?.message || 'No Kleos route'} Nothing was spent.`);
   }
-  // RonsPad, Ascend and Montra coins trade through the same Elysium flow
-  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'montra' ? 'montra' : 'kleos';
+  // RonsPad, Ascend, Montra, BOXA, ElysPump and Uniswap v4 coins trade through the same Elysium flow
+  const fillVenue = route.kind === 'ronspad' ? 'ronspad' : route.kind === 'ascend' ? 'ascend' : route.kind === 'montra' ? 'montra'
+    : route.kind === 'pad' ? route.pad!.pad.name : route.kind === 'padv3' ? 'elyspump' : route.kind === 'univ4' ? 'univ4' : 'kleos';
   const venueName = elysiumPadName(fillVenue);
 
   const direct = isElysiumDirectSend();
@@ -195,7 +203,8 @@ export async function executeKleosSwap(
     try {
       await l2.send('eth_sendRawTransaction', [raw]);
     } catch (err) {
-      throw new ElysiumSendError(describeElysiumSendError(err));
+      // A backup RPC saying "already known" means an earlier attempt did reach Elysium: it is sent
+      if (!isAlreadyKnown(err)) throw new ElysiumSendError(describeElysiumSendError(err));
     }
     return ethers.keccak256(raw);
   };
@@ -225,6 +234,19 @@ export async function executeKleosSwap(
       return fail(`${venueName} could not quote this buy: ${describeKleosRevert(err)} Nothing was spent.`);
     }
     if (expectedOut <= 0n) return fail(`${venueName} quoted zero coins for this buy. Nothing was spent.`);
+    // A plain Uniswap v4 pool can carry any hook or fee: the quote must match the coin's market price, and the
+    // coin must sell back, before anything is bought
+    if (route.kind === 'univ4') {
+      if (!isSaneV4Fee(route.ascend!.launchKey.fee) || !quoteMatchesMarket(netTradeAmount, expectedOut, decimals, route.ascend!.marketPriceHype)) {
+        return fail(`RacerBot won't buy this coin here: the only pool it could use would give you far fewer coins than the market price (very high pool fee or too little liquidity). Nothing was spent.`);
+      }
+      onProgress?.('simulating');
+      const roundTrip = await simulateV4RoundTrip(l2, route.ascend!, token);
+      if (roundTrip === 'sell_blocked') {
+        return fail(`RacerBot won't buy this coin: a test buy followed by a sell failed, so its pool may not let you sell it back (a possible honeypot). Nothing was spent.`);
+      }
+      if (roundTrip === 'buy_blocked') return fail(`This coin's pool is not accepting buys right now. Nothing was spent.`);
+    }
     const minOut = calculateSlippageMin(expectedOut, slippage_pct);
 
     const [l1Balance, l2Balance, l1Block] = await Promise.all([l1.getBalance(userAddress), l2.getBalance(userAddress), l1.getBlock('latest')]);
@@ -357,7 +379,10 @@ export async function executeKleosSwap(
   const sell = encodeKleosSell(route, token, amountIn, minOut, userAddress, deadline);
 
   // Exactly this amount, as the launchpads' own apps approve. Ascend and multi-hop Montra pull coins through Permit2 (two approvals).
-  const approvals: EvmCall[] = route.kind === 'ascend'
+  // BOXA approves its router; ElysPump, Ascend and plain Uniswap v4 pools pull the coin through Permit2
+  const approvals: EvmCall[] = route.kind === 'pad'
+    ? await padSellApprovals(l2, route.pad!, userAddress, amountIn)
+    : route.kind === 'ascend' || route.kind === 'univ4'
     ? await ascendSellApprovals(l2, token, userAddress, amountIn)
     : route.kind === 'montra'
       ? await montraSellApprovals(l2, route.montra!, token, userAddress, amountIn)
