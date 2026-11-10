@@ -1058,6 +1058,24 @@
       gap: 10px;
     }
     @media (max-width: 640px) {
+      /* Phones: the top bar wraps to two rows so Swap, Refresh, Share and the list toggle stay on screen */
+      .bubble-token-nav {
+        height: auto;
+        min-height: 56px;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        row-gap: 8px;
+      }
+      .token-nav-left { flex: 1 1 auto; }
+      .token-nav-center { display: none; }
+      .token-nav-right {
+        flex: 1 1 100%;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      /* The 🔍 button next to the token already opens the scanner */
+      .token-nav-right .btn-profile-pill { display: none; }
       .scanner-feature-grid {
         grid-template-columns: 1fr;
       }

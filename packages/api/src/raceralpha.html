@@ -7942,7 +7942,7 @@
       if (isNaN(n) || n <= 0) return '$0.0000';
       if (n < 0.0001) {
         // Tiny meme-token prices: $0.0₈123 means 0.00000000123 (8 zeros after the point, then the digits)
-        const zeros = Math.floor(-Math.log10(n));
+        const zeros = -Math.floor(Math.log10(n) + 1e-9) - 1;
         const digits = Math.floor(n * Math.pow(10, zeros + 3)).toString().slice(0, 3).replace(/0+$/, '') || '0';
         const sub = String(zeros).split('').map(d => '₀₁₂₃₄₅₆₇₈₉'[d]).join('');
         return '$0.0' + sub + digits;
@@ -8272,9 +8272,11 @@
             const sideBg = isBuy ? 'rgba(52, 211, 153, 0.12)' : 'rgba(255, 107, 115, 0.12)';
             const sideLabel = isBuy ? 'BUY' : 'SELL';
             const valFmt = t.volumeUsd ? '$' + Number(t.volumeUsd).toLocaleString(undefined, { maximumFractionDigits: 2 }) : (t.amountNear ? t.amountNear + ' NEAR' : '—');
-            const priceFmt = t.priceUsd ? '$' + Number(t.priceUsd).toPrecision(4) : '—';
-            const makerShort = formatShortAddress(t.maker || 'trader.near');
-            const txLink = t.txHash ? '<a href="https://nearblocks.io/txns/' + encodeURIComponent(t.txHash) + '" target="_blank" rel="noopener" style="color:var(--color-primary); text-decoration:none;">↗</a>' : '—';
+            const priceFmt = t.priceUsd ? formatPriceUsd(t.priceUsd) : '—';
+            const makerShort = t.maker ? escapeHtml(formatShortAddress(t.maker)) : '—';
+            // The server sends a working link: NearBlocks for real transaction hashes, otherwise the pool's trade list
+            const txHref = t.txUrl || (t.txHash ? 'https://nearblocks.io/txns/' + encodeURIComponent(t.txHash) : '');
+            const txLink = String(txHref).startsWith('https://') ? '<a href="' + escapeHtml(txHref) + '" target="_blank" rel="noopener" title="View trade" style="color:var(--color-primary); text-decoration:none;">↗</a>' : '—';
 
             return '<tr>' +
               '<td style="color:var(--color-text-muted);">' + (t.timeAgo || 'Just now') + '</td>' +

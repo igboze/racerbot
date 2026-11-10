@@ -14,6 +14,7 @@ import {
   getDb,
 } from '@racerbot/db';
 import { sellAtTarget } from '../sellHelper.js';
+import { nearTradeLinks, NEAR_TX_HASH } from '../tradeLinks.js';
 import { createLogger, formatTokenUnits } from '@racerbot/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -566,6 +567,37 @@ router.post('/alpha/creator/pay-entry-fee', async (req, res) => {
   }
 });
 
+// ── Home page headline numbers (all-time routed volume, trades, users) ───────
+let publicStatsCache: { body: any; expires: number } | null = null;
+router.get('/public-stats', async (_req, res) => {
+  try {
+    if (publicStatsCache && publicStatsCache.expires > Date.now()) {
+      res.json(publicStatsCache.body);
+      return;
+    }
+    const [{ getVolumeStats }, shared, { summarizePublicStats }] = await Promise.all([
+      import('@racerbot/db'),
+      import('@racerbot/shared'),
+      import('../publicStats.js'),
+    ]);
+    const [stats, near, sui, strk, sol, hype] = await Promise.all([
+      getVolumeStats(),
+      getNearUsdPrice().catch(() => 0),
+      shared.getSuiUsdPrice().catch(() => 0),
+      shared.getStrkUsdPrice().catch(() => 0),
+      shared.getSolUsdPrice().catch(() => 0),
+      shared.getHypeUsdPrice().catch(() => 0),
+    ]);
+    const body = { success: true, ...summarizePublicStats(stats, { near, sui, strk, sol, hype }) };
+    publicStatsCache = { body, expires: Date.now() + 5 * 60 * 1000 };
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json(body);
+  } catch (err: any) {
+    logger.warn(`public stats failed: ${err?.message || err}`);
+    res.status(503).json({ success: false, error: 'Stats are not available right now' });
+  }
+});
+
 router.get('/alpha/tokens', async (req, res) => {
   try {
     const { category, sort, search, preset, mcapFilter, volumeFilter, timeFilter, limit } = req.query;
@@ -604,6 +636,7 @@ router.get('/alpha/token/:address', async (req, res) => {
 
 const tokenActivityCache = new Map<string, { trades: any[]; expires: number }>();
 
+
 router.get('/alpha/token/:address/activity', async (req, res) => {
   try {
     const address = req.params.address?.toLowerCase().trim();
@@ -633,17 +666,21 @@ router.get('/alpha/token/:address/activity', async (req, res) => {
            ORDER BY created_at DESC LIMIT 20`,
           [address]
         );
+        const sigNearUsd = sigs.rows.length ? await getNearUsdPrice().catch(() => 0) : 0;
         for (const r of sigs.rows) {
           const tMs = new Date(r.createdAt).getTime();
           const diffM = Math.max(0, Math.round((now - tMs) / 60000));
+          const sigNear = parseFloat(r.amountNear || '0') || 0;
+          const sigPriceNear = parseFloat(r.priceNear || '0') || 0;
           trades.push({
             type: String(r.side || 'buy').toLowerCase(),
-            amount: `${parseFloat(r.amountNear || '1').toFixed(2)} NEAR`,
-            amountNear: parseFloat(r.amountNear || '1').toFixed(2),
-            priceUsd: 0,
-            volumeUsd: r.marketCapUsd ? parseFloat(r.marketCapUsd) : 0,
+            amount: sigPriceNear > 0 ? (sigNear / sigPriceNear).toLocaleString(undefined, { maximumFractionDigits: 2 }) : `${sigNear.toFixed(2)} NEAR`,
+            amountNear: sigNear.toFixed(2),
+            priceUsd: sigPriceNear * sigNearUsd,
+            volumeUsd: sigNear * sigNearUsd,
             maker: 'Racer Signal',
             txHash: r.txHash || '',
+            txUrl: r.txHash && NEAR_TX_HASH.test(String(r.txHash)) ? `https://nearblocks.io/txns/${r.txHash}` : '',
             timestamp: tMs,
             timeAgo: diffM === 0 ? 'Just now' : `${diffM}m ago`,
           });
@@ -673,20 +710,23 @@ router.get('/alpha/token/:address/activity', async (req, res) => {
               const diffM = Math.max(0, Math.round((now - tMs) / 60000));
               const timeAgo = diffM < 1 ? 'Just now' : diffM < 60 ? `${diffM}m ago` : `${Math.floor(diffM / 60)}h ago`;
               const volUsd = parseFloat(a.volume_in_usd || '0');
-              const fromAmt = parseFloat(a.from_token_amount || '0');
-              const toAmt = parseFloat(a.to_token_amount || '0');
-              const isSell = a.kind === 'sell';
-              const amtNum = isSell ? fromAmt : toAmt;
-              const nearAmt = (isSell ? toAmt : fromAmt).toFixed(2);
+              // The token's own side of the swap: for a sell it is what was sent, for a buy what was received
+              const tokenIsFrom = String(a.from_token_address || '').toLowerCase() === address;
+              const isSell = a.kind ? a.kind === 'sell' : tokenIsFrom;
+              const tokenAmt = parseFloat((tokenIsFrom ? a.from_token_amount : a.to_token_amount) || '0');
+              const otherAmt = parseFloat((tokenIsFrom ? a.to_token_amount : a.from_token_amount) || '0');
+              const tokenPriceUsd = parseFloat((tokenIsFrom ? a.price_from_in_usd : a.price_to_in_usd) || '0');
+              const tx = nearTradeLinks(a.tx_hash, a.tx_from_address, poolAddr);
 
               trades.push({
                 type: isSell ? 'sell' : 'buy',
-                amount: amtNum > 0 ? amtNum.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '1.0',
-                amountNear: nearAmt,
-                priceUsd: parseFloat(a.price_from_in_usd || '0'),
+                amount: tokenAmt > 0 ? tokenAmt.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—',
+                amountNear: otherAmt.toFixed(2),
+                priceUsd: tokenPriceUsd,
                 volumeUsd: volUsd,
-                maker: a.tx_from_address || 'trader.near',
-                txHash: a.tx_hash || '',
+                maker: tx.maker,
+                txHash: tx.txHash,
+                txUrl: tx.txUrl,
                 timestamp: tMs,
                 timeAgo,
               });
@@ -2356,6 +2396,16 @@ router.get(['/competition-snapshots', '/competition/snapshot-leaderboard', '/com
 });
 
 // ── Real-Time SSE Stream for Competition Leaderboard ──────────────────────────
+// Same data as the stream, as one JSON answer: the Arena page polls this if the stream drops
+router.get(['/competition-data', '/competition-data/:id'], async (req, res) => {
+  const compId = req.params.id || (req.query.id as string) || 'kookdog';
+  try {
+    res.json(await fetchCompetitionSnapshot(compId));
+  } catch (err: any) {
+    res.status(503).json({ error: err?.message || 'Competition data unavailable' });
+  }
+});
+
 router.get(['/competition-stream', '/competition/:id/stream', '/competition/stream'], async (req, res) => {
   const compId = req.params.id || (req.query.token as string) || (req.query.id as string) || 'kookdog';
 

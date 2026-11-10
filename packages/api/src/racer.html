@@ -468,15 +468,15 @@
     <section id="live-stats-strip" class="stats-strip">
       <div id="stat-widget-vol" class="metric-widget">
         <span id="stat-vol-val" class="metric-value">—</span>
-        <span class="metric-label">Volume Routed</span>
+        <span class="metric-label">Volume routed (all time)</span>
       </div>
       <div id="stat-widget-trades" class="metric-widget">
         <span id="stat-trades-val" class="metric-value">—</span>
-        <span class="metric-label">Trades</span>
+        <span class="metric-label">Trades (all time)</span>
       </div>
       <div id="stat-widget-traders" class="metric-widget">
         <span id="stat-traders-val" class="metric-value">—</span>
-        <span class="metric-label">Traders</span>
+        <span class="metric-label">Users</span>
       </div>
     </section>
 
@@ -945,6 +945,29 @@
       updateConnectUI();
     }
 
+    // 6.1 Live stats strip: RacerBot's own all-time volume, trades and users
+    function compactNumber(n, prefix = '') {
+      if (!(n > 0)) return '—';
+      if (n >= 1e9) return prefix + (n / 1e9).toFixed(2) + 'B';
+      if (n >= 1e6) return prefix + (n / 1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return prefix + (n / 1e3).toFixed(1) + 'K';
+      return prefix + Math.round(n).toLocaleString();
+    }
+    async function fetchPublicStats() {
+      try {
+        const r = await fetch('/api/public-stats');
+        if (!r.ok) return;
+        const s = await r.json();
+        if (!s || !s.success) return;
+        const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+        set('stat-vol-val', compactNumber(s.volumeRoutedUsd, '$'));
+        set('stat-trades-val', s.trades > 0 ? Number(s.trades).toLocaleString() : '—');
+        set('stat-traders-val', s.users > 0 ? Number(s.users).toLocaleString() : '—');
+      } catch (err) {
+        console.warn('Stats unavailable:', err);
+      }
+    }
+
     // Market data screener table
     async function fetchMarketData() {
       try {
@@ -954,14 +977,6 @@
           allTokens = data.tokens || data || [];
           renderMarketTable();
 
-          // 6.1 Conditional live stats strip: volume, trades, traders
-          const totalVol = allTokens.reduce((acc, t) => acc + (t.volume24h || 0), 0);
-          const volVal = document.getElementById('stat-vol-val');
-          if (volVal && totalVol > 0) {
-            volVal.textContent = totalVol >= 1e6
-              ? `$${(totalVol / 1e6).toFixed(2)}M`
-              : `$${(totalVol / 1e3).toFixed(1)}K`;
-          }
         }
       } catch (err) {
         console.error('Failed to load market data:', err);
@@ -1084,6 +1099,7 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       fetchMarketData();
+      fetchPublicStats();
       updateConnectUI();
     });
 

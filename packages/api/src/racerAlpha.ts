@@ -1,5 +1,6 @@
 import { createLogger, createRedis, getNear, getNearUsdPrice, parseMemeCookingId, type VenueName } from '@racerbot/shared';
 import { loadTokenFacts, peekTokenFacts, warmTokenFacts } from './tokenFacts.js';
+import { getTokenMarketStats } from './marketStats.js';
 import { getDb, getOpenPositions, getUserByTelegramId, getUserById, getUserBySubaccount, createCopyTradeTarget, updateCopyTradeTargetStatus, getCopyTradeTargetsByUser, type UserRecord } from '@racerbot/db';
 import crypto from 'crypto';
 import { getBotInstance } from './notify.js';
@@ -215,7 +216,11 @@ export async function getAlphaTraders(userId?: string): Promise<AlphaTrader[]> {
     let dbTraders: AlphaTrader[] = [];
     if (db) {
       const res = await db.query(
-        `SELECT * FROM racer_alpha_traders WHERE is_active = TRUE AND user_id <> 'system_alpha' AND ${realTraderSql()} ORDER BY verified_pnl_pct DESC`
+        `SELECT racer_alpha_traders.*,
+                (SELECT COUNT(DISTINCT k.buyer_user_id) FROM racer_alpha_keys k
+                  WHERE k.trader_id = racer_alpha_traders.id AND k.payment_status = 'completed'
+                    AND (k.expires_at IS NULL OR k.expires_at > NOW()))::int AS active_key_holders
+           FROM racer_alpha_traders WHERE is_active = TRUE AND user_id <> 'system_alpha' AND ${realTraderSql()} ORDER BY verified_pnl_pct DESC`
       ).catch(() => ({ rows: [] }));
       dbTraders = res.rows.map(rowToTrader);
     }
@@ -2020,6 +2025,26 @@ async function getUserHeldKeys(userId?: string): Promise<Set<string>> {
   return new Set(map.keys());
 }
 
+/** Largest fall from a peak in an equity curve, as a negative percent (0 when there is no history) */
+export function maxDrawdownFromCurve(curve: number[]): number {
+  let peak = -Infinity;
+  let worst = 0;
+  for (const v of curve) {
+    if (!Number.isFinite(v)) continue;
+    if (v > peak) peak = v;
+    if (peak > 0) worst = Math.min(worst, (v - peak) / peak);
+  }
+  return Math.round(worst * 1000) / 10;
+}
+
+/** Risk from the real drawdown: up to 5% low, up to 15% medium, more is high */
+export function riskFromDrawdown(drawdownPct: number): { score: number; level: string } {
+  const dd = Math.abs(drawdownPct);
+  const score = Math.min(10, Math.round((dd / 3) * 10) / 10);
+  const level = dd === 0 ? 'UNRATED' : dd <= 5 ? 'LOW' : dd <= 10 ? 'LOW-MEDIUM' : dd <= 15 ? 'MEDIUM' : dd <= 25 ? 'MEDIUM-HIGH' : 'HIGH';
+  return { score, level };
+}
+
 function rowToTrader(r: any): AlphaTrader {
   let equity: number[] = [];
   if (Array.isArray(r.equity_curve)) {
@@ -2027,6 +2052,10 @@ function rowToTrader(r: any): AlphaTrader {
   } else if (typeof r.equity_curve === 'string') {
     try { equity = JSON.parse(r.equity_curve); } catch {}
   }
+  equity = equity.map(Number).filter(Number.isFinite);
+  // The table's column defaults (450 followers, -12.4% drawdown, risk 3.2) are placeholders: use real numbers
+  const drawdown = equity.length >= 2 ? maxDrawdownFromCurve(equity) : 0;
+  const risk = riskFromDrawdown(drawdown);
 
   return {
     id: r.id,
@@ -2037,10 +2066,11 @@ function rowToTrader(r: any): AlphaTrader {
     bio: r.bio || '',
     avatarUrl: r.avatar_url || '',
     strategyTag: r.strategy_tag || 'Trend Following',
-    riskScore: r.risk_score ? parseFloat(r.risk_score) : 3.2,
-    riskLevel: r.risk_level || 'MEDIUM',
-    maxDrawdownPct: r.max_drawdown_pct ? parseFloat(r.max_drawdown_pct) : -12.4,
-    followersCount: r.followers_count ? parseInt(r.followers_count, 10) : 0,
+    riskScore: risk.score,
+    riskLevel: risk.level,
+    maxDrawdownPct: drawdown,
+    // Followers = people holding a paid, unexpired viewing key (counted by the query that loads traders)
+    followersCount: r.active_key_holders !== undefined && r.active_key_holders !== null ? parseInt(r.active_key_holders, 10) : 0,
     equityCurve: equity.length > 0 ? equity : [0, 0],
     keyPriceNear: parseFloat(r.key_price_near || '3.5'),
     tierBasicPriceNear: parseFloat(r.tier_basic_price_near || '1.5'),
@@ -2070,7 +2100,11 @@ export async function getAlphaTraderById(traderId: string, userId?: string): Pro
   const db = await getDb().catch(() => null);
   if (!db) return null;
   const res = await db.query(
-    `SELECT * FROM racer_alpha_traders WHERE (id = $1 OR handle = $1) AND is_active = TRUE AND ${realTraderSql()}`,
+    `SELECT racer_alpha_traders.*,
+            (SELECT COUNT(DISTINCT k.buyer_user_id) FROM racer_alpha_keys k
+              WHERE k.trader_id = racer_alpha_traders.id AND k.payment_status = 'completed'
+                AND (k.expires_at IS NULL OR k.expires_at > NOW()))::int AS active_key_holders
+       FROM racer_alpha_traders WHERE (id = $1 OR handle = $1) AND is_active = TRUE AND ${realTraderSql()}`,
     [traderId]
   ).catch(() => ({ rows: [] }));
   if (!res.rows[0]) return null;
@@ -3178,11 +3212,11 @@ function mapTokenInfoToAlphaItem(
     icon,
     venue,
     launchpad: fallbackMeta.fallbackLaunchpad || launchpad,
-    priceUsd: Number(safePriceUsd.toFixed(8)),
-    priceNear: Number(safePriceNear.toFixed(8)),
+    priceUsd: roundPrice(safePriceUsd),
+    priceNear: roundPrice(safePriceNear),
     change24h: info?.price_24h_change !== undefined && info?.price_24h_change !== null ? Number(info.price_24h_change) : 0,
     marketCap: Math.round(marketCap),
-    volume24h: info?.volume_24h_usd ? Math.round(info.volume_24h_usd) : Math.round(liquidityUsd * 0.35),
+    volume24h: info?.volume_24h_usd ? Math.round(info.volume_24h_usd) : 0,
     bondingProgress,
     bondingPhase,
     liquidityUsd: Math.round(liquidityUsd),
@@ -3193,6 +3227,59 @@ function mapTokenInfoToAlphaItem(
     dclPoolId: info?.dcl_pool_id ?? info?.dclPoolId ?? null,
     createdAt: peekTokenFacts(address).launchedAt ?? fallbackMeta?.createdAt,
   };
+}
+
+/** Prices to 6 significant digits, so tiny meme-token prices survive */
+export function roundPrice(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Number(value.toPrecision(6)) : 0;
+}
+
+/** Most tokens are checked against DexScreener; the largest market caps first */
+const MARKET_STATS_TOKEN_LIMIT = 900;
+/** A price no DEX pool backs, implying a market cap this large, is an index artefact, not a real price */
+const UNBACKED_MARKET_CAP_LIMIT_USD = 25_000_000;
+
+/**
+ * Real 24h change, volume and liquidity (and a price from a liquid pool) for
+ * the screener. A big token DexScreener has no pool for has an unbacked price
+ * (for example $94,000 for a token nobody can buy): it is left out. Exported for tests.
+ */
+export async function applyMarketStats(
+  tokens: AlphaTokenItem[],
+  stats?: Map<string, import('./marketStats.js').TokenMarketStats | null>,
+): Promise<AlphaTokenItem[]> {
+  let map = stats;
+  if (!map) {
+    const ranked = [...tokens]
+      .sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0))
+      .slice(0, MARKET_STATS_TOKEN_LIMIT)
+      .map(t => t.address);
+    map = await getTokenMarketStats(ranked).catch(() => new Map());
+  }
+
+  const kept: AlphaTokenItem[] = [];
+  for (const t of tokens) {
+    const key = t.address.toLowerCase();
+    const s = map.get(key);
+    if (s) {
+      if (s.priceUsd && s.priceUsd > 0) {
+        const oldUsd = t.priceUsd;
+        t.priceUsd = roundPrice(s.priceUsd);
+        if (oldUsd > 0 && t.priceNear > 0) t.priceNear = roundPrice(t.priceNear * (s.priceUsd / oldUsd));
+        if (s.marketCap && s.marketCap > 0) t.marketCap = Math.round(s.marketCap);
+        else if (oldUsd > 0 && t.marketCap > 0) t.marketCap = Math.round(t.marketCap * (s.priceUsd / oldUsd));
+      }
+      t.change24h = Math.round(s.change24h * 100) / 100;
+      t.volume24h = s.volume24h;
+      t.liquidityUsd = s.liquidityUsd;
+    } else if (s === null) {
+      // Checked, and no DEX pool trades it
+      if (!isLaunchpadAddress(t.address) && t.marketCap > UNBACKED_MARKET_CAP_LIMIT_USD) continue;
+      if (t.volume24h > 50 * Math.max(t.liquidityUsd, 1)) t.volume24h = 0;
+    }
+    kept.push(t);
+  }
+  return kept;
 }
 
 // Resilient promise with per-call timeout
@@ -3369,8 +3456,9 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
     const priceNear = nearUsd > 0 && pUsd > 0 ? pUsd / nearUsd : 0;
     const { launchpad, venue } = resolveLaunchpadFromAddress(addr);
 
-    const liqUsd = Math.round(Math.min(marketCap * 0.16, 500_000));
-    const volUsd = Math.round(liqUsd * 0.35 + (marketCap > 50000 ? 12000 : 2500));
+    // Liquidity and volume are unknown here; applyMarketStats fills in real numbers
+    const liqUsd = 0;
+    const volUsd = 0;
 
     let bondingProgress = 100;
     let bondingPhase: AlphaTokenItem['bondingPhase'] = 'dex_pool';
@@ -3403,8 +3491,8 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
       icon,
       venue,
       launchpad,
-      priceUsd: Number(pUsd.toFixed(8)),
-      priceNear: Number(priceNear.toFixed(8)),
+      priceUsd: roundPrice(pUsd),
+      priceNear: roundPrice(priceNear),
       change24h: 0,
       marketCap,
       volume24h: volUsd,
@@ -3431,8 +3519,8 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
         // Launchpad tokens on a bonding curve have no Ref price: the detector's price is the real one
         const rowPriceNear = parseFloat(row.last_price || '0');
         if (existing.priceUsd <= 0 && rowPriceNear > 0) {
-          existing.priceNear = Number(rowPriceNear.toFixed(8));
-          existing.priceUsd = Number((rowPriceNear * nearUsd).toFixed(8));
+          existing.priceNear = roundPrice(rowPriceNear);
+          existing.priceUsd = roundPrice(rowPriceNear * nearUsd);
           const rowLiqUsd = parseFloat(row.last_liquidity || '0') * nearUsd;
           if (rowLiqUsd > 0) existing.liquidityUsd = Math.round(rowLiqUsd);
         }
@@ -3474,11 +3562,11 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
         icon: authenticIcon || (row.icon && !row.icon.includes('racer-logo') ? row.icon : undefined) || (meta?.icon && !meta.icon.includes('assets.ref.finance') && !meta.icon.includes('raw.githubusercontent.com') ? meta.icon : undefined),
         venue,
         launchpad,
-        priceUsd: Number(pUsd.toFixed(8)),
-        priceNear: Number(pNear.toFixed(8)),
+        priceUsd: roundPrice(pUsd),
+        priceNear: roundPrice(pNear),
         change24h: 0,
         marketCap,
-        volume24h: Math.round(liqUsd * 0.4),
+        volume24h: 0,
         bondingProgress: bProg,
         bondingPhase: bProg < 100 ? 'bonding' : (launchpad !== 'ref' ? 'graduated' : 'dex_pool'),
         liquidityUsd: Math.round(liqUsd),
@@ -3495,7 +3583,8 @@ async function fetchAllAlphaTokensFromChain(): Promise<AlphaTokenItem[]> {
   const listed = filteredResults.map(t => t.address);
   warmTokenFacts([...listed.filter(isLaunchpadAddress), ...listed.filter(a => !isLaunchpadAddress(a))]);
 
-  return filteredResults.length > 0 ? filteredResults : [...INITIAL_ALPHA_TOKENS];
+  const withStats = await applyMarketStats(filteredResults);
+  return withStats.length > 0 ? withStats : [...INITIAL_ALPHA_TOKENS];
 }
 
 export async function listAlphaTokens(options?: {
@@ -3764,6 +3853,10 @@ export async function getAlphaTokenDetail(tokenAddress: string): Promise<AlphaTo
       if ((!item.priceUsd || item.priceUsd === 0) && fallback?.priceUsd && fallback.priceUsd > 0) {
         item.priceUsd = fallback.priceUsd;
       }
+
+      // Real 24h change, volume and liquidity, and a price from a liquid pool
+      const stats = await withTimeout(getTokenMarketStats([tokenAddress]).catch(() => new Map()), 4000, new Map());
+      await applyMarketStats([item], stats);
 
       // Upsert into cachedAlphaTokensList for fast access
       const existingIdx = cachedAlphaTokensList.tokens.findIndex(t => t.address.toLowerCase() === lowerAddr);

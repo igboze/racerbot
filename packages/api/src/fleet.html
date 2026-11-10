@@ -1534,39 +1534,38 @@
           txnsContainer.innerHTML = '<div style="text-align:center; padding:12px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">Fetching on-chain activity...</div>';
         }
 
-        const res = await fetch(`/api/bubblemap-data/${encodeURIComponent(cleanToken)}`);
+        // Same live trade feed as the Alpha console
+        const res = await fetch(`/alpha/token/${encodeURIComponent(cleanToken)}/activity`);
         if (res.ok) {
-          const bData = await res.json();
-          const txns = Array.isArray(bData?.txns) ? bData.txns.slice(0, 8) : [];
-          if (txnsCountEl) txnsCountEl.textContent = `${txns.length} swaps`;
+          const data = await res.json();
+          const txns = Array.isArray(data?.trades) ? data.trades.slice(0, 8) : [];
+          if (txnsCountEl) txnsCountEl.textContent = txns.length ? `${txns.length} recent` : 'Live';
 
           if (txns.length === 0) {
             if (txnsContainer) {
-              txnsContainer.innerHTML = '<div style="text-align:center; padding:12px; font-family:var(--font-mono); font-size:11px; color:var(--color-text-subtle);">No recent swaps for this target yet.</div>';
+              txnsContainer.innerHTML = '<div class="tt-empty-inline">No trades of this token in the last day.</div>';
             }
-          } else {
-            if (txnsContainer) {
-              txnsContainer.innerHTML = txns.map(tx => {
-                const isBuy = tx.type === 'buy' || tx.side === 'buy' || (tx.amountOut && !tx.amountIn);
-                const sideColor = isBuy ? 'var(--color-primary)' : 'var(--color-danger)';
-                const sideLabel = isBuy ? 'BUY' : 'SELL';
-                const amt = tx.amount ? parseFloat(tx.amount).toLocaleString(undefined, { maximumFractionDigits: 2 }) : (tx.nearAmount || '1.0');
-                const timeAgo = tx.timeAgo || (tx.timestamp ? Math.round((Date.now() - tx.timestamp) / 60000) + 'm ago' : 'Just now');
-                const shortUser = (tx.signerId || tx.sender || 'user.near').slice(0, 6) + '...' + (tx.signerId || tx.sender || 'user.near').slice(-6);
-
-                return `
-                  <div style="display:flex; justify-content:space-between; align-items:center; background:var(--color-surface); padding:6px 10px; border-radius:6px; font-family:var(--font-mono); font-size:11px; border:1px solid var(--color-border);">
-                    <div style="display:flex; align-items:center; gap:6px;">
-                      <span style="font-weight:700; color:${sideColor};">${sideLabel}</span>
-                      <span style="color:var(--color-text);">${amt}</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                      <span style="color:var(--color-text-subtle);">${shortUser}</span>
-                      <span style="color:var(--color-text-muted); font-size:10px;">${timeAgo}</span>
-                    </div>
-                  </div>`;
-              }).join('');
-            }
+          } else if (txnsContainer) {
+            txnsContainer.innerHTML = txns.map(tx => {
+              const isBuy = tx.type === 'buy';
+              const sideColor = isBuy ? 'var(--color-success)' : 'var(--color-danger)';
+              const value = Number(tx.volumeUsd) > 0
+                ? '$' + Number(tx.volumeUsd).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                : (tx.amountNear ? escapeHtml(String(tx.amountNear)) + ' NEAR' : '');
+              const href = String(tx.txUrl || '').startsWith('https://') ? tx.txUrl : '';
+              const link = href ? ` <a href="${escapeHtml(href)}" target="_blank" rel="noopener" title="View trade" style="color:var(--color-primary); text-decoration:none;">↗</a>` : '';
+              return `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; background:var(--color-surface); padding:6px 10px; border-radius:6px; font-family:var(--font-mono); font-size:11px; border:1px solid var(--color-border);">
+                  <div style="display:flex; align-items:center; gap:6px; min-width:0;">
+                    <span style="font-weight:700; color:${sideColor};">${isBuy ? 'BUY' : 'SELL'}</span>
+                    <span style="color:var(--color-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(String(tx.amount || ''))}</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+                    <span style="color:var(--color-text);">${value}</span>
+                    <span style="color:var(--color-text-muted); font-size:10px;">${escapeHtml(String(tx.timeAgo || ''))}</span>${link}
+                  </div>
+                </div>`;
+            }).join('');
           }
         }
       } catch (e) {

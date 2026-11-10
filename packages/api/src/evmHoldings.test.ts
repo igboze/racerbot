@@ -9,6 +9,7 @@ vi.mock('@racerbot/db', () => ({
   createPosition: (...args: any[]) => createPosition(...args),
   getOpenPositions: vi.fn(async () => []),
   getUserById: vi.fn(),
+  upsertTokenCache: vi.fn(async () => undefined),
 }));
 vi.mock('./notify.js', () => ({ notifyTokenDeposit: (...args: any[]) => notifyTokenDeposit(...args) }));
 // Elysium reads: Multicall3 balances and ERC-20 decimals
