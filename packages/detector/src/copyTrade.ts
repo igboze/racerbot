@@ -374,6 +374,9 @@ async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, t
           if (nearFloat > 0 && nearFloat < 1_000_000) amountNear = nearFloat;
         } catch {}
       }
+      // How much of the position the creator sold, so followers sell the same share
+      // (without it the server guessed from a 1 NEAR placeholder size)
+      const copySellPct = swap.side === 'sell' ? await creatorSoldPct(swap.tokenAddress, normalizedSigner, swap.amountIn) : null;
       const tokenCache = await getTokenCache(swap.tokenAddress).catch(() => null);
       const venue = tokenCache?.venue || inferVenueFromToken(swap.tokenAddress);
       const tokenSymbol = tokenCache?.symbol || (swap.tokenAddress.split('.')[0] || swap.tokenAddress).toUpperCase();
@@ -389,6 +392,7 @@ async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, t
           token_name: tokenCache?.name || tokenSymbol,
           side: swap.side.toUpperCase(),
           amount_near: amountNear,
+          ...(copySellPct !== null ? { copy_sell_pct: copySellPct } : {}),
           venue,
           tx_hash: txHash.replace(/:sell$/, ''),
         },
@@ -429,6 +433,25 @@ async function dispatchCopyTrade(normalizedSigner: string, swap: DetectedSwap, t
       }
     })
   );
+}
+
+/** Percent of a holding a sale used, from the tokens sold and the balance left (1-100) */
+export function soldPctFromBalances(soldRaw: bigint, remainingRaw: bigint): number | null {
+  if (soldRaw <= 0n || remainingRaw < 0n) return null;
+  const pct = Number((soldRaw * 10_000n) / (soldRaw + remainingRaw)) / 100;
+  return Math.max(1, Math.min(100, Math.round(pct)));
+}
+
+/** The share of their position an Alpha caller just sold, read from their balance after the sale */
+async function creatorSoldPct(tokenAddress: string, wallet: string, soldRaw?: string): Promise<number | null> {
+  if (!soldRaw || !/^\d+$/.test(soldRaw)) return null;
+  try {
+    const left = await getNear().getTokenBalance(tokenAddress, wallet);
+    if (left === null || left === undefined) return null;
+    return soldPctFromBalances(BigInt(soldRaw), BigInt(String(left).split('.')[0] || '0'));
+  } catch {
+    return null;
+  }
 }
 
 /**

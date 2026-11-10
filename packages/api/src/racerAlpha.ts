@@ -1,11 +1,11 @@
-import { createLogger, createRedis, getNear, getNearUsdPrice, parseMemeCookingId, type VenueName } from '@racerbot/shared';
+import { createLogger, getNear, getNearUsdPrice, parseMemeCookingId, type VenueName } from '@racerbot/shared';
 import { loadTokenFacts, peekTokenFacts, warmTokenFacts } from './tokenFacts.js';
 import { getTokenMarketStats } from './marketStats.js';
-import { getDb, getOpenPositions, getUserByTelegramId, getUserById, getUserBySubaccount, createCopyTradeTarget, updateCopyTradeTargetStatus, getCopyTradeTargetsByUser, type UserRecord } from '@racerbot/db';
+import { getDb, getOpenPositions, getUserByTelegramId, getUserById, getUserBySubaccount, type UserRecord } from '@racerbot/db';
 import crypto from 'crypto';
 import { getBotInstance } from './notify.js';
 import { publishSwap, transferNearFromUser, getTokenInfo } from './wallet.js';
-import { TREASURY_ACCOUNT_ID, REDIS_URL } from './config.js';
+import { TREASURY_ACCOUNT_ID } from './config.js';
 import { splitAlphaKeyPayment } from './alphaPayment.js';
 import { sellAtTarget } from './sellHelper.js';
 import { recordCopyBuy, resolveCopyFeeSettings, settleCopySell, type CopyRoute } from './alphaCopyFee.js';
@@ -341,6 +341,137 @@ export async function getAlphaFeed(userId?: string): Promise<AlphaSignal[]> {
 
 
 
+/** A follower setting inside [min, max], or undefined when it was not given */
+function clampSetting(value: unknown, min: number, max: number): number | undefined {
+  const n = Number(value);
+  if (value === undefined || value === null || value === '' || !Number.isFinite(n)) return undefined;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Test hooks: on-chain lookups and treasury payouts */
+let paymentDeps: {
+  fetchOutcome?: import('./nearPayments.js').FetchOutcome;
+  payFromTreasury?: (to: string, yocto: bigint) => Promise<{ txHash: string }>;
+} = {};
+export function setAlphaPaymentDepsForTests(deps: typeof paymentDeps): void {
+  paymentDeps = deps;
+}
+
+async function sendFromTreasury(to: string, yocto: bigint): Promise<{ txHash: string }> {
+  if (paymentDeps.payFromTreasury) return paymentDeps.payFromTreasury(to, yocto);
+  const { payFromTreasury } = await import('./wallet.js');
+  return payFromTreasury(to, yocto);
+}
+
+async function creatorPayoutAccount(trader: AlphaTrader): Promise<string | null> {
+  if (trader.userId === 'system_alpha') return null;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trader.userId || '');
+  const creatorUser = isUuid ? await getUserById(trader.userId).catch(() => null) : null;
+  return trader.payoutWalletAddress?.trim()
+    || creatorUser?.subaccount_id?.trim()
+    || (!isUuid && trader.userId?.endsWith('.near') ? trader.userId.trim() : null);
+}
+
+/**
+ * A viewing key the buyer paid straight to the treasury from a browser wallet:
+ * verify the payment, claim it for this key only, pay the creator's 95% from
+ * the treasury (or leave it pending for the retry job), then complete the key.
+ */
+async function settleWalletPaidKey(
+  db: Awaited<ReturnType<typeof getDb>>,
+  p: { keyId: string; trader: AlphaTrader; priceNear: number; txHash: string; signerIds: string[] },
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const { verifyNearPayment, fetchNearOutcome } = await import('./nearPayments.js');
+  const platformPayout = p.trader.userId === 'system_alpha';
+  const split = splitAlphaKeyPayment(p.priceNear, platformPayout);
+  const txHash = p.txHash.trim();
+
+  const paid = await verifyNearPayment(
+    { txHash, signerIds: p.signerIds, receiverId: TREASURY_ACCOUNT_ID, minYocto: split.totalYocto },
+    paymentDeps.fetchOutcome || fetchNearOutcome,
+  );
+  if (!paid.ok) return paid;
+
+  // One payment pays for one thing: claim it for this key, or refuse
+  const claimed = await db.query(
+    `UPDATE racer_alpha_keys
+     SET treasury_tx_hash = $1, payment_status = 'treasury_paid'
+     WHERE id = $2 AND payment_status = 'pending'
+       AND NOT EXISTS (SELECT 1 FROM racer_alpha_keys o WHERE o.treasury_tx_hash = $1 AND o.id <> $2)
+       AND NOT EXISTS (SELECT 1 FROM racer_alpha_creator_payments c WHERE c.tx_hash = $1)
+     RETURNING id`,
+    [txHash, p.keyId]
+  );
+  if (claimed.rows.length === 0) return { ok: false, reason: 'That payment has already been used.' };
+
+  if (split.creatorYocto > 0n) {
+    const payout = await creatorPayoutAccount(p.trader);
+    let creatorTx: string | null = null;
+    let payoutError = '';
+    if (payout) {
+      try {
+        creatorTx = (await sendFromTreasury(payout, split.creatorYocto)).txHash;
+      } catch (err: any) {
+        payoutError = err?.message || 'treasury payout failed';
+      }
+    } else {
+      payoutError = 'creator has no payout account';
+    }
+    await db.query(
+      `UPDATE racer_alpha_keys SET creator_tx_hash = $1, creator_payout_status = $2, payment_error = $3 WHERE id = $4`,
+      [creatorTx, creatorTx ? 'paid' : 'pending', creatorTx ? null : `Creator payout pending: ${payoutError}`.slice(0, 1000), p.keyId]
+    );
+    if (!creatorTx) logger.error('Viewing key creator payout pending', new Error(`Key ${p.keyId}: ${payoutError}`));
+  }
+
+  await completeAlphaKeyPurchase(db, p.keyId, p.trader.id, split.creatorRevenueNear);
+  return { ok: true };
+}
+
+/**
+ * Pays creators their share of browser-wallet key sales that could not be paid
+ * at purchase time (treasury briefly unavailable, no payout account yet).
+ */
+export async function retryPendingCreatorPayouts(limit = 20): Promise<{ paid: number; pending: number }> {
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT id, trader_id, price_paid_near FROM racer_alpha_keys
+     WHERE creator_payout_status = 'pending' AND payment_status = 'completed'
+     ORDER BY created_at LIMIT $1`,
+    [limit]
+  );
+  let paid = 0;
+  let pending = 0;
+  for (const row of res.rows) {
+    // Claim the row so two instances never pay it twice
+    const claim = await db.query(
+      `UPDATE racer_alpha_keys SET creator_payout_status = 'paying' WHERE id = $1 AND creator_payout_status = 'pending' RETURNING id`,
+      [row.id]
+    );
+    if (claim.rows.length === 0) continue;
+    try {
+      const traderRes = await db.query('SELECT * FROM racer_alpha_traders WHERE id = $1', [row.trader_id]);
+      if (!traderRes.rows[0]) throw new Error('creator not found');
+      const payout = await creatorPayoutAccount(rowToTrader(traderRes.rows[0]));
+      if (!payout) throw new Error('creator has no payout account');
+      const split = splitAlphaKeyPayment(Number(row.price_paid_near), false);
+      const tx = await sendFromTreasury(payout, split.creatorYocto);
+      await db.query(
+        `UPDATE racer_alpha_keys SET creator_tx_hash = $1, creator_payout_status = 'paid', payment_error = NULL WHERE id = $2`,
+        [tx.txHash, row.id]
+      );
+      paid++;
+    } catch (err: any) {
+      await db.query(
+        `UPDATE racer_alpha_keys SET creator_payout_status = 'pending', payment_error = $1 WHERE id = $2`,
+        [`Creator payout pending: ${err?.message || err}`.slice(0, 1000), row.id]
+      ).catch(() => {});
+      pending++;
+    }
+  }
+  return { paid, pending };
+}
+
 async function completeAlphaKeyPurchase(
   db: Awaited<ReturnType<typeof getDb>>,
   keyId: string,
@@ -435,6 +566,8 @@ export async function buyViewingKey(
   options?: {
     tier?: 'basic' | 'copy' | 'premium';
     txHash?: string;
+    /** The NEAR account that signed `txHash` (the buyer's connected browser wallet) */
+    payerAccountId?: string;
     autoCopyEnabled?: boolean;
     autoCopyAmountNear?: number;
     allocationPct?: number;
@@ -530,9 +663,10 @@ export async function buyViewingKey(
         const autoCopy = selectedTier !== 'basic' ? (options?.autoCopyEnabled ?? false) : false;
         const requestedAmount = Number(options?.autoCopyAmountNear);
         const autoCopyAmount = Number.isFinite(requestedAmount) && requestedAmount > 0 ? requestedAmount : 1;
-        const alloc = options?.allocationPct || 25.0;
-        const riskMult = options?.riskMultiplier || 1.5;
-        const stopLoss = options?.stopLossPct || -8.0;
+        // No hidden multiplier: a follower who picks 1 NEAR per copied trade spends 1 NEAR
+        const alloc = clampSetting(options?.allocationPct, 1, 100) ?? 25.0;
+        const riskMult = clampSetting(options?.riskMultiplier, 0.1, 5) ?? 1.0;
+        const stopLoss = clampSetting(options?.stopLossPct, -100, 0) ?? -8.0;
 
         const copySellsDefault = selectedTier !== 'basic';
         if (pendingKey) {
@@ -541,18 +675,19 @@ export async function buyViewingKey(
              SET key_token = $1, price_paid_near = $2, tier = $3, auto_copy_enabled = $4, auto_copy_amount_near = $5,
                  allocation_pct = $6, risk_multiplier = $7, stop_loss_pct = $8, copy_sells = $9,
                  payment_status = 'pending', creator_tx_hash = NULL, treasury_tx_hash = NULL,
-                 refund_tx_hash = NULL, payment_error = NULL, expires_at = NOW() + INTERVAL '30 days', created_at = NOW()
+                 refund_tx_hash = NULL, payment_error = NULL, expires_at = NOW() + INTERVAL '30 days', created_at = NOW(),
+                 copy_fee_pct = $11, creator_payout_status = NULL
              WHERE id = $10`,
-            [keyToken, priceToPay, selectedTier, autoCopy, autoCopyAmount, alloc, riskMult, stopLoss, copySellsDefault, keyId]
+            [keyToken, priceToPay, selectedTier, autoCopy, autoCopyAmount, alloc, riskMult, stopLoss, copySellsDefault, keyId, trader.copyFeePct || 0]
           );
         } else {
           await client.query(
             `INSERT INTO racer_alpha_keys (
                id, trader_id, buyer_user_id, buyer_telegram_id, price_paid_near, tier, key_token,
                auto_copy_enabled, auto_copy_amount_near, allocation_pct, risk_multiplier, stop_loss_pct, copy_sells,
-               expires_at, payment_status
+               expires_at, payment_status, copy_fee_pct
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW() + INTERVAL '30 days', 'pending')`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW() + INTERVAL '30 days', 'pending', $14)`,
             [
               keyId,
               trader.id,
@@ -567,6 +702,7 @@ export async function buyViewingKey(
               riskMult,
               stopLoss,
               copySellsDefault,
+              trader.copyFeePct || 0,
             ]
           );
         }
@@ -588,14 +724,19 @@ export async function buyViewingKey(
     }
 
     if (options?.txHash) {
-      const onChainTx = options.txHash.trim();
-      await db.query(
-        `UPDATE racer_alpha_keys
-         SET treasury_tx_hash = $1, payment_status = 'completed', updated_at = NOW()
-         WHERE id = $2`,
-        [onChainTx, keyId]
-      );
-      await completeAlphaKeyPurchase(db, keyId, trader.id, priceToPay);
+      // The buyer paid the full price to the treasury from a browser wallet. Check that
+      // payment on-chain, make sure it has not paid for anything else, then pay the creator's share.
+      const settled = await settleWalletPaidKey(db, {
+        keyId,
+        trader,
+        priceNear: priceToPay,
+        txHash: options.txHash,
+        signerIds: [options.payerAccountId || '', buyerUser.subaccount_id || ''],
+      });
+      if (!settled.ok) {
+        await failAlphaKeyPurchase(db, keyId, trader.id, 'failed', settled.reason);
+        return { success: false, reason: settled.reason };
+      }
       const completedTrader = { ...trader, keysSold: trader.keysSold + 1, hasKey: true, heldTier: options?.tier || 'copy' };
       return { success: true, keyToken, trader: completedTrader };
     }
@@ -733,7 +874,7 @@ export async function buyViewingKey(
             `🔑 <b>RacerAlpha Viewing Key Unlocked!</b>\n\n` +
             `🏎️ <b>Trader</b>: <b>${trader.displayName}</b> (@${trader.handle})\n` +
             `📈 <b>Verified PnL</b>: <code>+${trader.verifiedPnlPct}%</code>\n` +
-            `🪙 <b>Price Paid</b>: <code>${trader.keyPriceNear} NEAR</code>\n` +
+            `🪙 <b>Price Paid</b>: <code>${priceToPay} NEAR</code>\n` +
             `⚡ <b>Auto-Copy</b>: <code>${autoCopy ? 'ACTIVE (' + autoCopyAmount + ' NEAR/trade)' : 'MANUAL'}</code>\n\n` +
             `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
             `🔓 <b>Access Granted</b>:\n` +
@@ -749,7 +890,7 @@ export async function buyViewingKey(
             trader.telegramId,
             `💰 <b>New Viewing Key Sold!</b>\n\n` +
             `User <b>@${buyerUser.username || 'Subscriber'}</b> purchased your viewing key.\n` +
-            `💵 <b>Earnings</b>: <code>+${(trader.keyPriceNear * 0.95).toFixed(2)} NEAR</code> (credited to revenue)\n` +
+            `💵 <b>Earnings</b>: <code>+${(priceToPay * 0.95).toFixed(2)} NEAR</code> (credited to revenue)\n` +
             `👥 <b>Total Subscribers</b>: <code>${trader.keysSold}/${trader.maxKeys}</code>`,
             { parse_mode: 'HTML' }
           ).catch(() => {});
@@ -1091,40 +1232,68 @@ export async function getCreatorEligibility(
 /**
  * Pay platform entry fee for Creator Studio
  */
+export const CREATOR_ENTRY_FEE_NEAR = 5.0;
+
 export async function payCreatorEntryFee(
   userId: string,
   params: {
     walletAddress: string;
+    /** The user's RacerBot account, also accepted as the payer */
+    subaccountId?: string | null;
     txHash?: string;
+    /** Ignored: the fee is CREATOR_ENTRY_FEE_NEAR */
     amountNear?: number;
   }
 ): Promise<{ success: boolean; txHash?: string; reason?: string }> {
   const db = await getDb().catch(() => null);
   if (!db) return { success: false, reason: 'Database unavailable' };
 
-  const amountNear = params.amountNear || 5.0;
+  // The fee is the server's, not whatever the page sends
+  const amountNear = CREATOR_ENTRY_FEE_NEAR;
   const txHash = params.txHash?.trim();
 
-  if (!txHash || txHash.startsWith('tx_creator_entry_')) {
+  if (!txHash) {
     return {
       success: false,
       reason: 'A verified on-chain transaction signed by your connected NEAR wallet is required. No simulated transactions are permitted.'
     };
   }
 
+  // The payment must really exist: from the user's wallet, to the treasury, at least the fee
+  const { verifyNearPayment, fetchNearOutcome } = await import('./nearPayments.js');
+  const paid = await verifyNearPayment(
+    {
+      txHash,
+      signerIds: [params.walletAddress, params.subaccountId || ''],
+      receiverId: TREASURY_ACCOUNT_ID,
+      minYocto: BigInt(Math.round(amountNear * 100)) * 10n ** 22n,
+    },
+    paymentDeps.fetchOutcome || fetchNearOutcome,
+  );
+  if (!paid.ok) return { success: false, reason: paid.reason };
+
   try {
+    // One payment pays for one thing
+    const used = await db.query(
+      `SELECT 1 FROM racer_alpha_creator_payments WHERE tx_hash = $1
+       UNION ALL SELECT 1 FROM racer_alpha_keys WHERE treasury_tx_hash = $1 LIMIT 1`,
+      [txHash]
+    );
+    if (used.rows.length > 0) return { success: false, reason: 'That payment has already been used.' };
+
     await db.query(
       `INSERT INTO racer_alpha_creator_payments (
         user_id, wallet_address, amount_near, tx_hash, status
       ) VALUES ($1, $2, $3, $4, 'completed')`,
-      [userId, params.walletAddress, amountNear, txHash]
+      [userId, paid.signerId, amountNear, txHash]
     );
 
+    // Only the payer's own profile: their user id, or the wallet that signed the payment
     await db.query(
-      `UPDATE racer_alpha_traders 
+      `UPDATE racer_alpha_traders
        SET entry_fee_paid_near = $1, entry_fee_tx_hash = $2, is_creator_approved = true, updated_at = NOW()
        WHERE user_id = $3 OR payout_wallet_address = $4`,
-      [amountNear, txHash, userId, params.walletAddress]
+      [amountNear, txHash, userId, paid.signerId]
     ).catch(() => {});
 
     return { success: true, txHash };
@@ -1536,6 +1705,8 @@ export async function recordAlphaSignal(params: {
     allocationPct?: number;
     riskMultiplier?: number;
     stopLossPct?: number;
+    // The creator's copy profit share when this key was bought (the most they can charge)
+    copyFeePctAtPurchase?: number | null;
   }> = [];
 
   if (db && signalPersisted) {
@@ -1543,7 +1714,7 @@ export async function recordAlphaSignal(params: {
       `SELECT buyer_user_id AS "buyerUserId", buyer_telegram_id AS "buyerTelegramId",
               auto_copy_enabled AS "autoCopyEnabled", auto_copy_amount_near AS "autoCopyAmountNear",
               daily_budget_near AS "dailyBudgetNear", max_slippage_pct AS "maxSlippagePct",
-              COALESCE(copy_sells, TRUE) AS "copySells",
+              COALESCE(copy_sells, TRUE) AS "copySells", copy_fee_pct AS "copyFeePctAtPurchase",
               allocation_pct AS "allocationPct", risk_multiplier AS "riskMultiplier", stop_loss_pct AS "stopLossPct"
        FROM racer_alpha_keys
        WHERE trader_id = $1 AND payment_status = 'completed'
@@ -1866,6 +2037,10 @@ export async function recordAlphaSignal(params: {
               };
             }
           }
+          // The creator may have raised their share since this key was bought: the lower one applies
+          const agreedPct = kh.copyFeePctAtPurchase === null || kh.copyFeePctAtPurchase === undefined
+            ? copyFeePct
+            : Math.min(copyFeePct, Number(kh.copyFeePctAtPurchase) || 0);
           if (feeInputs) {
             const fee = await settleCopySell(db, {
               signalId,
@@ -1873,7 +2048,7 @@ export async function recordAlphaSignal(params: {
               telegramId: kh.buyerTelegramId,
               traderId: params.traderId,
               tokenAddress: params.tokenAddress,
-              feePct: copyFeePct,
+              feePct: agreedPct,
               payoutAccount: copyFeePayout,
               ...feeInputs,
             }).catch((err: any) => {
@@ -1882,8 +2057,8 @@ export async function recordAlphaSignal(params: {
             });
             if (fee) {
               feeLine = fee.paid
-                ? `\n💸 <b>Creator profit share</b>: <code>${fee.feeNear.toFixed(4)} NEAR</code> (${copyFeePct}% of <code>${fee.profitNear.toFixed(4)} NEAR</code> profit)`
-                : `\n⏳ The creator's ${copyFeePct}% profit share (${fee.feeNear.toFixed(4)} NEAR) will be collected once your ${feeInputs.route === 'confidential' ? 'private balance' : 'wallet'} covers it.`;
+                ? `\n💸 <b>Creator profit share</b>: <code>${fee.feeNear.toFixed(4)} NEAR</code> (${agreedPct}% of <code>${fee.profitNear.toFixed(4)} NEAR</code> profit)`
+                : `\n⏳ The creator's ${agreedPct}% profit share (${fee.feeNear.toFixed(4)} NEAR) will be collected once your ${feeInputs.route === 'confidential' ? 'private balance' : 'wallet'} covers it.`;
             }
           }
           if (bot && kh.buyerTelegramId) {
@@ -2358,6 +2533,24 @@ export async function updateKeyCopySettings(
   const db = await getDb().catch(() => null);
   if (!db) return { success: false, reason: 'Database unavailable' };
 
+  // A Basic (view-only) key does not include auto-copy
+  if (settings.autoCopyEnabled === true) {
+    const tierRes = await db.query(
+      `SELECT tier FROM racer_alpha_keys
+       WHERE buyer_user_id = $1 AND (trader_id = $2 OR id = $2) AND payment_status = 'completed'
+         AND (expires_at IS NULL OR expires_at > NOW())
+       LIMIT 1`,
+      [userId, traderId]
+    );
+    if (!tierRes.rows[0]) return { success: false, reason: 'No active viewing key found for this Alpha Caller.' };
+    if (tierRes.rows[0].tier === 'basic') {
+      return { success: false, reason: 'Auto-copy needs a Copy or Premium key. Your Basic key lets you view signals only.' };
+    }
+  }
+
+  // Auto-copy settings are applied by this key's own copy engine (with the daily budget and the
+  // creator's profit share). It no longer also adds a plain wallet-copy of the creator's wallet,
+  // which copied every trade a second time and kept copying after the key expired.
   const updateRes = await db.query(
     `UPDATE racer_alpha_keys
      SET allocation_pct = COALESCE($1, allocation_pct),
@@ -2368,11 +2561,11 @@ export async function updateKeyCopySettings(
      WHERE buyer_user_id = $6 AND (trader_id = $7 OR id = $7) AND payment_status = 'completed'
      RETURNING trader_id, auto_copy_enabled, auto_copy_amount_near`,
     [
-      settings.allocationPct,
-      settings.riskMultiplier,
-      settings.stopLossPct,
-      settings.autoCopyEnabled,
-      settings.autoCopyAmountNear,
+      clampSetting(settings.allocationPct, 1, 100) ?? null,
+      clampSetting(settings.riskMultiplier, 0.1, 5) ?? null,
+      clampSetting(settings.stopLossPct, -100, 0) ?? null,
+      typeof settings.autoCopyEnabled === 'boolean' ? settings.autoCopyEnabled : null,
+      clampSetting(settings.autoCopyAmountNear, 0.1, 1000) ?? null,
       userId,
       traderId,
     ]
@@ -2380,51 +2573,6 @@ export async function updateKeyCopySettings(
 
   if (!updateRes.rows[0]) {
     return { success: false, reason: 'No active viewing key found for this Alpha Caller.' };
-  }
-
-  // Also sync on-chain wallet copy target (copy_trade_targets) if the Alpha Caller has a NEAR wallet
-  try {
-    const resolvedTraderId = updateRes.rows[0].trader_id;
-    const traderRow = await db.query(
-      `SELECT user_id, payout_wallet_address FROM racer_alpha_traders WHERE id = $1 LIMIT 1`,
-      [resolvedTraderId]
-    );
-    const tRow = traderRow.rows[0];
-    if (tRow && tRow.user_id !== 'system_alpha') {
-      let targetWallet = (tRow.payout_wallet_address || '').trim();
-      if (!targetWallet && tRow.user_id) {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tRow.user_id);
-        if (isUuid) {
-          const u = await getUserById(tRow.user_id).catch(() => null);
-          targetWallet = (u?.subaccount_id || '').trim();
-        } else if (tRow.user_id.endsWith('.near')) {
-          targetWallet = tRow.user_id.trim();
-        }
-      }
-      if (targetWallet && targetWallet.endsWith('.near')) {
-        const enabled = Boolean(updateRes.rows[0].auto_copy_enabled);
-        const buyAmt = Number(updateRes.rows[0].auto_copy_amount_near) || 1.0;
-        if (enabled) {
-          await createCopyTradeTarget({
-            user_id: userId,
-            target_wallet: targetWallet.toLowerCase(),
-            buy_amount_near: buyAmt,
-            copy_sells: true,
-            max_slippage_pct: 5.0,
-            track_only: false,
-          });
-        } else {
-          const existingTargets = await getCopyTradeTargetsByUser(userId).catch(() => []);
-          const match = existingTargets.find((t: any) => t.target_wallet.toLowerCase() === targetWallet.toLowerCase());
-          if (match) {
-            await updateCopyTradeTargetStatus(match.id, 'paused').catch(() => {});
-          }
-        }
-        await createRedis(REDIS_URL).publish('racerbot:refresh_tracked_wallets', '1').catch(() => {});
-      }
-    }
-  } catch (syncErr) {
-    logger.warn('Failed to sync Alpha Caller copy settings with copy_trade_targets', syncErr as Error);
   }
 
   return { success: true };
@@ -2505,14 +2653,41 @@ export async function getCreatorStudioData(userId: string, walletAddress?: strin
   };
 }
 
+/** Why a viewing-key price cannot be used, or null when it can */
+export function keyPriceProblem(price: number): string | null {
+  if (!Number.isFinite(price) || price < 0.1) return 'must be at least 0.1 NEAR.';
+  if (price > 1000) return 'must be at most 1000 NEAR.';
+  if (Math.abs(Math.round(price * 100) / 100 - price) > 1e-9) return 'use at most two decimal places.';
+  return null;
+}
+
 export async function updateCreatorPricing(userId: string, data: {
   tierBasicPriceNear?: number;
   tierCopyPriceNear?: number;
   tierPremiumPriceNear?: number;
+  /** Names the pricing screen uses for Basic and Premium */
+  tierViewPriceNear?: number;
+  tierProPriceNear?: number;
   publicPnlVisible?: boolean;
 }): Promise<any> {
+  // The pricing screen sends Basic and Premium as tierViewPriceNear / tierProPriceNear;
+  // they used to be dropped, so only the Copy price ever saved
+  data = {
+    ...data,
+    tierBasicPriceNear: data.tierBasicPriceNear ?? data.tierViewPriceNear,
+    tierPremiumPriceNear: data.tierPremiumPriceNear ?? data.tierProPriceNear,
+  };
   const db = await getDb().catch(() => null);
   if (!db) return { success: false, reason: 'Database unavailable' };
+
+  const prices: Record<string, number | undefined> = {
+    basic: data.tierBasicPriceNear, copy: data.tierCopyPriceNear, premium: data.tierPremiumPriceNear,
+  };
+  for (const [tier, value] of Object.entries(prices)) {
+    if (value === undefined || value === null) continue;
+    const reason = keyPriceProblem(Number(value));
+    if (reason) return { success: false, reason: `${tier[0].toUpperCase() + tier.slice(1)} key price: ${reason}` };
+  }
 
   await db.query(
     `UPDATE racer_alpha_traders

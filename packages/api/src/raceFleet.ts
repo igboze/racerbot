@@ -63,6 +63,14 @@ const logger = createLogger('race_fleet');
 
 export const RACEFLEET_MONTHLY_FEE_NEAR = 2.0;
 export const MAX_FLEET_WALLETS = 25;
+/** Platform fee on a NEAR fleet bundle buy, the same 1.5% as a normal buy and a Solana fleet buy */
+export const FLEET_BUY_FEE_BPS = 150n;
+
+/** One wallet's buy split into what is swapped and the platform fee. Exported for tests. */
+export function splitFleetBuy(amountYocto: bigint): { swapYocto: bigint; feeYocto: bigint } {
+  const feeYocto = (amountYocto * FLEET_BUY_FEE_BPS) / 10_000n;
+  return { swapYocto: amountYocto - feeYocto, feeYocto };
+}
 export const MIN_FLEET_WALLETS = 1;
 
 // ── Alias Generator for Privacy ─────────────────────────────────────────────
@@ -571,8 +579,10 @@ export async function executeFleetBundleBuy(
     return fail(['This token has no Ref / Rhea pool yet, so the fleet cannot bundle it. Use a personal buy for launchpad tokens.']);
   }
   const venue = info.venue || 'ref';
-  const amount = BigInt(nearUtils.format.parseNearAmount(amountNearPerWallet.toString())!);
-  if (amount <= 0n) return fail(['Invalid amount']);
+  const gross = BigInt(nearUtils.format.parseNearAmount(amountNearPerWallet.toString())!);
+  if (gross <= 0n) return fail(['Invalid amount']);
+  // Each wallet spends `gross`: 1.5% to the treasury once its swap fills, the rest is swapped
+  const { swapYocto: amount, feeYocto } = splitFleetBuy(gross);
 
   // 1. Read every wallet at once.
   const states = await Promise.all(wallets.map(async (w) => {
@@ -590,7 +600,7 @@ export async function executeFleetBundleBuy(
   const legs = states.filter((s) => {
     const storage = (s.tokReg ? 0n : STORAGE_FT) + (s.wrapReg ? 0n : STORAGE_FT) + (s.refOk ? 0n : STORAGE_REF);
     const wrapNeeded = s.wnear >= amount ? 0n : amount - s.wnear;
-    if (s.bal < wrapNeeded + storage + FLEET_GAS_RESERVE) {
+    if (s.bal < wrapNeeded + feeYocto + storage + FLEET_GAS_RESERVE) {
       errors.push(`Wallet ${s.w.wallet_index} low balance (${(Number(s.bal + s.wnear) / 1e24).toFixed(2)} N)`);
       return false;
     }
@@ -643,6 +653,25 @@ export async function executeFleetBundleBuy(
     if (r.ok && used !== 0n) txHashes.push(r.hash!);
     else errors.push(`Wallet ${legs[i].w.wallet_index}: ${r.ok ? 'swap refunded (price moved past slippage)' : r.error}`);
   });
+  // 5. Platform fee, only from wallets whose swap filled (a refunded swap pays nothing)
+  const filledLegs = legs.filter((_, i) => results[i].ok && ftUsedAmount(results[i].returnValue) !== 0n);
+  let feesCollected = 0;
+  if (feeYocto > 0n && filledLegs.length > 0) {
+    const feeResults = await fireNearTxsTogether(filledLegs.map((s) => ({
+      accountId: s.w.account_id,
+      keyPair: KeyPair.fromString(decrypt(s.w.encrypted_private_key, MASTER_KEY) as any),
+      receiverId: TREASURY_ACCOUNT_ID,
+      actions: [nearActions.transfer(feeYocto)],
+    }))).catch((err: any) => {
+      logger.warn('Fleet buy fee collection failed', { error: String(err?.message || err) });
+      return [];
+    });
+    feesCollected = feeResults.filter((r) => r.ok).length;
+    if (feesCollected < filledLegs.length) {
+      logger.warn(`Fleet buy fee: collected ${feesCollected} of ${filledLegs.length}`, { fleetId });
+    }
+  }
+  const feePaidNear = Number(feeYocto * BigInt(feesCollected)) / 1e24;
   const totalSpentNear = (txHashes.length * amountNearPerWallet);
 
   if (txHashes.length > 0) {
@@ -658,7 +687,7 @@ export async function executeFleetBundleBuy(
           token_address: tokenAddress,
           amount: tokens.toString(),
           price: tokens > 0 ? totalSpentNear / tokens : parseFloat(String(info.price || 0)),
-          fee_paid: 0,
+          fee_paid: feePaidNear,
           venue: venue || 'ref',
           tx_hash: txHashes[0],
         });

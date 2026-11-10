@@ -7662,6 +7662,8 @@
             traderId: currentTrader.id,
             tier: selectedModalTierType,
             txHash: onChainTxHash,
+            // The wallet that paid, so the server can find and verify the payment
+            payerAccountId: onChainTxHash ? (window.RacerConnect?.activeNearWallet || null) : null,
             autoCopyEnabled: selectedModalTierType !== 'basic',
             autoCopyAmountNear: 1.0,
           }),

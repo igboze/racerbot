@@ -1052,20 +1052,20 @@
         <div class="tier-price">2.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
       </div>
 
-      <div class="tier-option" id="tier-10" onclick="selectTier(10, 3.5)">
+      <div class="tier-option" id="tier-10" onclick="selectTier(10, 2.0)">
         <div>
           <div class="tier-name">Falcon Fleet (10 Wallets)</div>
           <div class="tier-desc">High-speed parallel entries across Ref Finance and NearlyTrade.</div>
         </div>
-        <div class="tier-price">3.5 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
+        <div class="tier-price">2.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
       </div>
 
-      <div class="tier-option" id="tier-25" onclick="selectTier(25, 7.0)">
+      <div class="tier-option" id="tier-25" onclick="selectTier(25, 2.0)">
         <div>
           <div class="tier-name">Apex Armada (25 Wallets)</div>
           <div class="tier-desc">Maximum coordinated and institutional volume distribution.</div>
         </div>
-        <div class="tier-price">7.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
+        <div class="tier-price">2.0 NEAR<br /><span style="font-size:11px; color:var(--color-text-subtle); font-weight:normal;">/ month</span></div>
       </div>
 
       <div class="form-group" style="margin-top:16px;">
@@ -2561,7 +2561,7 @@
       });
       const copy = {
         connect: ['Sign in to start', 'Use Telegram or any Solana, EVM or NEAR wallet. Signing in is free and sends no transaction.', 'Sign in', () => openConnectModal()],
-        deploy: ['Create your fleet', 'A fleet is a set of fresh wallets that only you control. Creating 5 costs 2 NEAR, paid from your RacerBot account.', 'Create fleet', () => openDeployModal()],
+        deploy: ['Create your fleet', 'A fleet is a set of fresh wallets that only you control. It costs 2 NEAR a month for any size, paid from your RacerBot account.', 'Create fleet', () => openDeployModal()],
         fund: ['Add NEAR to your fleet', 'Send NEAR to your RacerBot account, then split it across your fleet wallets.', 'Add funds', () => openDepositModal()],
         trade: ['Ready to trade', `Your fleet holds ${fleetTotalNear.toFixed(2)} NEAR. Pick a token and buy with every wallet at once.`, 'Add funds', () => openDepositModal()],
       }[step];
