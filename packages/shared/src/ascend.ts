@@ -48,6 +48,30 @@ export interface AscendRoute {
   launchKey: V4PoolKey;
   /** For a USDC or KNTQ coin: the native HYPE pool that turns HYPE into the quote token */
   hypeHop?: V4PoolKey;
+  /** univ4 only: the coin's market price in HYPE (DexScreener, deepest HYPE pool), for the pre-buy price check */
+  marketPriceHype?: number;
+}
+
+/** A plain pool fee above this (3%) is a trap, not a market: such pools are never used */
+export const MAX_V4_STATIC_FEE = 30_000;
+const DYNAMIC_FEE_FLAG = 0x800000;
+/** A buy through a plain Uniswap v4 pool must return at least this share of the market amount */
+export const MIN_V4_MARKET_SHARE = 0.8;
+
+/** False for a pool whose fixed fee is a trap (some coins have decoy pools charging 80-99%) */
+export function isSaneV4Fee(fee: number): boolean {
+  return fee === DYNAMIC_FEE_FLAG || (fee >= 0 && fee <= MAX_V4_STATIC_FEE);
+}
+
+/**
+ * Whether a quote is close enough to the coin's market price: `coinsOut` for `hypeIn` HYPE must be at least
+ * MIN_V4_MARKET_SHARE of hypeIn / marketPriceHype. True when no market price is known (the other checks apply).
+ */
+export function quoteMatchesMarket(hypeIn: bigint, coinsOut: bigint, decimals: number, marketPriceHype: number | undefined): boolean {
+  if (!marketPriceHype || !(marketPriceHype > 0)) return true;
+  const marketCoins = Number(ethers.formatEther(hypeIn)) / marketPriceHype;
+  const quoted = Number(ethers.formatUnits(coinsOut, decimals));
+  return quoted >= marketCoins * MIN_V4_MARKET_SHARE;
 }
 
 const sortPair = (a: string, b: string): [string, string] => (BigInt(a) < BigInt(b) ? [a, b] : [b, a]);
@@ -307,25 +331,32 @@ export async function findElysiumV4Route(provider: ethers.Provider, token: strin
   const key = token.toLowerCase();
   const cached = v4KeyCache.get(key);
   if (cached && (cached.route || Date.now() - cached.at < V4_MISS_TTL_MS)) return cached.route;
-  // Fast path: the pool settings the Kleos app reports, accepted only when they hash to that pool's id
-  const fromKleos = await v4RouteFromKleos(token).catch(() => null);
-  if (fromKleos) {
-    v4KeyCache.set(key, { route: fromKleos, at: Date.now() });
-    return fromKleos;
-  }
   const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ethers.getAddress(token)}`, { signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`DexScreener returned ${res.status}`);
   const data: any = await res.json();
   const hypeQuotes = new Set([NATIVE, ASCEND.whype.toLowerCase()]);
+  // The coin's HYPE / WHYPE pools, deepest first. A coin can have decoy pools with tiny liquidity and huge
+  // fees, so only the deepest pool is the market; a shallower one is used only if the deepest can't be read.
   const pools = (data?.pairs ?? [])
     .filter((p: any) => p.chainId === 'elysium' && /^0x[0-9a-fA-F]{64}$/.test(p.pairAddress ?? '')
       && p.baseToken?.address?.toLowerCase() === key && hypeQuotes.has(String(p.quoteToken?.address).toLowerCase()))
     .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+  const top = pools[0];
+  const marketPriceHype = top ? Number(top.priceNative) || undefined : undefined;
+  // Fast path: the Kleos app's pool settings, used only when they name that deepest pool
+  const fromKleos = await v4RouteFromKleos(token).catch(() => null);
+  if (fromKleos && top && v4PoolId(fromKleos.launchKey) === String(top.pairAddress).toLowerCase()) {
+    const route = { ...fromKleos, marketPriceHype };
+    v4KeyCache.set(key, { route, at: Date.now() });
+    return route;
+  }
   for (const pair of pools.slice(0, 2)) {
+    // A pool far shallower than the deepest one is not the coin's market
+    if (pair !== top && (pair.liquidity?.usd ?? 0) < (top.liquidity?.usd ?? 0) * 0.25) break;
     const poolKey = await findV4PoolKey(provider, pair.pairAddress);
-    if (!poolKey || v4PoolId(poolKey) !== pair.pairAddress.toLowerCase()) continue;
+    if (!poolKey || v4PoolId(poolKey) !== pair.pairAddress.toLowerCase() || !isSaneV4Fee(poolKey.fee)) continue;
     const quote = poolKey.currency0 === NATIVE ? NATIVE : ethers.getAddress(String(pair.quoteToken.address));
-    const route: AscendRoute = { quote, quoteSymbol: quote === NATIVE ? 'HYPE' : 'WHYPE', launchKey: poolKey };
+    const route: AscendRoute = { quote, quoteSymbol: quote === NATIVE ? 'HYPE' : 'WHYPE', launchKey: poolKey, marketPriceHype };
     v4KeyCache.set(key, { route, at: Date.now() });
     return route;
   }
@@ -346,7 +377,7 @@ async function v4RouteFromKleos(token: string): Promise<AscendRoute | null> {
   const launchKey: V4PoolKey = {
     currency0: NATIVE, currency1: ethers.getAddress(token), fee: Number(a.fee ?? 0), tickSpacing: Number(a.tickSpacing ?? 200), hooks: ethers.getAddress(a.hooks),
   };
-  if (v4PoolId(launchKey) !== String(a.pool.id).toLowerCase()) return null;
+  if (v4PoolId(launchKey) !== String(a.pool.id).toLowerCase() || !isSaneV4Fee(launchKey.fee)) return null;
   return { quote: NATIVE, quoteSymbol: 'HYPE', launchKey };
 }
 

@@ -39,6 +39,8 @@ import {
   montraSellApprovals,
   padSellApprovals,
   simulateV4RoundTrip,
+  isSaneV4Fee,
+  quoteMatchesMarket,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -231,8 +233,12 @@ export async function executeKleosSwap(
       return fail(`${venueName} could not quote this buy: ${describeKleosRevert(err)} Nothing was spent.`);
     }
     if (expectedOut <= 0n) return fail(`${venueName} quoted zero coins for this buy. Nothing was spent.`);
-    // A plain Uniswap v4 pool can carry any hook: make sure the coin can be sold back before buying it
+    // A plain Uniswap v4 pool can carry any hook or fee: the quote must match the coin's market price, and the
+    // coin must sell back, before anything is bought
     if (route.kind === 'univ4') {
+      if (!isSaneV4Fee(route.ascend!.launchKey.fee) || !quoteMatchesMarket(netTradeAmount, expectedOut, decimals, route.ascend!.marketPriceHype)) {
+        return fail(`RacerBot won't buy this coin here: the only pool it could use would give you far fewer coins than the market price (very high pool fee or too little liquidity). Nothing was spent.`);
+      }
       onProgress?.('simulating');
       const roundTrip = await simulateV4RoundTrip(l2, route.ascend!, token);
       if (roundTrip === 'sell_blocked') {

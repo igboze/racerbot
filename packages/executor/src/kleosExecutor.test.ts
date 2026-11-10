@@ -353,5 +353,17 @@ describe('executeKleosSwap', () => {
     expect(state.l2Sent.map(t => t.to)).toEqual([COIN, LR]);
     expect(db.createFill).toHaveBeenCalledWith(expect.objectContaining({ side: 'sell', venue: 'montra' }));
   });
+
+  it('refuses a buy through a pool that would give far fewer coins than the market price (a decoy pool)', async () => {
+    const shared = await import('@racerbot/shared');
+    const route = { quote: ethers.ZeroAddress, quoteSymbol: 'HYPE', marketPriceHype: 0.0000006771,
+      launchKey: { currency0: ethers.ZeroAddress, currency1: COIN, fee: 890000, tickSpacing: 200, hooks: ethers.ZeroAddress } };
+    vi.mocked(shared.resolveKleosRoute).mockResolvedValueOnce({ kind: 'univ4', router: shared.ASCEND.universalRouter, hopFee: 0, ascend: route } as any);
+    state.l2Balances = [ethers.parseEther('1')];
+    const res = await executeKleosSwap({ ...event('buy', '0.01'), venue: 'univ4' } as any, TREASURY);
+    expect(res.success).toBe(false);
+    expect(res.reason).toMatch(/far fewer coins than the market price.*Nothing was spent/);
+    expect(state.l2Sent).toHaveLength(0);
+  });
 });
 

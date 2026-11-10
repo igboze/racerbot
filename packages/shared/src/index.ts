@@ -472,6 +472,9 @@ export {
   findV4PoolKey,
   findElysiumV4Route,
   simulateV4RoundTrip,
+  isSaneV4Fee,
+  quoteMatchesMarket,
+  MAX_V4_STATIC_FEE,
 } from './ascend.js';
 export type { AscendRoute, V4PoolKey } from './ascend.js';
 export {
