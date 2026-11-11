@@ -308,22 +308,28 @@ const V4_MISS_TTL_MS = 3 * 60_000;
  * The pool key behind a pool id, from the PoolManager's Initialize event. Searches back from the newest block,
  * where launchpad pools usually are, in chunks an RPC accepts.
  */
-let logProvider: ethers.JsonRpcProvider | null = null;
-function elysiumLogProvider(): ethers.JsonRpcProvider {
+let logProviders: ethers.JsonRpcProvider[] | null = null;
+function elysiumLogProviders(): ethers.JsonRpcProvider[] {
   const network = new ethers.Network('elysium', 99901);
-  logProvider ??= new ethers.JsonRpcProvider(getElysiumMainnetRpcUrls()[0], network, { staticNetwork: network, batchMaxCount: 1 });
-  return logProvider;
+  // Kinetiq's node first: it answers long log searches; others (Kleos's caps a search at 10,000 blocks) after it,
+  // whatever ELYSIUM_MAINNET_RPC_URL names first
+  const kinetiq = 'https://rpc.elysium.kinetiq.xyz';
+  const urls = [kinetiq, ...getElysiumMainnetRpcUrls().filter(u => u.replace(/\/$/, '') !== kinetiq)];
+  logProviders ??= urls.map(url => new ethers.JsonRpcProvider(url, network, { staticNetwork: network, batchMaxCount: 1 }));
+  return logProviders;
 }
 
-/** A log search tried up to three times, with a short pause, since public RPCs drop some under load */
-async function getLogsWithRetry(provider: ethers.Provider, filter: ethers.Filter): Promise<ethers.Log[]> {
+/** A log search tried on each RPC in turn, twice each with a short pause, since public RPCs drop some under load */
+async function getLogsWithRetry(providers: ethers.Provider[], filter: ethers.Filter): Promise<ethers.Log[]> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await provider.getLogs(filter);
-    } catch (err) {
-      lastErr = err;
-      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+  for (const provider of providers) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await provider.getLogs(filter);
+      } catch (err) {
+        lastErr = err;
+        await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+      }
     }
   }
   throw lastErr;
@@ -334,13 +340,13 @@ export async function findV4PoolKey(provider: ethers.Provider, poolId: string, c
   const topic = iface.getEvent('Initialize')!.topicHash;
   // The bot's Elysium provider batches requests and can fail over to a node that caps log searches at 10,000
   // blocks; log searches get their own plain connection to the first RPC instead
-  const logSource = provider instanceof FailoverJsonRpcProvider ? elysiumLogProvider() : provider;
-  const latest = await logSource.getBlockNumber();
+  const logSources = provider instanceof FailoverJsonRpcProvider ? elysiumLogProviders() : [provider];
+  const latest = await provider.getBlockNumber();
   for (let to = latest; to >= 0; to -= chunk) {
     const from = Math.max(0, to - chunk + 1);
     const filter = { address: ASCEND.poolManager, topics: [topic, poolId], fromBlock: from, toBlock: to };
     // A busy RPC can time out on a log search: try each chunk twice before giving up
-    const logs = await getLogsWithRetry(logSource, filter);
+    const logs = await getLogsWithRetry(logSources, filter);
     if (logs.length > 0) {
       const e = iface.parseLog(logs[0])!;
       return { currency0: e.args.currency0, currency1: e.args.currency1, fee: Number(e.args.fee), tickSpacing: Number(e.args.tickSpacing), hooks: e.args.hooks };
