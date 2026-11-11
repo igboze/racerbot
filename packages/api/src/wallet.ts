@@ -1089,7 +1089,11 @@ export async function lookupPadToken(address: string): Promise<TokenInfoResult |
  */
 export async function lookupUniV4Token(address: string): Promise<TokenInfoResult | null> {
   const provider = getEvmProvider('elysium', false);
-  const route = await findElysiumV4Route(provider, address).catch(() => null);
+  const route = await findElysiumV4Route(provider, address).catch((err: any) => {
+    // Logged so a token card that says "no HYPE pool" can be traced in the server logs
+    console.warn(`[ELYSIUM_LOOKUP] Uniswap v4 pool lookup failed for ${address}: ${err?.shortMessage || err?.message}`);
+    return null;
+  });
   if (!route) return null;
   const [meta, dex, hypeUsd] = await Promise.all([
     getErc20TokenInfo(address, 'elysium', false).catch(() => null),
