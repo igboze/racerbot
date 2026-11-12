@@ -20,7 +20,8 @@
     "lint": "eslint packages --ext .ts",
     "migrate": "npm run migrate --workspace=packages/db",
     "test": "vitest run",
-    "clean:cache": "node -e \"fs.rmSync('.turbo', { recursive: true, force: true }); fs.rmSync('.cargo-target', { recursive: true, force: true }); console.log('Build caches cleared!');\""
+    "clean:cache": "node -e \"fs.rmSync('.turbo', { recursive: true, force: true }); fs.rmSync('.cargo-target', { recursive: true, force: true }); console.log('Build caches cleared!');\"",
+    "verify:hackathon": "node scripts/verify-hackathon.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
