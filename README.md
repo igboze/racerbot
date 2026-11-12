@@ -54,21 +54,20 @@
 
 ## NEAR HACKATHON Submission
 
-RacerBot is built natively on NEAR Protocol, leveraging native smart contracts, NEAR Intents, and confidential shielded execution. Per hackathon guidelines (Q-003, Q-004), only work within the designated timeline is evaluated for judging:
+RacerBot is built natively on NEAR Protocol, leveraging NEAR Global Contracts, keyless position executors, and NEAR Intents for frictionless cross-chain onboarding. Per hackathon guidelines (Q-003, Q-004), only work within the designated timeline is evaluated for judging:
 
 - **Submission ID:** `ba9e160b-47b4-453d-8e09-aa99fbfabc74` (Project: **Racer**)
-- **Global Controller & Root Account:** `racerbot.near` (On-Chain Controller & Subaccount Factory)
-- **Atomic Swap Router:** `racerbotrouter.near` (`packages/contract` WASM Router)
+- **Global Contract & Master Controller:** `racerbot.near` (On-Chain Controller & Executor Factory)
+- **Global Position Executor Contract (NEP-518):** Code hash `812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e` (`packages/position-executor`)
 - **Evaluated Tracks:** **Memecoins** (Primary), **DeFi**, **Swarms**, **Privacy**, **Agents**
 - **Baseline Git Tag:** [`pre-hackathon`](https://github.com/igboze/racerbot/tree/pre-hackathon) (2026-10-19)
 - **Hackathon Work Diff:** [`pre-hackathon...main`](https://github.com/igboze/racerbot/compare/pre-hackathon...main)
 - **Core NEAR Innovations Built During the Window:**
-  - **Global Account Architecture (`racerbot.near`):** Root controller provisioning bounded user trading subaccounts (`<id>.racerbot.near`) with scoped key authorization.
-  - **Atomic Router Contract (`packages/contract`, deployed at `racerbotrouter.near`):** Atomic multi-hop routing, swap output measured via per-swap balance delta, token serialisation, and fail-safe refund vaults.
-  - **Confidential Trading Pool:** Isolated `bot_private` per-position executor subaccounts breaking on-chain tracing between trader identity and token order flow.
-  - **NEAR Intents & 1Click Cross-Chain Solver:** Native cross-chain swaps powered by `1click.chaindefuser.com` / `intents.near` with hybrid DCL multi-hop fallback.
+  - **Global Contract & Controller Architecture (`racerbot.near`):** Master account deployed on NEAR that provisions keyless, independent position executors (`<id>.racerbot.near`). There is no central router contract — each executor holds exact, non-commingled balances and trades directly against DEX venues.
+  - **Zero-Friction Multi-Chain Onboarding via NEAR Intents:** When users connect their wallet (from **Solana**, **HyperEVM**, or **NEAR**), they receive dedicated executors, deposit natively via **NEAR Intents** (`1click.chaindefuser.com` / `intents.near`), and trade immediately with zero gas or storage registration hurdles.
+  - **Confidential Position Executors (`packages/position-executor`):** One keyless subaccount per position running the NEP-518 Global Contract. Ephemeral subaccounts break on-chain tracking between trader identity and public DEX order flow.
+  - **RaceFleet Multi-Wallet Engine:** Parallel execution across up to 10 sub-wallets for stealth accumulation, price-impact minimization, and multi-wallet exits.
   - **RacerAlpha Creator Economy:** On-chain subscription billing with instant 95% creator payouts via NEAR smart contract / vault payouts.
-  - **RaceFleet Multi-Wallet Engine:** Parallel execution across up to 10 sub-wallets for stealth accumulation and multi-wallet exits.
 - **Other chains (disclosure, Q-002):** Sui, Solana and Starknet wallet code (`packages/shared/src/sui.ts`, `solana.ts`, `starknet.ts`, `packages/api/src/solanaFleet.ts`, `starknetAlerts.ts`) are pre-existing and not part of the NEAR submission.
 - **Libraries and AI assistance (Q-005):** near-sdk (Rust), near-api-js, Express, PostgreSQL, Redis, D3. Parts of the code were developed with AI coding assistants.
 
@@ -88,29 +87,30 @@ npm install
 ```bash
 npm run verify:hackathon
 ```
-- **See:** An automated live inspection querying NEAR mainnet RPC for `racerbot.near` and `racerbotrouter.near`, testing liquidity core contracts, and validating 1Click solver connectivity:
+- **See:** An automated live inspection querying NEAR mainnet RPC for `racerbot.near`, validating the NEP-518 Global Contract architecture, testing liquidity core contracts, and validating 1Click solver connectivity:
 ```text
 ==============================================================================
   🏎️  RACERBOT — NEAR HACKATHON VERIFICATION SUITE
   Target Submission ID: ba9e160b-47b4-453d-8e09-aa99fbfabc74
+  Global Contract Controller: racerbot.near
   Tracks: memecoins | defi | swarms | privacy | agents
 ==============================================================================
 
-🔍 Checking Global Master Contract (racerbot.near)... ✅ ACTIVE (Block: 224249952, Storage: 264 bytes)
-🔍 Checking Atomic Router Contract (racerbotrouter.near)... ✅ ACTIVE (Block: 224249958, Storage: 182 bytes)
-🔍 Checking NEAR Liquidity Core (wrap.near)... ✅ ACTIVE (Block: 224249964)
-🔍 Checking Ref Finance DEX Router (v2.ref-finance.near)... ✅ ACTIVE (Storage: 111308451 bytes)
-🔍 Checking NEAR Intents Cross-Chain Solver (1click.chaindefuser.com)... ✅ ONLINE (230 tokens indexed)
-🔍 Checking Confidential TEE & Key Shield Module... ✅ PASS (AES-256-GCM + Shielded Vault Validated)
+🔍 Checking Global Master Controller (racerbot.near)... ✅ ACTIVE (Block: 224251926, Storage: 264 bytes)
+🔍 Checking Global Position Executor Contract Architecture... ✅ VERIFIED (Global Hash: 812af58d8779a100..., Artifact: Built)
+🔍 Checking NEAR Intents Cross-Chain Solver (1click.chaindefuser.com)... ✅ ONLINE (230 cross-chain tokens indexed for SOL/EVM/NEAR deposits)
+🔍 Checking NEAR Liquidity Core (wrap.near)... ✅ ACTIVE (Block: 224251933)
+🔍 Checking Ref Finance DEX Router (v2.ref-finance.near)... ✅ ACTIVE (Storage: 111311441 bytes)
+🔍 Checking Confidential Key Shield & Encryption Module... ✅ PASS (AES-256-GCM + Shielded Vault Validated)
 
 ------------------------------------------------------------------------------
   VERIFICATION SUMMARY
 ------------------------------------------------------------------------------
-  ✅ [PASS    ] Global Controller (racerbot.near)              Block 224249952
-  ✅ [PASS    ] Atomic Router (racerbotrouter.near)            Block 224249958
-  ✅ [PASS    ] Core Token Gateway (wrap.near)                 Block 224249964
+  ✅ [PASS    ] Global Controller (racerbot.near)              Block 224251926
+  ✅ [PASS    ] Global Contract Position Executor (NEP-518)    Hash 812af58d...
+  ✅ [PASS    ] NEAR Intents Solver (SOL/EVM/NEAR Deposits)    230 tokens
+  ✅ [PASS    ] Core Token Gateway (wrap.near)                 Block 224251933
   ✅ [PASS    ] Ref Finance DEX (v2.ref-finance.near)          Online
-  ✅ [PASS    ] NEAR Intents Solver (1Click Defuser)           230 tokens
   ✅ [PASS    ] Confidential Key Encryption (AES-256-GCM)      Deterministic GCM
 ------------------------------------------------------------------------------
 ✨ ALL HACKATHON CHECKS PASSED. SYSTEM IS READY FOR EVALUATION.
@@ -135,43 +135,52 @@ npm run build
 | Track | RacerBot Core Technology & Proof in Codebase | Hackathon Advantage |
 |---|---|---|
 | **Memecoins** *(Primary)* | **Meme.Cooking & Launchpad Sniping Engine**: Live block watcher (`packages/detector`) detects new curve creation receipts and automatically executes first-block snipes. Interactive Sybil & Bubblemap viewer (`src/bubblemap.html`) visually isolates dev supply clusters. Fail-closed honeypot detection simulates sell execution before buying. Community Buy Bot (`packages/api/src/buyAlerts.ts`) features animated buyer tiers and exact market cap displays. | Premier memecoin trading terminal on NEAR. Solves frontrunning, honeypots, and slow manual DEX entries for traders. |
-| **DeFi** | **Atomic Multi-Hop Router & Intent Solver**: Rust contract (`packages/contract`, `racerbotrouter.near`) guarantees atomic execution, balance delta validation, and automatic refund vaults. Parallel route engine aggregates Ref AMM v2, Ref DCL concentrated liquidity, Rhea, and cross-chain 1Click solver (`1click.chaindefuser.com`). Order automation workers (`packages/triggers`) execute TP/SL, Limit, and DCA orders on-chain. | Eliminates failed transactions, reduces price impact, and bridges external chain liquidity directly into NEAR native assets. |
+| **DeFi** | **Global Position Executor & Intent Settlement**: Keyless executor architecture (`packages/position-executor`, controller `racerbot.near`) guarantees exact per-position balances with zero router fees or co-mingling risk. Parallel route engine aggregates Ref AMM v2, Ref DCL concentrated liquidity, Rhea, and cross-chain 1Click solver (`1click.chaindefuser.com`). Order automation workers (`packages/triggers`) execute TP/SL, Limit, and DCA orders on-chain. | Eliminates failed transactions, reduces price impact, and bridges external chain liquidity directly into NEAR native assets. |
 | **Swarms** | **RaceFleet Multi-Wallet Engine**: Coordinates parallel execution across up to 10 sub-wallets simultaneously from a single master dashboard (`src/fleet.html`). Splitting large buy orders across multiple wallets circumvents liquidity pool price impact and prevents copycat tracking. Single-tap consolidation sweeps all tokens back into the master account. | True autonomous swarm trading: synchronized execution, stealth distribution, and collective asset consolidation. |
-| **Privacy** | **Confidential Shielded Executor Pools**: Ephemeral, rotating `bot_private_<hash>.near` per-position executor subaccounts (`packages/position-executor`). Breaks on-chain transaction graph links between user identity and DEX order flow. Public block explorers only observe calls between isolated executors and the router contract. | Shields retail traders from MEV searchers, copycat surveillance bots, and predatory wallet trackers on NEAR. |
+| **Privacy** | **Confidential Shielded Executor Pools**: Ephemeral, rotating `bot_private_<hash>.near` per-position executor subaccounts (`packages/position-executor`). Breaks on-chain transaction graph links between user identity and DEX order flow. Public block explorers only observe calls between isolated executors and DEX venues — there is no central router contract to monitor. | Shields retail traders from MEV searchers, copycat surveillance bots, and predatory wallet trackers on NEAR. |
 | **Agents** | **Autonomous Block Watcher & TEE Verification**: Autonomous streaming agent (`packages/detector`) scans NEAR RPC receipts in real-time. Background triggers service (`packages/triggers`) monitors prices and executes limit orders autonomously. Phala / Intel TDX TEE attestation module (`packages/api/src/nearAiTee.ts`) cryptographically verifies confidential agent reasoning and quotes. | Complete agentic lifecycle: autonomous perception (detector) -> verified reasoning (TEE) -> execution (hedged multi-RPC broadcaster). |
 
 ---
 
 ## 🏛️ On-Chain Topology & Contract Hierarchy
 
-RacerBot utilizes a hierarchical, non-custodial smart contract and account architecture on NEAR Protocol:
+RacerBot utilizes a non-custodial, keyless position executor architecture governed by the `racerbot.near` master controller:
 
 ```
-                            ┌────────────────────────┐
-                            │      racerbot.near     │
-                            │  (Global Root Account) │
-                            └───────────┬────────────┘
-                                        │
-           ┌────────────────────────────┼────────────────────────────┐
-           ▼                            ▼                            ▼
-┌────────────────────────┐   ┌────────────────────────┐   ┌────────────────────────┐
-│ <user_id>.racerbot.near│   │   racerbotrouter.near  │   │  bot_private_<id>.near │
-│ (User Trading Vaults)  │   │ (Atomic WASM Router)   │   │ (Confidential Shield)  │
-├────────────────────────┤   ├────────────────────────┤   ├────────────────────────┤
-│ • Scoped key management│   │ • Atomic multi-hop swap│   │ • Ephemeral subaccount │
-│ • NEP-141 token storage│   │ • Pre/post balance deltas│ │ • Isolates order flow  │
-│ • Full user export     │   │ • Zero-slippage refund │   │ • Breaks wallet tracing│
-└────────────────────────┘   └────────────────────────┘   └────────────────────────┘
+                                  ┌───────────────────────────┐
+                                  │       racerbot.near       │
+                                  │  (Global Root Controller) │
+                                  └─────────────┬─────────────┘
+                                                │
+                 ┌──────────────────────────────┼──────────────────────────────┐
+                 ▼                              ▼                              ▼
+      ┌─────────────────────────┐   ┌─────────────────────────┐   ┌─────────────────────────┐
+      │  User Wallet Connected  │   │   NEAR Intents Solver   │   │  Position Executor Pool │
+      │   (SOL / EVM / NEAR)    │   │ (1click.chaindefuser)   │   │ (<id>.racerbot.near)    │
+      ├─────────────────────────┤   ├─────────────────────────┤   ├─────────────────────────┤
+      │ • Phantom / Solflare    │   │ • Cross-chain deposits  │   │ • Keyless subaccount    │
+      │ • MetaMask / Rabby      │   │ • Native chain bridging │   │ • NEP-518 Global WASM   │
+      │ • Meteor / NEAR native  │   │ • Instant intent quote  │   │ • Exact token balances  │
+      └────────────┬────────────┘   └───────────┬─────────────┘   └────────────┬────────────┘
+                   │                            │                              │
+                   └────────────────────► Deposit Funds ───────────────────────┘
+                                                │
+                                                ▼
+                                    ┌───────────────────────┐
+                                    │ Direct Venue Swaps    │
+                                    │ (Ref / Rhea / Meme)   │
+                                    │ *NO ROUTER CONTRACT*  │
+                                    └───────────────────────┘
 ```
 
-1. **`racerbot.near` (Global Root Account & Controller):**
-   The top-level anchor account that creates and provisions scoped user trading subaccounts (`<id>.racerbot.near`). It acts as the deployer authority, maintaining protocol state while granting users sovereign key ownership.
-2. **`<id>.racerbot.near` (User Trading Vaults):**
-   Dedicated subaccounts provisioned for each trader. Users retain sovereign control with full private key export capability (`/wallet -> Export Key`) at all times.
-3. **`racerbotrouter.near` (Atomic Swap Router):**
-   Pure Rust smart contract (`packages/contract`) deployed on NEAR mainnet. Guarantees that token swaps across Ref AMM, Ref DCL, and Rhea execute atomically with strict slippage limits or revert safely without loss of funds.
-4. **`bot_private_<hash>.near` (Confidential Execution Pool):**
-   Rotating ephemeral subaccounts that execute trades confidentially, detaching the trader's master identity from public DEX receipts.
+1. **`racerbot.near` (Global Root Controller):**
+   The master controller that provisions and coordinates keyless trading subaccounts (`<id>.racerbot.near`). It deploys and authorizes executors under the NEP-518 Global Contract code hash (`812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e`).
+2. **Multi-Chain Wallet Connection (SOL, EVM, NEAR):**
+   Traders connect their native wallet on Solana, HyperEVM, or NEAR. They do not need to create or manage complex NEAR gas accounts.
+3. **NEAR Intents Direct Deposit:**
+   Deposits route seamlessly via **NEAR Intents** (`1click.chaindefuser.com` / `intents.near`). Funds from Solana, Ethereum, Arbitrum, or NEAR deposit directly into the user's dedicated executor trading wallet.
+4. **Keyless Position Executors (`<id>.racerbot.near`):**
+   Each executor instance is an independent subaccount owned by the controller (`racerbot.near`). An executor holds exactly one position and executes trades directly with DEX venues (Ref AMM, Ref DCL, Rhea, MemeCooking). **There is no router contract.** Balances are exact, MEV is minimized, and funds return directly to the user or to a NEAR Intents deposit address upon close.
 
 ---
 
@@ -204,7 +213,7 @@ Instead of wrestling with slow web DEX interfaces, approving endless wallet popu
 
 ### 🛡️ Confidential Trading & Shielded Pools
 - **Break On-Chain Tracing**: Uses ephemeral, rotating `bot_private` per-position executor subaccounts on NEAR.
-- **MEV & Copycat Protection**: The public transaction graph only sees calls between the executor pool and the router, shielding your main trading identity from on-chain scanners and predatory front-running bots.
+- **MEV & Copycat Protection**: The public transaction graph only sees calls from isolated ephemeral executors directly to DEX pools (there is no central router contract to monitor), shielding your main trading identity from on-chain scanners and predatory front-running bots.
 - Positions are managed and settled privately back to your trading vault upon exit.
 
 ### 🌐 NEAR Intents & Chain Abstraction
@@ -271,8 +280,8 @@ Each user receives managed trading accounts across supported chains (e.g. `<id>.
 [3. Safety Check]     ──► Honeypot engine checks contract supply concentration,
        │                  freeze authorities, and creator balances
        │
-[4. Atomic Router]    ──► Constructs transaction for Rust contract (racerbotrouter.near)
-       │                  Batches wrap_near + storage_deposit + swap + fee deduction
+[4. Direct Venue Call]  ──► Constructs atomic venue swap for position executor
+       │                  Builds typed venue call (Ref AMM/DCL, Rhea, MemeCooking)
        │
 [5. Hedged Multi-RPC] ──► Broadcasts signed transaction to FastNEAR, QuickNode, and
        │                  public endpoints simultaneously. First confirmation wins.
@@ -297,14 +306,14 @@ User Trading Request (Telegram)
            ▼
 [Isolated Swap Execution]
            │
-           ├─► Executor calls `racerbotrouter.near`
-           ├─► Swap settles directly with DEX / Launchpad
+           ├─► Executor executes directly against DEX / Launchpad
+           ├─► No router contract — balances remain exact & isolated
            │
            ▼
 [Settlement & Shielding]
            │
            └─► Output tokens or profits return to user's trading vault
-               On-chain scanners only see executor <-> router activity!
+               On-chain scanners only see independent executor <-> DEX pool activity!
 ```
 
 ---
@@ -362,12 +371,7 @@ flowchart TD
     end
 
     subgraph Execution & Blockchain Layer
-        Executor -->|execute_intent| Router[Smart Router Contract\nracerbotrouter.near]
-        Executor -->|Shielded Trade| ConfPool[Confidential Executor Pool\nbot_private.near]
-        Executor -->|Cross-Chain Intent| IntentsAPI[NEAR Intents Solver\n1click.chaindefuser.com]
-        
-        Router -->|Atomic Swaps| NearDEXs[Ref AMM / Ref DCL / Rhea / Launchpads]
-        ConfPool -->|Private Swaps| NearDEXs
+        Executor -->|Provision Subaccount| ConfPool[Position Executor Pool\n<id>.racerbot.near]\n        Executor -->|Cross-Chain Intent| IntentsAPI[NEAR Intents Solver\n1click.chaindefuser.com]\n        ConfPool -->|Direct Swaps (No Router)| NearDEXs[Ref AMM / Ref DCL / Rhea / Launchpads]
         
         Executor -->|Solana Swaps| SolDEXs[Jupiter / Raydium / Pump.fun]
         Executor -->|EVM Swaps| EVMDEXs[HyperEVM / Elysium Kinetiq L2]
@@ -409,7 +413,7 @@ flowchart TD
 
 1. **Managed Wallets & Encryption**: Stored keys are encrypted with AES-256-GCM using authenticated tags. The master key is loaded strictly from environment variables at runtime.
 2. **Confidential Isolation**: Ephemeral executor subaccounts isolate user trades on-chain, preventing wallet surveillance and predatory frontrunning.
-3. **Fail-Safe Router Accounting**: The router contract (`racerbotrouter.near`) verifies balances pre- and post-swap. If a swap fails or returns less than minimum slippage, funds are refunded to the user vault.
+3. **Exact Balance Accounting (No Router)**: Executors hold exactly one position in their own keyless subaccount. Balance accounting is mathematically exact with zero co-mingling risk across users.
 4. **Hedged Multi-RPC Broadcaster**: Sends signed transactions to multiple independent RPC providers (FastNEAR, QuickNode, public nodes) simultaneously, preventing single-node failures or censorship.
 5. **Continuous On-Chain Verification**: Positions are continually validated against real on-chain contract states to prevent phantom positions or stale balances.
 
@@ -425,7 +429,7 @@ The repository is structured as a **Turborepo** monorepo:
 | **`@racerbot/detector`** | [`packages/detector`](packages/detector) | Real-time block stream monitor scanning for new tokens and liquidity additions. |
 | **`@racerbot/executor`** | [`packages/executor`](packages/executor) | Transaction builder, hedged multi-RPC broadcaster, fill recording, and fee ledger. |
 | **`@racerbot/triggers`** | [`packages/triggers`](packages/triggers) | Polling engine for Take-Profit, Stop-Loss, Limit Orders, and scheduled DCA tasks. |
-| **`@racerbot/contract`** | [`packages/contract`](packages/contract) | Rust smart contract (`racerbot-router`) compiled to `wasm32-unknown-unknown`. |
+| **`@racerbot/position-executor`** | [`packages/position-executor`](packages/position-executor) | Rust position executor Global Contract compiled to `wasm32-unknown-unknown` (NEP-518). |
 | **`@racerbot/db`** | [`packages/db`](packages/db) | PostgreSQL schema, migrations, connection pools, and query repositories. |
 | **`@racerbot/shared`** | [`packages/shared`](packages/shared) | Shared cryptography, multi-RPC client, Redis pub/sub, Solana/EVM/Sui clients, Activity protocol. |
 
@@ -462,7 +466,7 @@ The repository is structured as a **Turborepo** monorepo:
    - `REDIS_URL`: Connection string to your Redis server.
    - `TELEGRAM_BOT_TOKEN`: Bot token from Telegram's `@BotFather`.
    - `KEY_ENCRYPTION_MASTER_KEY`: 64-character hex string for AES-256-GCM encryption.
-   - `ROUTER_CONTRACT_ID`: Mainnet router contract ID (`racerbotrouter.near`).
+   - `RACERBOT_PARENT_ACCOUNT`: Master controller account ID (`racerbot.near`).
    - `RPC_PROVIDERS`: Comma-separated list of NEAR RPC endpoints (e.g. FastNEAR, QuickNode).
    - `NEAR_INTENTS_API_URL`: NEAR Intents API solver endpoint (`https://1click.chaindefuser.com`).
 
@@ -479,16 +483,16 @@ The repository is structured as a **Turborepo** monorepo:
 
 ---
 
-### Smart Contract Compilation
+### Smart Contract Compilation (Position Executor)
 
-The smart contract is written in Rust and compiled to WebAssembly:
+The position executor is written in Rust and compiled to WebAssembly as a NEAR Global Contract:
 
 ```bash
-# Build the contract WASM
-npm run build --workspace=@racerbot/contract
+# Build the position executor WASM
+npm run build:executor
 
 # Run unit and integration tests
-cd packages/contract
+cd packages/position-executor
 cargo test
 ```
 
