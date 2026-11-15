@@ -168,9 +168,13 @@ export async function planEvmTokenSend(user: UserRecord, tokenInput: string, to:
   const providers: Record<EvmChain, ethers.JsonRpcProvider> = {
     hyperevm: getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true'),
     elysium: getEvmProvider('elysium', false),
+    base: getEvmProvider('base', false),
+    arbitrum: getEvmProvider('arbitrum', false),
+    ethereum: getEvmProvider('ethereum', false),
+    zero: getEvmProvider('zero', false),
   };
   // The chain is wherever the wallet actually holds this token
-  for (const chain of ['hyperevm', 'elysium'] as const) {
+  for (const chain of ['base', 'arbitrum', 'zero', 'hyperevm', 'elysium', 'ethereum'] as const) {
     const provider = providers[chain];
     if (!(await isContract(provider, token))) continue;
     const erc20 = new ethers.Contract(token, ERC20_ABI, provider);

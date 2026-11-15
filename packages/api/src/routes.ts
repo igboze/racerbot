@@ -189,6 +189,9 @@ import {
   NEAR_USDC_DECIMALS,
   isValidEvmAddress,
   getHypeBalance,
+  getEvmNativeBalance,
+  getEvmNativeSymbol,
+  getEvmExplorerUrl,
   ELYSIUM_TESTNET_EXPLORER_URL,
   ELYSIUM_MAINNET_EXPLORER_URL,
   KLEOS_TOKEN_URL,
@@ -206,6 +209,8 @@ import {
   type EvmChain,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
+import { registerLayerZeroRoutes, buildBridgeMenu } from './layerZeroRoutes.js';
+import { planCrossChain1ClickBuy } from './layerZeroBridge.js';
 import { inFlightKey, tryAcquireInFlight, releaseInFlight } from './inflight.js';
 import { generatePNLCard } from './pnlCardGenerator.js';
 import { generateTokenInfoCardImage } from './tokenInfoCardImageGenerator.js';
@@ -317,7 +322,7 @@ function withSolanaDirectDepositRow<T extends { text: string; keyboard: any }>(m
     const rows = menu.keyboard?.reply_markup?.inline_keyboard;
     if (Array.isArray(rows)) {
       if (!rows.some((r: any[]) => r.some((b: any) => b?.callback_data === 'dep_evm_direct'))) {
-        rows.unshift([cb('⚡ Deposit HYPE directly (HyperEVM & Elysium)', 'dep_evm_direct', 'success')]);
+        rows.unshift([cb('⚡ Deposit EVM & Zero (Base, Arb, Zero, ETH, HYPE)', 'dep_evm_direct', 'success')]);
       }
       if (!rows.some((r: any[]) => r.some((b: any) => b?.callback_data === 'dep_sol_direct'))) {
         rows.unshift([cb('◎ Deposit SOL directly (Solana wallet)', 'dep_sol_direct', 'success')]);
@@ -531,6 +536,10 @@ const mainMenuCache = new Map<number, { data: { text: string; keyboard: any }; e
 export const ALL_SUPPORTED_CHAINS = [
   { id: 'near', name: 'NEAR Protocol', symbol: 'NEAR', icon: '⬛' },
   { id: 'solana', name: 'Solana', symbol: 'SOL', icon: '🟣' },
+  { id: 'base', name: 'Base', symbol: 'ETH', icon: '🔵' },
+  { id: 'arbitrum', name: 'Arbitrum One', symbol: 'ETH', icon: '💙' },
+  { id: 'zero', name: 'Zero Network (LayerZero L1)', symbol: 'ZRO', icon: '🅾️' },
+  { id: 'ethereum', name: 'Ethereum', symbol: 'ETH', icon: '💎' },
   { id: 'hyperevm', name: 'HyperEVM (Mainnet)', symbol: 'HYPE', icon: '⚡' },
   { id: 'elysium', name: 'Elysium L2 (Mainnet)', symbol: 'HYPE', icon: '🏛️' },
   { id: 'sui', name: 'Sui Network', symbol: 'SUI', icon: '🔷' },
@@ -564,26 +573,54 @@ export function formatActiveChainsSummary(user: { hidden_chains?: string[] } | n
   }).join(' • ');
 }
 
-export function resolveTokenChain(tokenAddress: string, chainHint?: string): 'solana' | 'starknet' | 'sui' | 'hyperevm' | 'elysium' | 'near' {
+export type ResolvedChain =
+  | 'solana'
+  | 'starknet'
+  | 'sui'
+  | 'hyperevm'
+  | 'elysium'
+  | 'base'
+  | 'arbitrum'
+  | 'ethereum'
+  | 'zero'
+  | 'near';
+
+export function resolveTokenChain(tokenAddress: string, chainHint?: string): ResolvedChain {
   if (chainHint === 'solana' || isSolanaToken(tokenAddress)) return 'solana';
   if (chainHint === 'starknet' || isStarknetToken(tokenAddress) || (isValidStarknetAddress(tokenAddress) && !tokenAddress.endsWith('.near'))) return 'starknet';
   if (chainHint === 'sui' || isSuiToken(tokenAddress)) return 'sui';
+  if (chainHint === 'base') return 'base';
+  if (chainHint === 'arbitrum') return 'arbitrum';
+  if (chainHint === 'ethereum') return 'ethereum';
+  if (chainHint === 'zero') return 'zero';
   if (chainHint === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) return 'elysium';
-  if (chainHint === 'hyperevm' || (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'))) return 'hyperevm';
+  if (chainHint === 'hyperevm') return 'hyperevm';
+  if (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near')) {
+    const cached = getCachedTokenInfo(tokenAddress);
+    if (cached?.chain && ['base', 'arbitrum', 'ethereum', 'zero', 'elysium', 'hyperevm'].includes(cached.chain)) {
+      return cached.chain as any;
+    }
+    return 'hyperevm';
+  }
   return (chainHint as any) || 'near';
 }
 
-export function getPositionChain(pos: { chain?: string | null; token_address: string }): 'solana' | 'starknet' | 'sui' | 'hyperevm' | 'elysium' | 'near' {
+export function getPositionChain(pos: { chain?: string | null; token_address: string }): ResolvedChain {
   if (pos.chain === 'solana' || isSolanaToken(pos.token_address)) return 'solana';
   if (pos.chain === 'starknet' || isStarknetToken(pos.token_address) || (isValidStarknetAddress(pos.token_address) && !pos.token_address.endsWith('.near'))) return 'starknet';
   if (pos.chain === 'sui' || isSuiToken(pos.token_address)) return 'sui';
+  if (pos.chain === 'base') return 'base';
+  if (pos.chain === 'arbitrum') return 'arbitrum';
+  if (pos.chain === 'ethereum') return 'ethereum';
+  if (pos.chain === 'zero') return 'zero';
   if (pos.chain === 'elysium' || pos.token_address.toLowerCase().endsWith('.elysium')) return 'elysium';
-  if (pos.chain === 'hyperevm' || (isValidEvmAddress(pos.token_address) && !pos.token_address.endsWith('.near'))) return 'hyperevm';
+  if (pos.chain === 'hyperevm') return 'hyperevm';
+  if (isValidEvmAddress(pos.token_address) && !pos.token_address.endsWith('.near')) return (pos.chain as any) || 'hyperevm';
   return (pos.chain as any) || 'near';
 }
 
 export function getChainNativeUnit(tokenAddressOrChain: string, user?: UserRecord | null, chainHint?: string): string {
-  const chain = ['solana', 'starknet', 'sui', 'hyperevm', 'elysium', 'near'].includes(tokenAddressOrChain)
+  const chain = ['solana', 'starknet', 'sui', 'hyperevm', 'elysium', 'base', 'arbitrum', 'ethereum', 'zero', 'near'].includes(tokenAddressOrChain)
     ? tokenAddressOrChain
     : resolveTokenChain(tokenAddressOrChain, chainHint);
 
@@ -594,6 +631,12 @@ export function getChainNativeUnit(tokenAddressOrChain: string, user?: UserRecor
       return 'STRK';
     case 'sui':
       return 'SUI';
+    case 'base':
+    case 'arbitrum':
+    case 'ethereum':
+      return 'ETH';
+    case 'zero':
+      return 'ZRO';
     case 'hyperevm':
     case 'elysium':
       return 'HYPE';
@@ -616,6 +659,12 @@ export function getChainUnitBtn(tokenAddressOrChain: string, user?: UserRecord |
       return 'STRK';
     case 'sui':
       return 'SUI';
+    case 'base':
+    case 'arbitrum':
+    case 'ethereum':
+      return 'ETH';
+    case 'zero':
+      return 'ZRO';
     case 'hyperevm':
     case 'elysium':
       return 'HYPE';
@@ -634,6 +683,12 @@ export function getPositionUnitBtn(pos: { chain?: string | null; token_address: 
       return 'STRK';
     case 'sui':
       return 'SUI';
+    case 'base':
+    case 'arbitrum':
+    case 'ethereum':
+      return 'ETH';
+    case 'zero':
+      return 'ZRO';
     case 'hyperevm':
     case 'elysium':
       return 'HYPE';
@@ -674,6 +729,30 @@ export function buildActiveChainsMenu(user: UserRecord) {
     ],
     [
       cb(
+        `${!hidden.has('base') ? '🟢' : '🔴'} 🔵 Base`,
+        'toggle_chain_vis:base',
+        !hidden.has('base') ? 'success' : 'primary'
+      ),
+      cb(
+        `${!hidden.has('arbitrum') ? '🟢' : '🔴'} 💙 Arbitrum`,
+        'toggle_chain_vis:arbitrum',
+        !hidden.has('arbitrum') ? 'success' : 'primary'
+      ),
+    ],
+    [
+      cb(
+        `${!hidden.has('zero') ? '🟢' : '🔴'} 🅾️ Zero`,
+        'toggle_chain_vis:zero',
+        !hidden.has('zero') ? 'success' : 'primary'
+      ),
+      cb(
+        `${!hidden.has('ethereum') ? '🟢' : '🔴'} 💎 Ethereum`,
+        'toggle_chain_vis:ethereum',
+        !hidden.has('ethereum') ? 'success' : 'primary'
+      ),
+    ],
+    [
+      cb(
         `${!hidden.has('hyperevm') ? '🟢' : '🔴'} ⚡ HyperEVM`,
         'toggle_chain_vis:hyperevm',
         !hidden.has('hyperevm') ? 'success' : 'primary'
@@ -698,14 +777,12 @@ export function buildActiveChainsMenu(user: UserRecord) {
     ],
     [
       cb('⬛ NEAR Only', 'preset_chain_vis:near', 'primary'),
+      cb('🔵 Base Only', 'preset_chain_vis:base', 'primary'),
       cb('🟣 Solana Only', 'preset_chain_vis:solana', 'primary'),
     ],
     [
+      cb('🅾️ Zero Only', 'preset_chain_vis:zero', 'primary'),
       cb('⚡ HyperEVM Only', 'preset_chain_vis:hyperevm', 'primary'),
-      cb('🔷 Sui Only', 'preset_chain_vis:sui', 'primary'),
-    ],
-    [
-      cb('✨ Starknet Only', 'preset_chain_vis:starknet', 'primary'),
       cb('🌐 Show All Chains', 'preset_chain_vis:all', 'primary'),
     ],
     [
@@ -744,8 +821,16 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   let evmAddress = '';
   let hyperevmBalFormatted = '0.0000';
   let elysiumBalFormatted = '0.0000';
+  let baseBalFormatted = '0.0000';
+  let arbitrumBalFormatted = '0.0000';
+  let zeroBalFormatted = '0.0000';
+  let ethereumBalFormatted = '0.0000';
   let hyperevmUsdFormatted = '$0';
   let elysiumUsdFormatted = '$0';
+  let baseUsdFormatted = '$0';
+  let arbitrumUsdFormatted = '$0';
+  let zeroUsdFormatted = '$0';
+  let ethereumUsdFormatted = '$0';
   let totalUsdNum = 0;
 
   if (user) {
@@ -772,6 +857,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       evmAddress = b.evmAddress || user.evm_address || '';
       hyperevmBalFormatted = b.hyperevmBalanceFormatted || '0.0000';
       elysiumBalFormatted = b.elysiumBalanceFormatted || '0.0000';
+      baseBalFormatted = b.baseBalanceFormatted || '0.0000';
+      arbitrumBalFormatted = b.arbitrumBalanceFormatted || '0.0000';
+      zeroBalFormatted = b.zeroBalanceFormatted || '0.0000';
+      ethereumBalFormatted = b.ethereumBalanceFormatted || '0.0000';
 
       const nearVisible = isChainVisible(user, 'near');
       const suiVisible = isChainVisible(user, 'sui');
@@ -779,6 +868,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       const solanaVisible = isChainVisible(user, 'solana');
       const hyperevmVisible = isChainVisible(user, 'hyperevm');
       const elysiumVisible = isChainVisible(user, 'elysium');
+      const baseVisible = isChainVisible(user, 'base');
+      const arbitrumVisible = isChainVisible(user, 'arbitrum');
+      const zeroVisible = isChainVisible(user, 'zero');
+      const ethereumVisible = isChainVisible(user, 'ethereum');
 
       const rawNearUsd = parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3);
       const rawSuiUsd = parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0);
@@ -788,6 +881,12 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       const rawHypePrice = b.hypeUsd || 74.0;
       const rawHyperevmUsd = (parseFloat(hyperevmBalFormatted || '0') || 0) * rawHypePrice;
       const rawElysiumUsd = (parseFloat(elysiumBalFormatted || '0') || 0) * rawHypePrice;
+      const ethPrice = b.ethUsd || 2600.0;
+      const zroPrice = b.zroUsd || 3.85;
+      const rawBaseUsd = (parseFloat(baseBalFormatted || '0') || 0) * ethPrice;
+      const rawArbitrumUsd = (parseFloat(arbitrumBalFormatted || '0') || 0) * ethPrice;
+      const rawZeroUsd = (parseFloat(zeroBalFormatted || '0') || 0) * zroPrice;
+      const rawEthereumUsd = (parseFloat(ethereumBalFormatted || '0') || 0) * ethPrice;
 
       const nearTotalUsdNum = nearVisible ? rawNearUsd : 0;
       const suiTotalUsdNum = suiVisible ? rawSuiUsd : 0;
@@ -796,9 +895,13 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       const solTotalUsdNum = solanaVisible ? rawSolUsd : 0;
       const hyperevmTotalUsdNum = hyperevmVisible ? rawHyperevmUsd : 0;
       const elysiumTotalUsdNum = elysiumVisible ? rawElysiumUsd : 0;
+      const baseTotalUsdNum = baseVisible ? rawBaseUsd : 0;
+      const arbitrumTotalUsdNum = arbitrumVisible ? rawArbitrumUsd : 0;
+      const zeroTotalUsdNum = zeroVisible ? rawZeroUsd : 0;
+      const ethereumTotalUsdNum = ethereumVisible ? rawEthereumUsd : 0;
       const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
 
-      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmTotalUsdNum + elysiumTotalUsdNum + usdcNearNum;
+      totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmTotalUsdNum + elysiumTotalUsdNum + baseTotalUsdNum + arbitrumTotalUsdNum + zeroTotalUsdNum + ethereumTotalUsdNum + usdcNearNum;
       usdcBalFormatted = b.usdcNearFormatted || '0.00';
 
       nearUsdFormatted = rawNearUsd >= 1000 ? `${(rawNearUsd / 1000).toFixed(2)}K` : `${rawNearUsd.toFixed(2)}`;
@@ -806,6 +909,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       solUsdFormatted = rawSolUsd >= 1000 ? `${(rawSolUsd / 1000).toFixed(2)}K` : `${rawSolUsd.toFixed(2)}`;
       hyperevmUsdFormatted = rawHyperevmUsd >= 1000 ? `${(rawHyperevmUsd / 1000).toFixed(2)}K` : `${rawHyperevmUsd.toFixed(2)}`;
       elysiumUsdFormatted = rawElysiumUsd >= 1000 ? `${(rawElysiumUsd / 1000).toFixed(2)}K` : `${rawElysiumUsd.toFixed(2)}`;
+      baseUsdFormatted = rawBaseUsd >= 1000 ? `${(rawBaseUsd / 1000).toFixed(2)}K` : `${rawBaseUsd.toFixed(2)}`;
+      arbitrumUsdFormatted = rawArbitrumUsd >= 1000 ? `${(rawArbitrumUsd / 1000).toFixed(2)}K` : `${rawArbitrumUsd.toFixed(2)}`;
+      zeroUsdFormatted = rawZeroUsd >= 1000 ? `${(rawZeroUsd / 1000).toFixed(2)}K` : `${rawZeroUsd.toFixed(2)}`;
+      ethereumUsdFormatted = rawEthereumUsd >= 1000 ? `${(rawEthereumUsd / 1000).toFixed(2)}K` : `${rawEthereumUsd.toFixed(2)}`;
     } catch {
       nearBalFormatted = '0';
     }
@@ -819,6 +926,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   const solanaVisible = isChainVisible(user, 'solana');
   const hyperevmVisible = isChainVisible(user, 'hyperevm');
   const elysiumVisible = isChainVisible(user, 'elysium');
+  const baseVisible = isChainVisible(user, 'base');
+  const arbitrumVisible = isChainVisible(user, 'arbitrum');
+  const zeroVisible = isChainVisible(user, 'zero');
+  const ethereumVisible = isChainVisible(user, 'ethereum');
 
   let text = `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n`;
   if (user?.fee_tier === 'super_ambassador') {
@@ -833,11 +944,23 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   if (solanaVisible && solAddress) {
     text += `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n`;
   }
+  if (baseVisible && evmAddress) {
+    text += `🔵 Base: <b>${baseBalFormatted}</b> ETH (${baseUsdFormatted})\n`;
+  }
+  if (arbitrumVisible && evmAddress) {
+    text += `💙 Arbitrum: <b>${arbitrumBalFormatted}</b> ETH (${arbitrumUsdFormatted})\n`;
+  }
+  if (zeroVisible && evmAddress) {
+    text += `🅾️ Zero: <b>${zeroBalFormatted}</b> ZRO (${zeroUsdFormatted})\n`;
+  }
   if (hyperevmVisible) {
     text += `⚡ HyperEVM: <b>${hyperevmBalFormatted}</b> HYPE (${hyperevmUsdFormatted})\n`;
   }
   if (elysiumVisible) {
     text += `🏛️ Elysium: <b>${elysiumBalFormatted}</b> HYPE (${elysiumUsdFormatted})\n`;
+  }
+  if (ethereumVisible && evmAddress) {
+    text += `💎 Ethereum: <b>${ethereumBalFormatted}</b> ETH (${ethereumUsdFormatted})\n`;
   }
   if (suiVisible) {
     text += `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n`;
@@ -853,11 +976,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   if (solanaVisible && solAddress) {
     text += `◎ SOL: <code>${solAddress}</code>\n\n`;
   }
-  if ((hyperevmVisible || elysiumVisible) && evmAddress) {
-    const evmNames: string[] = [];
-    if (hyperevmVisible) evmNames.push('HyperEVM');
-    if (elysiumVisible) evmNames.push('Elysium');
-    text += `⚡ EVM (${evmNames.join(' & ')}):\n<code>${evmAddress}</code>\n\n`;
+  const evmChainsVisible = hyperevmVisible || elysiumVisible || baseVisible || arbitrumVisible || zeroVisible || ethereumVisible;
+  if (evmChainsVisible && evmAddress) {
+    text += `⚡ EVM & Zero Chain: <code>${evmAddress}</code>\n\n`;
   }
   if (suiVisible && suiAddress) {
     text += `💧 SUI: <code>${suiAddress}</code>\n\n`;
@@ -871,6 +992,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
     [
       cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
       cb('💳 Wallet', 'menu_wallet', 'primary'),
+      cb('🌉 Bridge / LZ', 'menu_bridge', 'primary'),
     ],
   ];
 
@@ -1024,18 +1146,29 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const solanaVisible = isChainVisible(user, 'solana');
   const hyperevmVisible = isChainVisible(user, 'hyperevm');
   const elysiumVisible = isChainVisible(user, 'elysium');
+  const baseVisible = isChainVisible(user, 'base');
+  const arbitrumVisible = isChainVisible(user, 'arbitrum');
+  const ethereumVisible = isChainVisible(user, 'ethereum');
+  const zeroVisible = isChainVisible(user, 'zero');
 
   const rawHypePrice = b.hypeUsd || 74.0;
+  const ethPrice = b.ethUsd || 2600.0;
+  const zroPrice = b.zroUsd || 3.85;
+
   const hyperevmUsdNum = hyperevmVisible ? (parseFloat(b.hyperevmBalanceFormatted || '0') || 0) * rawHypePrice : 0;
   const elysiumUsdNum = elysiumVisible ? (parseFloat(b.elysiumBalanceFormatted || '0') || 0) * rawHypePrice : 0;
+  const baseUsdNum = baseVisible ? (parseFloat(b.baseBalanceFormatted || '0') || 0) * ethPrice : 0;
+  const arbitrumUsdNum = arbitrumVisible ? (parseFloat(b.arbitrumBalanceFormatted || '0') || 0) * ethPrice : 0;
+  const ethereumUsdNum = ethereumVisible ? (parseFloat(b.ethereumBalanceFormatted || '0') || 0) * ethPrice : 0;
+  const zeroUsdNum = zeroVisible ? (parseFloat(b.zeroBalanceFormatted || '0') || 0) * zroPrice : 0;
 
   const nearTotalUsdNum = nearVisible ? parseFloat(b.totalNearFormatted || '0') * (b.nearUsd || 4.3) : 0;
   const suiTotalUsdNum = suiVisible ? parseFloat(b.suiBalanceFormatted || '0') * (b.suiUsd || 2.0) : 0;
   const strkTotalUsdNum = starknetVisible ? parseFloat(b.strkBalanceFormatted || '0') * (b.strkUsd || 0.40) : 0;
-  const ethTotalUsdNum = starknetVisible ? parseFloat(b.ethBalanceFormatted || '0') * (b.ethUsd || 2600.0) : 0;
+  const ethTotalUsdNum = starknetVisible ? parseFloat(b.ethBalanceFormatted || '0') * ethPrice : 0;
   const solTotalUsdNum = solanaVisible ? (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0) : 0;
   const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
-  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmUsdNum + elysiumUsdNum + usdcNearNum;
+  const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmUsdNum + elysiumUsdNum + baseUsdNum + arbitrumUsdNum + ethereumUsdNum + zeroUsdNum + usdcNearNum;
   const totalUsdStr = totalUsdNum >= 1000 ? `${(totalUsdNum / 1000).toFixed(2)}K` : `${totalUsdNum.toFixed(2)}`;
 
   const [nearWallets, suiWallets] = user
@@ -1051,6 +1184,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const buttons: any[] = [
     [
       cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
+      cb('🌉 Bridge / LZ', 'menu_bridge', 'primary'),
       cb('💸 Withdraw', 'wallet_withdraw_prompt', 'primary'),
     ],
     [
@@ -1105,6 +1239,22 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (solanaVisible && b.solanaAddress) {
     text += `🟣 SOL: <b>${b.solBalanceFormatted || '0.0000'}</b> ◎ (${b.solBalanceUsd || '$0.00'})\n`;
   }
+  if (baseVisible && b.evmAddress) {
+    const baseUsdStr = baseUsdNum >= 1000 ? `$${(baseUsdNum / 1000).toFixed(2)}K` : `$${baseUsdNum.toFixed(2)}`;
+    text += `🔵 Base: <b>${b.baseBalanceFormatted || '0.0000'}</b> ETH (${baseUsdStr})\n`;
+  }
+  if (arbitrumVisible && b.evmAddress) {
+    const arbUsdStr = arbitrumUsdNum >= 1000 ? `$${(arbitrumUsdNum / 1000).toFixed(2)}K` : `$${arbitrumUsdNum.toFixed(2)}`;
+    text += `💙 Arbitrum: <b>${b.arbitrumBalanceFormatted || '0.0000'}</b> ETH (${arbUsdStr})\n`;
+  }
+  if (zeroVisible && b.evmAddress) {
+    const zeroUsdStr = zeroUsdNum >= 1000 ? `$${(zeroUsdNum / 1000).toFixed(2)}K` : `$${zeroUsdNum.toFixed(2)}`;
+    text += `🅾️ Zero Network: <b>${b.zeroBalanceFormatted || '0.0000'}</b> ZRO (${zeroUsdStr})\n`;
+  }
+  if (ethereumVisible && b.evmAddress) {
+    const ethUsdStr = ethereumUsdNum >= 1000 ? `$${(ethereumUsdNum / 1000).toFixed(2)}K` : `$${ethereumUsdNum.toFixed(2)}`;
+    text += `💎 Ethereum: <b>${b.ethereumBalanceFormatted || '0.0000'}</b> ETH (${ethUsdStr})\n`;
+  }
   if (hyperevmVisible && elysiumVisible && b.evmAddress) {
     text += `⚡ HyperEVM: <b>${b.hyperevmBalanceFormatted || '0.0000'}</b> HYPE • Elysium: <b>${b.elysiumBalanceFormatted || '0.0000'}</b> HYPE\n`;
   } else if (hyperevmVisible && b.evmAddress) {
@@ -1118,11 +1268,8 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   if (suiVisible && b.suiAddress) text += `💧 SUI: <code>${escapeHtml(b.suiAddress)}</code>\n\n`;
   if (starknetVisible && b.starknetAddress) text += `✨ STRK: <code>${escapeHtml(b.starknetAddress)}</code>\n\n`;
   if (solanaVisible && b.solanaAddress) text += `◎ SOL: <code>${escapeHtml(b.solanaAddress)}</code>\n\n`;
-  if ((hyperevmVisible || elysiumVisible) && b.evmAddress) {
-    const evmNames: string[] = [];
-    if (hyperevmVisible) evmNames.push('HyperEVM');
-    if (elysiumVisible) evmNames.push('Elysium');
-    text += `⚡ EVM (${evmNames.join(' & ')}): <code>${escapeHtml(b.evmAddress)}</code>\n\n`;
+  if (b.evmAddress) {
+    text += `⚡ EVM & Zero Chain: <code>${escapeHtml(b.evmAddress)}</code>\n\n`;
   }
   text = text.trimEnd();
 
@@ -3250,38 +3397,51 @@ async function executeBuyHelperAsTrade(
   if (!isKleos && (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium'))) {
     throw new Error('RacerBot trades Kleos, RonsPad, Ascend and Montra coins on Elysium. This token is not one of them.');
   }
-  if (info.chain === 'hyperevm' || info.chain === 'elysium' || (isValidEvmAddress(tokenAddress) && !isStarknetHint && !tokenAddress.endsWith('.near'))) {
-    const chain: EvmChain = (info.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
+  const isEvmToken =
+    isEvmChainName(info.chain) ||
+    (isValidEvmAddress(tokenAddress) && !isStarknetHint && !tokenAddress.endsWith('.near'));
+
+  if (isEvmToken) {
+    let chain: EvmChain;
+    if (info.chain && isEvmChainName(info.chain)) {
+      chain = info.chain;
+    } else if (tokenAddress.toLowerCase().endsWith('.elysium')) {
+      chain = 'elysium';
+    } else {
+      chain = 'hyperevm';
+    }
+
     const evmUser = user.evm_address ? user : await ensureUserEvmWallet(user);
     if (!evmUser.evm_address) {
       throw new Error('Your EVM wallet is not ready yet. Please send /start and try again.');
     }
 
-    const isTestnet = chain === 'elysium' ? !isKleos : (process.env.HYPEREVM_TESTNET === 'true');
-    const amountHype = amountNear;
-    const amountInWei = ethers.parseEther(String(amountHype));
-    const HYPE_GAS_RESERVE = ethers.parseEther('0.002');
-    // A Kleos buy can be paid from HyperEVM or Elysium HYPE; the executor checks both
-    const userBal = isKleos ? null : await getHypeBalance(evmUser.evm_address, chain, isTestnet);
+    const isTestnet = chain === 'hyperevm' ? process.env.HYPEREVM_TESTNET === 'true' : false;
+    const nativeSym = getEvmNativeSymbol(chain);
+    const amountNative = amountNear;
+    const amountInWei = ethers.parseEther(String(amountNative));
+    const GAS_RESERVE = ethers.parseEther('0.001');
+    const userBal = isKleos ? null : await getEvmNativeBalance(evmUser.evm_address, chain, isTestnet);
 
-    if (userBal && userBal.raw < amountInWei + HYPE_GAS_RESERVE) {
-      if (userBal.raw <= HYPE_GAS_RESERVE) {
+    if (userBal && userBal.raw < amountInWei + GAS_RESERVE) {
+      if (userBal.raw <= GAS_RESERVE) {
         throw new Error(
-          `Your EVM wallet (\`${evmUser.evm_address}\`) has insufficient HYPE for gas.\n\nPlease deposit HYPE to trade on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}.`
+          `Your EVM wallet (\`${evmUser.evm_address}\`) has insufficient ${nativeSym} for gas.\n\nPlease deposit ${nativeSym} or use 🌉 /bridge to fund ${chain}.`
         );
       }
       throw new Error(
-        `Insufficient HYPE balance for ${amountHype} HYPE purchase + network gas.\n` +
-        `Available: ${userBal.formatted} HYPE`
+        `Insufficient ${nativeSym} balance for ${amountNative} ${nativeSym} purchase + network gas.\n` +
+        `Available: ${userBal.formatted} ${nativeSym}\n\n` +
+        `💡 _Tip: You can use /bridge to transfer funds across chains with LayerZero._`
       );
     }
 
     const swapResult = await publishSwap({
       user_id: user.id,
       chain,
-      token_in: 'HYPE',
+      token_in: nativeSym,
       token_out: tokenAddress,
-      amount_in: String(amountHype),
+      amount_in: String(amountNative),
       min_amount_out: '1',
       venue: isKleos ? info.venue as any : `${chain}_dex` as any,
       slippage_pct: slippagePct,
@@ -3300,25 +3460,25 @@ async function executeBuyHelperAsTrade(
         ? `${(tokenQtyHuman / 1_000).toFixed(2)}K`
         : tokenQtyHuman.toFixed(4);
 
-    const baseExplorer = isKleos ? ELYSIUM_MAINNET_EXPLORER_URL : chain === 'elysium' ? ELYSIUM_TESTNET_EXPLORER_URL : HYPEREVM_EXPLORER_URL;
+    const explorerUrl = (swapResult as any).explorerUrl || getEvmExplorerUrl(chain, swapResult.txHash);
 
     return {
       success: true,
-      amountNear: amountHype,
+      amountNear: amountNative,
       tokenAddress,
       tokenName,
       tokenSymbol: tokenSym,
       tokenQty: swapResult.tokenQty,
       priceNear: swapResult.priceNear,
-      nearSpent: amountHype,
+      nearSpent: amountNative,
       positionId: swapResult.positionId,
       txHash: swapResult.txHash,
       message:
-        `🚀 *Buy Confirmed!* (${isKleos ? elysiumPadName(info.venue) : chain === 'elysium' ? 'Elysium' : 'HyperEVM'})\n\n` +
+        `🚀 *Buy Confirmed!* (${isKleos ? elysiumPadName(info.venue) : chain.toUpperCase()})\n\n` +
         `Bought: *${tokenQtyDisplay} ${tokenSym}*\n` +
-        `Spent: *${amountHype} HYPE*\n` +
+        `Spent: *${amountNative} ${nativeSym}*\n` +
         `Tx Hash: \`${swapResult.txHash}\`\n` +
-        `🔗 [View on Explorer](${baseExplorer}/tx/${swapResult.txHash})`,
+        `🔗 [View on Explorer](${explorerUrl})`,
     };
   }
 
@@ -4169,6 +4329,9 @@ export function setupRoutes(bot: Telegraf): void {
   // ── Register RaceDrop commands, actions, and wizards ───────────────────────
   setupRaceDropRoutes(bot, userPendingActions);
 
+  // ── LayerZero V2 / Stargate V2 Cross-Chain Bridge & 1-Click Buy ───────────
+  registerLayerZeroRoutes(bot);
+
   // ── NEAR Racer Card: /card and the home-screen button ─────────────────────
   registerRacerCard(bot);
 
@@ -4943,7 +5106,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
   };
 
-  // Direct HYPE deposit: shows user's unified EVM wallet address for HyperEVM & Elysium
+  // Direct EVM & Zero deposit: shows user's unified EVM wallet address for Base, Arbitrum, Zero, HyperEVM, Elysium & Ethereum
   bot.action('dep_evm_direct', async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from!.id;
@@ -4956,17 +5119,27 @@ export function setupRoutes(bot: Telegraf): void {
       if (!user) throw new Error('Please send /start first.');
       const evmUser = await ensureUserEvmWallet(user);
       await ctx.reply(
-        `⚡ <b>Deposit HYPE (HyperEVM & Elysium)</b>\n\n` +
-        `Send native <b>HYPE</b> to your unified EVM address:\n\n` +
+        `⚡ <b>Deposit to Unified EVM & Zero Wallet</b>\n\n` +
+        `Send native gas tokens or tokens directly to your unified EVM address:\n\n` +
         `<code>${escapeHtml(evmUser.evm_address || '')}</code>\n\n` +
-        `• 🟢 <b>HyperEVM (Chain ID 999):</b> Mainnet live — trade real tokens now.\n` +
-        `• 🟢 <b>Elysium (Chain ID 99901):</b> Mainnet live — trade Kleos, RonsPad, Ascend and Montra coins now.\n` +
-        `• Tap the address above to copy it.\n` +
-        `• Keep at least 0.01 HYPE in your wallet for gas fees.`,
+        `• 🔵 <b>Base (Chain ID 8453):</b> Send ETH to trade Base meme tokens\n` +
+        `• 💙 <b>Arbitrum One (Chain ID 42161):</b> Send ETH to trade Arbitrum tokens\n` +
+        `• 🅾️ <b>Zero Network (Chain ID 4242):</b> Send ZRO to trade Zero tokens\n` +
+        `• ⚡ <b>HyperEVM (Chain ID 999):</b> Send HYPE to trade HyperEVM tokens\n` +
+        `• 🏛️ <b>Elysium (Chain ID 99901):</b> Send HYPE to trade Elysium tokens\n` +
+        `• 💎 <b>Ethereum Mainnet (Chain ID 1):</b> Send ETH\n\n` +
+        `<i>Tap the address above to copy it. All these chains share this single secure EVM wallet!</i>`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([
-            [Markup.button.url('🔍 View on HypurrScan', `https://hypurrscan.io/address/${evmUser.evm_address}`)],
+            [
+              Markup.button.url('🔍 BaseScan', `https://basescan.org/address/${evmUser.evm_address}`),
+              Markup.button.url('🔍 Arbiscan', `https://arbiscan.io/address/${evmUser.evm_address}`),
+            ],
+            [
+              Markup.button.url('🔍 HypurrScan', `https://hypurrscan.io/address/${evmUser.evm_address}`),
+              Markup.button.url('🔍 ZeroScan', `https://scan.zero.network/address/${evmUser.evm_address}`),
+            ],
             [cb('💳 Wallet', 'menu_wallet', 'primary'), cb('🔙 Back', 'menu_multichain_deposit', 'primary')],
           ]),
         }
@@ -11043,7 +11216,40 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         }
       } catch (err: any) {
         if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
-        await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
+        const friendlyErr = getUserFriendlyError(err);
+        if (/insufficient|balance|not enough/i.test(friendlyErr)) {
+          try {
+            const user = await getUserByTelegramId(telegramId);
+            if (user?.id && user?.evm_address) {
+              const plan = await planCrossChain1ClickBuy({
+                userId: user.id,
+                destChain: 'arbitrum',
+                targetTokenSymbol: tokenAddress.slice(0, 8),
+                requiredAmountUsd: 25,
+              });
+              if (plan.available && plan.fundingChain && plan.fundingAsset && plan.fundingAmount) {
+                const kb = Markup.inlineKeyboard([
+                  [
+                    cb(
+                      `⚡ 1-Click Cross-Chain Buy from ${plan.fundingChain} ($${plan.fundingAmount} ${plan.fundingAsset})`,
+                      `bridge_1click:${plan.fundingChain}:${plan.destChain}:${plan.fundingAsset}:${plan.fundingAmount}`
+                    ),
+                  ],
+                  [cb('🌉 Bridge / LZ', 'menu_bridge'), cb('💳 Wallet', 'menu_wallet')],
+                ]);
+                await ctx.reply(
+                  `❌ ${friendlyErr}\n\n` +
+                  `⚡ <b>1-Click Cross-Chain Buy Available!</b>\n` +
+                  `You have <b>$${plan.fundingAmount} ${plan.fundingAsset}</b> on <b>${plan.fundingChain}</b> ready to bridge via Stargate V2 (~${plan.bridgeDurationSec}s).\n` +
+                  `<i>Funds settle directly into your sovereign EOA with LayerZero Scan tracking.</i>`,
+                  { parse_mode: 'HTML', ...kb }
+                ).catch(() => { });
+                return;
+              }
+            }
+          } catch {}
+        }
+        await ctx.reply(`❌ ${friendlyErr}`).catch(() => { });
       } finally {
         await releaseInFlight(guardKey);
       }

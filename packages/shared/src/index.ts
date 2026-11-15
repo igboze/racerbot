@@ -119,6 +119,7 @@ export type {
   SwapRequest,
   VenueName,
   TriggerConfig,
+  SupportedChain,
 } from './types.js';
 export { TRADABLE_VENUES, isTradableVenue } from './types.js';
 
@@ -392,7 +393,31 @@ export {
   resolveV2Router,
   HYPERSWAP_V2_ROUTER,
   WHYPE_ADDRESS,
+  BASE_DEFAULT_ROUTER,
+  ARBITRUM_DEFAULT_ROUTER,
+  ETHEREUM_DEFAULT_ROUTER,
+  ZERO_DEFAULT_ROUTER,
+  WETH_BASE,
+  WETH_ARBITRUM,
+  WETH_ETHEREUM,
+  WZRO_ZERO,
+  BASE_MAINNET_CHAIN_ID,
+  ARBITRUM_MAINNET_CHAIN_ID,
+  ETHEREUM_MAINNET_CHAIN_ID,
+  ZERO_CHAIN_MAINNET_CHAIN_ID,
+  BASE_EXPLORER_URL,
+  ARBITRUM_EXPLORER_URL,
+  ETHEREUM_EXPLORER_URL,
+  ZERO_EXPLORER_URL,
+  ETH_SYMBOL,
+  ZRO_SYMBOL,
+  getEvmNativeSymbol,
+  getEvmNativeBalance,
+  getEvmExplorerUrl,
+  getDefaultRouter,
+  getDefaultWrappedNative,
   getHypeUsdPrice,
+  getZroUsdPrice,
 } from './evm.js';
 export { isEvmChainName, evmStoredAmount } from './evm.js';
 export type {
@@ -508,3 +533,35 @@ export {
   encodePadV3Sell,
 } from './elysiumPads.js';
 export type { ElysiumPad, ElysiumPadName, PadRoute, PadV3Route } from './elysiumPads.js';
+
+// LayerZero V2 & Stargate V2 Cross-Chain
+export {
+  LZ_EID_ARBITRUM,
+  LZ_EID_BASE,
+  LZ_EID_ETHEREUM,
+  LZ_EID_OPTIMISM,
+  LZ_EID_POLYGON,
+  LZ_EID_BSC,
+  LZ_CHAINS,
+  STARGATE_V2_POOLS,
+  STARGATE_V2_POOL_ABI,
+  LZ_ENDPOINT_V2_ABI,
+  addressToBytes32,
+  bytes32ToAddress,
+  encodeLzReceiveOptions,
+  getLayerZeroScanUrl,
+  verifySovereignEvmWallet,
+  buildStargateSendParam,
+  quoteStargateSend,
+} from './layerZero.js';
+export type {
+  LayerZeroChain,
+  LayerZeroChainConfig,
+  StargateAsset,
+  StargatePoolInfo,
+  StargateSendParam,
+  StargateMessagingFee,
+  LayerZeroBridgeQuote,
+  SovereignEvmCheckResult,
+} from './layerZero.js';
+

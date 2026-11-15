@@ -16,7 +16,17 @@ for (let i = 0; i < 5; i++) {
 
 // ── Local type definitions (not imported from shared — avoids circular deps) ──
 
-export type DbChain = 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
+export type DbChain =
+  | 'near'
+  | 'sui'
+  | 'starknet'
+  | 'solana'
+  | 'hyperevm'
+  | 'elysium'
+  | 'base'
+  | 'arbitrum'
+  | 'ethereum'
+  | 'zero';
 
 export interface UserRecord {
   id: string;

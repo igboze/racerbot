@@ -65,7 +65,7 @@ import {
   syncUserActiveWallet,
 } from '@racerbot/db';
 import { KeyPair, transactions, utils } from 'near-api-js';
-import { isTradableVenue, TradeError, isValidEvmAddress } from '@racerbot/shared';
+import { isTradableVenue, TradeError, isValidEvmAddress, isEvmChainName, type EvmChain } from '@racerbot/shared';
 import { PARENT_ACCOUNT, TREASURY_ACCOUNT_ID, MAIN_WALLET_PRIVATE_KEY } from './config.js';
 import { determineSwapOutcome } from './tradeResult.js';
 
@@ -658,31 +658,54 @@ export class SwapExecutor {
       };
     }
 
-    // Route HyperEVM and Elysium chain trades directly to EvmExecutor
+    // Route EVM chain trades (HyperEVM, Elysium, Base, Arbitrum, Ethereum, Zero) directly to EvmExecutor
     const isEvmTokenIn = (token_in.length === 42 && isValidEvmAddress(token_in));
     const isEvmTokenOut = (token_out.length === 42 && isValidEvmAddress(token_out));
     const isEvmEvent =
       event.chain === 'hyperevm' ||
       event.chain === 'elysium' ||
+      event.chain === 'base' ||
+      event.chain === 'arbitrum' ||
+      event.chain === 'ethereum' ||
+      event.chain === 'zero' ||
       venue === 'hyperevm_dex' ||
       venue === 'elysium_dex' ||
+      venue === 'base_dex' ||
+      venue === 'arbitrum_dex' ||
+      venue === 'ethereum_dex' ||
+      venue === 'zero_dex' ||
+      venue === 'atlas' ||
       venue === 'market_lab' ||
       venue === 'corepad' ||
       token_in.toUpperCase() === 'HYPE' ||
       token_out.toUpperCase() === 'HYPE' ||
+      token_in.toUpperCase() === 'ZRO' ||
+      token_out.toUpperCase() === 'ZRO' ||
       ((isEvmTokenIn || isEvmTokenOut) && event.chain !== 'starknet');
 
     if (isEvmEvent) {
       const presignStart = Date.now();
-      const evmChain = (event.chain === 'elysium' || event.token_out?.toLowerCase().endsWith('.elysium') ? 'elysium' : 'hyperevm');
+      let evmChain: EvmChain;
+      if (event.chain && isEvmChainName(event.chain)) {
+        evmChain = event.chain;
+      } else if (event.token_out?.toLowerCase().endsWith('.elysium') || event.token_in?.toLowerCase().endsWith('.elysium')) {
+        evmChain = 'elysium';
+      } else {
+        evmChain = 'hyperevm';
+      }
       const res = await executeEvmSwap({ ...event, chain: evmChain }, onProgress);
       timings.presign_ms = Date.now() - presignStart;
       timings.sign_ms = 0;
       timings.post_ms = 0;
 
-      const hypeIsInput = token_in.toUpperCase() === 'HYPE' || token_in === 'native' || token_in === '0x0000000000000000000000000000000000000000';
+      const nativeIsInput =
+        token_in.toUpperCase() === 'HYPE' ||
+        token_in.toUpperCase() === 'ETH' ||
+        token_in.toUpperCase() === 'ZRO' ||
+        token_in === 'native' ||
+        token_in === '0x0000000000000000000000000000000000000000';
       if (!res.success) {
-        throw new Error(res.reason || (hypeIsInput ? 'EVM buy failed' : 'EVM sell failed'));
+        throw new Error(res.reason || (nativeIsInput ? 'EVM buy failed' : 'EVM sell failed'));
       }
 
       return {
@@ -694,17 +717,16 @@ export class SwapExecutor {
         tokenSymbol: res.tokenSymbol,
         tokenQty: res.tokenQty,
         priceNear: res.priceHype,
-        nearSpent: hypeIsInput ? res.hypeSpentOrReceived : undefined,
-        nearReceived: hypeIsInput ? undefined : res.hypeSpentOrReceived,
+        nearSpent: nativeIsInput ? res.hypeSpentOrReceived : undefined,
+        nearReceived: nativeIsInput ? undefined : res.hypeSpentOrReceived,
       };
     }
 
     // Route Starknet chain trades directly to StarknetExecutor
     if (
       !isEvmEvent &&
-      event.chain !== 'hyperevm' &&
-      event.chain !== 'elysium' &&
-      event.chain === 'starknet' ||
+      !isEvmChainName(event.chain) &&
+      (event.chain === 'starknet' ||
       venue === 'avnu' ||
       venue === 'ekubo' ||
       venue === 'launchy' ||
@@ -714,7 +736,7 @@ export class SwapExecutor {
       token_in.toLowerCase() === 'strk' ||
       token_out.toLowerCase() === 'strk' ||
       (token_in.startsWith('0x') && !token_in.includes('::') && event.chain !== 'sui') ||
-      (token_out.startsWith('0x') && !token_out.includes('::') && event.chain !== 'sui')
+      (token_out.startsWith('0x') && !token_out.includes('::') && event.chain !== 'sui'))
     ) {
       const presignStart = Date.now();
       const res = await executeStarknetSwap(event, onProgress);

@@ -67,6 +67,7 @@ import {
   computeStarknetAccountAddress,
   type GeneratedStarknetWallet,
   type VenueName,
+  type SupportedChain,
   isTradableVenue,
   isKleosTradingEnabled,
   getStrkUsdPrice,
@@ -78,6 +79,9 @@ import {
   elysiumInboxMaxFeePerGas,
   sendElysiumTransaction,
   getHypeBalance,
+  getEvmNativeBalance,
+  getEvmNativeSymbol,
+  getZroUsdPrice,
   getErc20TokenInfo,
   getKleosBoardCoin,
   isLaunchpadToken,
@@ -1438,7 +1442,7 @@ export interface TokenInfoResult {
   dcl_path?: string[];
   /** Why a listed token cannot be traded here (shown on its card) */
   trade_block_reason?: string;
-  chain?: 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
+  chain?: SupportedChain;
   name: string;
   symbol: string;
   decimals: number;
@@ -1895,38 +1899,57 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           return montra;
         }
       }
-      const isElysium = tokenAddress.toLowerCase().endsWith('.elysium') || rawTokenAddress.toLowerCase().includes('elysium');
-      const chain: EvmChain = isElysium ? 'elysium' : 'hyperevm';
-      const isTestnet = chain === 'elysium' ? true : (process.env.HYPEREVM_TESTNET === 'true');
+      const rawLower = rawTokenAddress.toLowerCase();
+      let explicitChain: EvmChain | null = null;
+      if (tokenAddress.toLowerCase().endsWith('.elysium') || rawLower.includes('elysium')) explicitChain = 'elysium';
+      else if (rawLower.includes('base')) explicitChain = 'base';
+      else if (rawLower.includes('arb')) explicitChain = 'arbitrum';
+      else if (rawLower.includes('eth')) explicitChain = 'ethereum';
+      else if (rawLower.includes('zero') || rawLower.includes('lz')) explicitChain = 'zero';
+      else if (rawLower.includes('hyperevm')) explicitChain = 'hyperevm';
 
-      const [tokenMeta, dexscreenerAny] = await Promise.all([
+      // Query DexScreener to detect chain or get live pool data
+      const dexscreenerAny = await fetchDexScreenerTokenData(tokenAddress, explicitChain || undefined).catch(() => null);
+
+      let chain: EvmChain = explicitChain || 'hyperevm';
+      if (!explicitChain && dexscreenerAny?.chainId) {
+        const dsChain = dexscreenerAny.chainId.toLowerCase();
+        if (dsChain === 'base') chain = 'base';
+        else if (dsChain === 'arbitrum' || dsChain === 'arbitrum-one') chain = 'arbitrum';
+        else if (dsChain === 'ethereum' || dsChain === 'eth') chain = 'ethereum';
+        else if (dsChain === 'zero' || dsChain === 'layerzero') chain = 'zero';
+        else if (dsChain === 'elysium') chain = 'elysium';
+        else if (dsChain === 'hyperevm') chain = 'hyperevm';
+      }
+
+      const isTestnet = chain === 'hyperevm' ? (process.env.HYPEREVM_TESTNET === 'true') : false;
+
+      const [tokenMeta] = await Promise.all([
         getErc20TokenInfo(tokenAddress, chain, isTestnet).catch(() => null),
-        fetchDexScreenerTokenData(tokenAddress, chain).catch(() => null),
       ]);
-      // DexScreener falls back to any chain's pools; since 2026-11-09 it lists Elysium too. Only a pool on this
-      // chain describes this token, or an Elysium coin would be shown and traded as a HyperEVM token.
-      const dexscreenerData = dexscreenerAny && (!dexscreenerAny.chainId || dexscreenerAny.chainId === chain) ? dexscreenerAny : null;
+      const dexscreenerData = dexscreenerAny && (!dexscreenerAny.chainId || dexscreenerAny.chainId.toLowerCase() === chain.toLowerCase())
+        ? dexscreenerAny
+        : null;
 
       if (!tokenMeta && !dexscreenerData) {
-        // Elysium mainnet launchpads: RonsPad, Montra and Ascend name their launches on chain, then Kleos coins newer than its board
-        // Every launchpad is asked at once (one after another took 15-20s, past Telegram's patience), then the
-        // answer is picked in this order: RonsPad, Montra, Ascend, a Kleos coin, BOXA / ElysPump, any Uniswap v4
-        // pool, and last a Kleos read-only card that says why it can't be traded
-        const [ronsPad, montra, ascend, kleosCard, pad, univ4] = await Promise.all([
-          lookupRonsPadToken(tokenAddress).catch(() => null),
-          lookupMontraToken(tokenAddress, null).catch(() => null),
-          lookupAscendToken(tokenAddress).catch(() => null),
-          lookupKleosToken(tokenAddress, null).catch(() => null),
-          lookupPadToken(tokenAddress).catch(() => null),
-          lookupUniV4Token(tokenAddress).catch(() => null),
-        ]);
-        const kleosTradeable = kleosCard && !kleosCard.trade_block_reason ? kleosCard : null;
-        const kleos = ronsPad ?? montra ?? ascend ?? kleosTradeable ?? pad ?? univ4 ?? kleosCard;
-        if (kleos) {
-          tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-          tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-          rememberEvmToken(kleos);
-          return kleos;
+        if (chain === 'elysium' || !explicitChain) {
+          // Elysium mainnet launchpads: RonsPad, Montra and Ascend name their launches on chain, then Kleos coins newer than its board
+          const [ronsPad, montra, ascend, kleosCard, pad, univ4] = await Promise.all([
+            lookupRonsPadToken(tokenAddress).catch(() => null),
+            lookupMontraToken(tokenAddress, null).catch(() => null),
+            lookupAscendToken(tokenAddress).catch(() => null),
+            lookupKleosToken(tokenAddress, null).catch(() => null),
+            lookupPadToken(tokenAddress).catch(() => null),
+            lookupUniV4Token(tokenAddress).catch(() => null),
+          ]);
+          const kleosTradeable = kleosCard && !kleosCard.trade_block_reason ? kleosCard : null;
+          const kleos = ronsPad ?? montra ?? ascend ?? kleosTradeable ?? pad ?? univ4 ?? kleosCard;
+          if (kleos) {
+            tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+            tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+            rememberEvmToken(kleos);
+            return kleos;
+          }
         }
         throw await explainMissingEvmToken(tokenAddress);
       }
@@ -1936,9 +1959,17 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       const decimals = tokenMeta?.decimals ?? 18;
       const totalSupply = tokenMeta?.totalSupply || '1000000000000000000000000';
 
-      const hypeUsd = await getHypeUsdPrice().catch(() => 74.0);
+      let nativeUsd = 74.0;
+      if (chain === 'base' || chain === 'arbitrum' || chain === 'ethereum') {
+        nativeUsd = await getEthUsdPrice().catch(() => 2600.0);
+      } else if (chain === 'zero') {
+        nativeUsd = await getZroUsdPrice().catch(() => 3.85);
+      } else {
+        nativeUsd = await getHypeUsdPrice().catch(() => 74.0);
+      }
+
       const priceUsd = Number(dexscreenerData?.priceUsd || 0);
-      const priceHype = priceUsd > 0 && hypeUsd > 0 ? priceUsd / hypeUsd : 0.001;
+      const priceNative = priceUsd > 0 && nativeUsd > 0 ? priceUsd / nativeUsd : 0.001;
       const liquidityUsd = Number(dexscreenerData?.liquidityUsd || 0);
       const marketCapUsd = Number(dexscreenerData?.marketCapUsd || 0);
 
@@ -1949,13 +1980,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         symbol: sym,
         decimals,
         total_supply: totalSupply,
-        price: priceHype.toString(),
+        price: priceNative.toString(),
         price_usd: priceUsd.toString(),
-        liquidity: (liquidityUsd / hypeUsd).toFixed(2),
+        liquidity: nativeUsd > 0 ? (liquidityUsd / nativeUsd).toFixed(2) : '0',
         liquidity_usd: liquidityUsd.toFixed(2),
-        market_cap: marketCapUsd / hypeUsd,
+        market_cap: nativeUsd > 0 ? marketCapUsd / nativeUsd : 0,
         market_cap_usd: marketCapUsd,
-        near_usd: hypeUsd,
+        near_usd: nativeUsd,
         venue: `${chain}_dex` as any,
         tradeable: true,
         buy_tax_pct: 0,
@@ -3119,22 +3150,35 @@ export async function getUserEvmBalances(user: UserRecord): Promise<{
   address: string;
   hyperevm: { raw: bigint; formatted: string; human: number };
   elysium: { raw: bigint; formatted: string; human: number };
+  base: { raw: bigint; formatted: string; human: number };
+  arbitrum: { raw: bigint; formatted: string; human: number };
+  ethereum: { raw: bigint; formatted: string; human: number };
+  zero: { raw: bigint; formatted: string; human: number };
 }> {
   const address = user.evm_address;
+  const zeroBal = { raw: 0n, formatted: '0.0', human: 0 };
   if (!address) {
     return {
       address: '',
-      hyperevm: { raw: 0n, formatted: '0.0', human: 0 },
-      elysium: { raw: 0n, formatted: '0.0', human: 0 },
+      hyperevm: zeroBal,
+      elysium: zeroBal,
+      base: zeroBal,
+      arbitrum: zeroBal,
+      ethereum: zeroBal,
+      zero: zeroBal,
     };
   }
 
-  const [hyperevm, elysium] = await Promise.all([
-    getHypeBalance(address, 'hyperevm', process.env.HYPEREVM_TESTNET === 'true'),
-    getHypeBalance(address, 'elysium', false),
+  const [hyperevm, elysium, base, arbitrum, ethereum, zero] = await Promise.all([
+    getEvmNativeBalance(address, 'hyperevm', process.env.HYPEREVM_TESTNET === 'true').catch(() => zeroBal),
+    getEvmNativeBalance(address, 'elysium', false).catch(() => zeroBal),
+    getEvmNativeBalance(address, 'base', false).catch(() => zeroBal),
+    getEvmNativeBalance(address, 'arbitrum', false).catch(() => zeroBal),
+    getEvmNativeBalance(address, 'ethereum', false).catch(() => zeroBal),
+    getEvmNativeBalance(address, 'zero', false).catch(() => zeroBal),
   ]);
 
-  return { address, hyperevm, elysium };
+  return { address, hyperevm, elysium, base, arbitrum, ethereum, zero };
 }
 
 /** Gas budgeted for an Elysium HYPE transfer (the inbox path's fixed limit); unused gas is never charged */
@@ -3714,7 +3758,7 @@ let directExecutor: any = null;
  */
 export async function publishSwap(swapEvent: {
   user_id: string;
-  chain?: 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
+  chain?: SupportedChain;
   token_in: string;
   token_out: string;
   amount_in: string;
@@ -3894,7 +3938,12 @@ export interface UserBalances {
   evmAddress?: string;
   hyperevmBalanceFormatted?: string;
   elysiumBalanceFormatted?: string;
+  baseBalanceFormatted?: string;
+  arbitrumBalanceFormatted?: string;
+  ethereumBalanceFormatted?: string;
+  zeroBalanceFormatted?: string;
   hypeUsd?: number;
+  zroUsd?: number;
 }
 
 /**
@@ -3954,7 +4003,7 @@ export async function getUserBalances(
         withTimeout(getStrkUsdPrice(), 2500, 0.40),
         withTimeout(getEthUsdPrice(), 2500, 2600.0),
       ]);
-      const [solRes, solUsdRes, evmBalRes, hypeUsdRes] = await Promise.allSettled([
+      const [solRes, solUsdRes, evmBalRes, hypeUsdRes, zroUsdRes] = await Promise.allSettled([
         solanaAddress
           ? withTimeout(getSolanaBalance(solanaAddress, forceRefresh), 3000, null as any)
           : Promise.resolve(null),
@@ -3963,10 +4012,12 @@ export async function getUserBalances(
           ? withTimeout(getUserEvmBalances(user), 2500, null as any)
           : Promise.resolve(null),
         withTimeout(getHypeUsdPrice(), 2500, 74.0),
+        withTimeout(getZroUsdPrice(), 2500, 3.85),
       ]);
       const solLamports: bigint | null = solRes.status === 'fulfilled' && solRes.value ? solRes.value.lamports : null;
       const solPrice = solUsdRes.status === 'fulfilled' ? solUsdRes.value : 150;
       const hypePrice = hypeUsdRes.status === 'fulfilled' && hypeUsdRes.value > 0 ? hypeUsdRes.value : 74.0;
+      const zroPrice = zroUsdRes.status === 'fulfilled' && zroUsdRes.value > 0 ? zroUsdRes.value : 3.85;
 
       if (nativeRes.status === 'fulfilled' && nativeRes.value) {
         nativeNearYocto = nativeRes.value;
@@ -4048,7 +4099,12 @@ export async function getUserBalances(
         evmAddress: user.evm_address ?? undefined,
         hyperevmBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.hyperevm.formatted : '0.0000',
         elysiumBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.elysium.formatted : '0.0000',
+        baseBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.base.formatted : '0.0000',
+        arbitrumBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.arbitrum.formatted : '0.0000',
+        ethereumBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.ethereum.formatted : '0.0000',
+        zeroBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.zero.formatted : '0.0000',
         hypeUsd: hypePrice,
+        zroUsd: zroPrice,
       };
 
       if (!nativeNearTimedOut) {

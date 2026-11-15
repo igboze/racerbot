@@ -65,6 +65,11 @@ export type VenueName =
   | 'univ4'
   | 'boxa'
   | 'elyspump'
+  | 'base_dex'
+  | 'arbitrum_dex'
+  | 'ethereum_dex'
+  | 'zero_dex'
+  | 'atlas'
   | 'intents';
 
 export const TRADABLE_VENUES: readonly VenueName[] = [
@@ -104,13 +109,28 @@ export const TRADABLE_VENUES: readonly VenueName[] = [
   'elysium_dex',
   'market_lab',
   'corepad',
+  'base_dex',
+  'arbitrum_dex',
+  'ethereum_dex',
+  'zero_dex',
+  'atlas',
 ];
 
 export function isTradableVenue(v: unknown): v is VenueName {
   return typeof v === 'string' && (TRADABLE_VENUES as readonly string[]).includes(v);
 }
 
-export type SupportedChain = 'near' | 'sui' | 'starknet' | 'solana' | 'hyperevm' | 'elysium';
+export type SupportedChain =
+  | 'near'
+  | 'sui'
+  | 'starknet'
+  | 'solana'
+  | 'hyperevm'
+  | 'elysium'
+  | 'base'
+  | 'arbitrum'
+  | 'ethereum'
+  | 'zero';
 
 export interface SwapRequest {
   user_id: string;

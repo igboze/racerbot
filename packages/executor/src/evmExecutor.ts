@@ -19,6 +19,9 @@ import {
   toTokenUnits,
   distributeTradeFeeRewards,
   isElysiumPadVenue,
+  getEvmNativeSymbol,
+  getEvmExplorerUrl,
+  getDefaultRouter,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -69,7 +72,7 @@ export async function executeEvmSwap(
   if (chain === 'elysium') {
     throw new Error('RacerBot trades Kleos, RonsPad, Ascend and Montra coins on Elysium. This token is not one of them.');
   }
-  const isTestnet = process.env.HYPEREVM_TESTNET === 'true';
+  const isTestnet = chain === 'hyperevm' ? process.env.HYPEREVM_TESTNET === 'true' : false;
   const { user_id, token_in, token_out, amount_in, slippage_pct = 2 } = event;
 
   onProgress?.(`routing_${chain}`);
@@ -90,7 +93,14 @@ export async function executeEvmSwap(
   const provider = getEvmProvider(chain, isTestnet);
   const signer = getEvmWalletFromEncrypted(userKeyEnc, MASTER_KEY, provider);
 
-  const isBuy = token_in.toUpperCase() === HYPE_SYMBOL || token_in === 'native' || token_in === ethers.ZeroAddress;
+  const nativeSym = getEvmNativeSymbol(chain);
+  const isBuy =
+    token_in.toUpperCase() === nativeSym ||
+    token_in.toUpperCase() === 'ETH' ||
+    token_in.toUpperCase() === 'HYPE' ||
+    token_in.toUpperCase() === 'ZRO' ||
+    token_in === 'native' ||
+    token_in === ethers.ZeroAddress;
   const targetTokenAddress = isBuy ? token_out : token_in;
 
   const tokenInfo = await getErc20TokenInfo(targetTokenAddress, chain, isTestnet);
@@ -102,13 +112,16 @@ export async function executeEvmSwap(
   let wethAddress: string;
   try {
     ({ address: routerAddress, weth: wethAddress } = await resolveV2Router(
-      chain, isTestnet, HYPEREVM_DEFAULT_ROUTER));
+      chain,
+      isTestnet,
+      chain === 'hyperevm' ? HYPEREVM_DEFAULT_ROUTER : undefined
+    ));
   } catch (err: any) {
     return { txHash: '', success: false, chain, reason: `No DEX router available on ${chain}: ${err?.message}`, tokenSymbol, tokenName };
   }
   const noPool = (): EvmSwapExecutionResult => ({
     txHash: '', success: false, chain, tokenSymbol, tokenName,
-    reason: `No HyperSwap V2 pool with HYPE liquidity for ${tokenSymbol} yet. Nothing was spent.`,
+    reason: `No DEX pool with ${nativeSym} liquidity for ${tokenSymbol} on ${chain} yet. Nothing was spent.`,
   });
 
   // Pre-flight Honeypot Simulation Check
@@ -126,11 +139,11 @@ export async function executeEvmSwap(
   }
 
   if (isBuy) {
-    // ── BUY: Native HYPE -> Token ──────────────────────────────────────────
+    // ── BUY: Native Currency -> Token ──────────────────────────────────────────
     onProgress?.('preparing_buy');
 
     const requestedHypeIn = ethers.parseEther(String(amount_in));
-    const gasReserve = ethers.parseEther('0.002'); // Auto-reserve 0.002 HYPE for gas
+    const gasReserve = ethers.parseEther('0.001'); // Auto-reserve 0.001 native for gas
     const userBalance = await provider.getBalance(userAddress);
 
     if (userBalance < requestedHypeIn) {
@@ -138,7 +151,7 @@ export async function executeEvmSwap(
         txHash: '',
         success: false,
         chain,
-        reason: `Insufficient HYPE balance. Have ${ethers.formatEther(userBalance)} HYPE, required ${amount_in} HYPE.`,
+        reason: `Insufficient ${nativeSym} balance. Have ${ethers.formatEther(userBalance)} ${nativeSym}, required ${amount_in} ${nativeSym}.`,
         tokenSymbol,
         tokenName,
       };
@@ -241,7 +254,7 @@ export async function executeEvmSwap(
       }
     }
 
-    const baseExplorer = HYPEREVM_EXPLORER_URL;
+    const explorerUrl = getEvmExplorerUrl(chain, txHash);
 
     return {
       txHash,
@@ -253,10 +266,10 @@ export async function executeEvmSwap(
       tokenQty: tokensBought,
       priceHype,
       hypeSpentOrReceived: Number(ethers.formatEther(actualHypeIn)),
-      explorerUrl: `${baseExplorer}/tx/${txHash}`,
+      explorerUrl,
     };
   } else {
-    // ── SELL: Token -> Native HYPE ─────────────────────────────────────────
+    // ── SELL: Token -> Native Currency ─────────────────────────────────────────
     onProgress?.('preparing_sell');
 
     const tokenContract = new ethers.Contract(targetTokenAddress, ERC20_ABI, signer);
@@ -344,7 +357,7 @@ export async function executeEvmSwap(
       }
     }
 
-    const baseExplorer = HYPEREVM_EXPLORER_URL;
+    const explorerUrl = getEvmExplorerUrl(chain, txHash);
 
     return {
       txHash,
@@ -356,7 +369,7 @@ export async function executeEvmSwap(
       tokenQty: soldQty,
       priceHype,
       hypeSpentOrReceived: receivedHype,
-      explorerUrl: `${baseExplorer}/tx/${txHash}`,
+      explorerUrl,
     };
   }
 }

@@ -1,5 +1,5 @@
 import type { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, isSolanaAddress, type NotifyUserEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, isSolanaAddress, type NotifyUserEvent, type SupportedChain } from '@racerbot/shared';
 import { getUserById } from '@racerbot/db';
 import { executeFleetBundleBuy, executeFleetBundleSell } from './raceFleet.js';
 import { shortenTrackerAlertMarkup } from './copyLinks.js';
@@ -795,7 +795,7 @@ export async function notifyTokenDeposit(
     tokenName?: string;
     amountFormatted: string;
     address: string;
-    chain?: 'near' | 'sui' | 'solana' | 'hyperevm' | 'elysium';
+    chain?: SupportedChain;
     /** Position created for the deposit, so the alert can open its details directly. */
     positionId?: string;
   }

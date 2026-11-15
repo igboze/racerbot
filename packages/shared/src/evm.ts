@@ -22,9 +22,19 @@ export const HYPEREVM_MAINNET_CHAIN_ID = 999;
 export const HYPEREVM_TESTNET_CHAIN_ID = 998;
 export const ELYSIUM_TESTNET_CHAIN_ID = 99801;
 export const ELYSIUM_MAINNET_CHAIN_ID = 99901;
+export const BASE_MAINNET_CHAIN_ID = 8453;
+export const BASE_TESTNET_CHAIN_ID = 84532;
+export const ARBITRUM_MAINNET_CHAIN_ID = 42161;
+export const ARBITRUM_TESTNET_CHAIN_ID = 421614;
+export const ETHEREUM_MAINNET_CHAIN_ID = 1;
+export const ETHEREUM_TESTNET_CHAIN_ID = 11155111;
+export const ZERO_CHAIN_MAINNET_CHAIN_ID = 4242;
+export const ZERO_CHAIN_TESTNET_CHAIN_ID = 40001;
 
 export const HYPE_SYMBOL = 'HYPE';
 export const HYPE_DECIMALS = 18;
+export const ETH_SYMBOL = 'ETH';
+export const ZRO_SYMBOL = 'ZRO';
 
 // Canonical RPC Endpoints
 export const HYPEREVM_MAINNET_RPC = 'https://rpc.hyperliquid.xyz/evm';
@@ -33,6 +43,10 @@ export const ELYSIUM_TESTNET_RPC = 'https://testnet-rpc.elysium.kinetiq.xyz';
 // Elysium mainnet (99901), where Kleos runs: Kinetiq's public RPC (sequencer open since 2026-11-09).
 // rpc.thekleos.xyz/rpc was the pre-launch Kleos relay; it still answers but is a third party.
 export const ELYSIUM_MAINNET_RPC = 'https://rpc.elysium.kinetiq.xyz';
+export const BASE_MAINNET_RPC = 'https://mainnet.base.org';
+export const ARBITRUM_MAINNET_RPC = 'https://arb1.arbitrum.io/rpc';
+export const ETHEREUM_MAINNET_RPC = 'https://eth.llamarpc.com';
+export const ZERO_MAINNET_RPC = 'https://rpc.zero.network';
 export const KLEOS_TOKEN_URL = 'https://www.thekleos.xyz/token';
 
 // Precompiles & System Contracts
@@ -42,6 +56,11 @@ export const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
 // Explorers
 export const HYPEREVM_EXPLORER_URL = 'https://hypurrscan.io';
 export const ELYSIUM_TESTNET_EXPLORER_URL = 'https://elysium.kinetiq.xyz/testnet-explorer';
+export const ELYSIUM_MAINNET_EXPLORER_URL = 'https://explorer.elysium.kinetiq.xyz';
+export const BASE_EXPLORER_URL = 'https://basescan.org';
+export const ARBITRUM_EXPLORER_URL = 'https://arbiscan.io';
+export const ETHEREUM_EXPLORER_URL = 'https://etherscan.io';
+export const ZERO_EXPLORER_URL = 'https://zeroscan.io';
 
 // Default EVM Treasury Wallet for platform fees
 export const DEFAULT_EVM_TREASURY_ADDRESS = '0xb1f9551E64e1addF18462B09f04E14DC131451b1';
@@ -51,11 +70,61 @@ export const EVM_PLATFORM_FEE_BPS = 150n;
 export const ELYSIUM_SELL_FEE_BPS = 200n;
 export const EVM_BPS_DIVISOR = 10000n;
 
-export type EvmChain = 'hyperevm' | 'elysium';
+export type EvmChain = 'hyperevm' | 'elysium' | 'base' | 'arbitrum' | 'ethereum' | 'zero';
 
-/** HyperEVM and Elysium positions and fills store human token amounts ("423000.5"), not raw units */
+/** Supported EVM chains for trading and balances */
 export function isEvmChainName(chain: unknown): chain is EvmChain {
-  return chain === 'hyperevm' || chain === 'elysium';
+  return (
+    chain === 'hyperevm' ||
+    chain === 'elysium' ||
+    chain === 'base' ||
+    chain === 'arbitrum' ||
+    chain === 'ethereum' ||
+    chain === 'zero'
+  );
+}
+
+export function getEvmNativeSymbol(chain: EvmChain): string {
+  switch (chain) {
+    case 'zero':
+      return ZRO_SYMBOL;
+    case 'base':
+    case 'arbitrum':
+    case 'ethereum':
+      return ETH_SYMBOL;
+    case 'hyperevm':
+    case 'elysium':
+    default:
+      return HYPE_SYMBOL;
+  }
+}
+
+export function getEvmExplorerUrl(chain: EvmChain, txHashOrAddress?: string): string {
+  let base: string;
+  switch (chain) {
+    case 'base':
+      base = BASE_EXPLORER_URL;
+      break;
+    case 'arbitrum':
+      base = ARBITRUM_EXPLORER_URL;
+      break;
+    case 'ethereum':
+      base = ETHEREUM_EXPLORER_URL;
+      break;
+    case 'zero':
+      base = ZERO_EXPLORER_URL;
+      break;
+    case 'elysium':
+      base = ELYSIUM_MAINNET_EXPLORER_URL;
+      break;
+    case 'hyperevm':
+    default:
+      base = HYPEREVM_EXPLORER_URL;
+      break;
+  }
+  if (!txHashOrAddress) return base;
+  const isTx = txHashOrAddress.length === 66 || txHashOrAddress.startsWith('0x') && txHashOrAddress.length > 42;
+  return `${base}/${isTx ? 'tx' : 'address'}/${txHashOrAddress}`;
 }
 
 /**
@@ -115,19 +184,67 @@ export const HYPERSWAP_V2_ROUTER = '0xb4a9C4e6Ea8E2191d2FA5B380452a634Fb21240A';
 /** Wrapped HYPE on HyperEVM mainnet */
 export const WHYPE_ADDRESS = '0x5555555555555555555555555555555555555555';
 
+export const BASE_DEFAULT_ROUTER = '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24';
+export const WETH_BASE = '0x4200000000000000000000000000000000000006';
+
+export const ARBITRUM_DEFAULT_ROUTER = '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506';
+export const WETH_ARBITRUM = '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1';
+
+export const ETHEREUM_DEFAULT_ROUTER = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D';
+export const WETH_ETHEREUM = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
+
+export const ZERO_DEFAULT_ROUTER = '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24';
+export const WZRO_ZERO = '0x6985884C4392D348587B19cb9eAAf157F13271cd';
+
+export function getDefaultRouter(chain: EvmChain): string {
+  switch (chain) {
+    case 'base':
+      return process.env.BASE_ROUTER_ADDRESS || BASE_DEFAULT_ROUTER;
+    case 'arbitrum':
+      return process.env.ARBITRUM_ROUTER_ADDRESS || ARBITRUM_DEFAULT_ROUTER;
+    case 'ethereum':
+      return process.env.ETHEREUM_ROUTER_ADDRESS || ETHEREUM_DEFAULT_ROUTER;
+    case 'zero':
+      return process.env.ZERO_ROUTER_ADDRESS || ZERO_DEFAULT_ROUTER;
+    case 'elysium':
+      return process.env.ELYSIUM_ROUTER_ADDRESS || '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
+    case 'hyperevm':
+    default:
+      return process.env.HYPEREVM_ROUTER_ADDRESS || HYPERSWAP_V2_ROUTER;
+  }
+}
+
+export function getDefaultWrappedNative(chain: EvmChain): string {
+  switch (chain) {
+    case 'base':
+      return WETH_BASE;
+    case 'arbitrum':
+      return WETH_ARBITRUM;
+    case 'ethereum':
+      return WETH_ETHEREUM;
+    case 'zero':
+      return process.env.ZERO_WZRO_ADDRESS || WZRO_ZERO;
+    case 'elysium':
+    case 'hyperevm':
+    default:
+      return WHYPE_ADDRESS;
+  }
+}
+
 const v2RouterCache = new Map<string, { address: string; weth: string }>();
 
 /**
  * A Uniswap-V2-style router the executor can use, with its wrapped native token. The preferred
- * router is checked first: a V3 router (no WETH()) cannot run V2 swaps, so on HyperEVM mainnet
- * it falls back to HyperSwap V2 instead of failing every trade.
+ * router is checked first: a V3 router (no WETH()) cannot run V2 swaps, so it falls back to
+ * the chain's canonical default V2 router instead of failing every trade.
  */
 export async function resolveV2Router(
   chain: EvmChain,
   isTestnet: boolean,
-  preferred: string
+  preferred?: string
 ): Promise<{ address: string; weth: string }> {
-  const key = `${chain}:${isTestnet}:${preferred.toLowerCase()}`;
+  const target = preferred || getDefaultRouter(chain);
+  const key = `${chain}:${isTestnet}:${target.toLowerCase()}`;
   const cached = v2RouterCache.get(key);
   if (cached) return cached;
   const provider = getEvmProvider(chain, isTestnet);
@@ -136,13 +253,17 @@ export async function resolveV2Router(
 
   let resolved: { address: string; weth: string };
   try {
-    resolved = { address: preferred, weth: await weth(preferred) };
+    resolved = { address: target, weth: await weth(target) };
   } catch (err: any) {
-    if (chain !== 'hyperevm' || isTestnet || preferred.toLowerCase() === HYPERSWAP_V2_ROUTER.toLowerCase()) {
-      throw new Error(`Router ${preferred} is not a V2 router (WETH() failed): ${err?.shortMessage || err?.message}`);
+    const fallbackRouter = getDefaultRouter(chain);
+    const fallbackWeth = getDefaultWrappedNative(chain);
+    if (target.toLowerCase() === fallbackRouter.toLowerCase()) {
+      // Direct fallback to known wrapped native
+      resolved = { address: fallbackRouter, weth: fallbackWeth };
+    } else {
+      logger.warn(`Router ${target} on ${chain} has no WETH(); using default V2 router ${fallbackRouter}`);
+      resolved = { address: fallbackRouter, weth: await weth(fallbackRouter).catch(() => fallbackWeth) };
     }
-    logger.warn(`Router ${preferred} has no WETH(); using HyperSwap V2 ${HYPERSWAP_V2_ROUTER}`);
-    resolved = { address: HYPERSWAP_V2_ROUTER, weth: await weth(HYPERSWAP_V2_ROUTER).catch(() => WHYPE_ADDRESS) };
   }
   v2RouterCache.set(key, resolved);
   return resolved;
@@ -186,23 +307,53 @@ export const COREPAD_ROUTER_ABI = [
 const providerCache = new Map<number, ethers.JsonRpcProvider>();
 
 export function getEvmRpcUrl(chain: EvmChain, isTestnet = false): string {
-  if (chain === 'hyperevm') {
-    if (isTestnet) {
-      return process.env.HYPEREVM_TESTNET_RPC_URL || HYPEREVM_TESTNET_RPC;
-    }
-    return process.env.HYPEREVM_RPC_URL || HYPEREVM_MAINNET_RPC;
+  switch (chain) {
+    case 'hyperevm':
+      return isTestnet
+        ? process.env.HYPEREVM_TESTNET_RPC_URL || HYPEREVM_TESTNET_RPC
+        : process.env.HYPEREVM_RPC_URL || HYPEREVM_MAINNET_RPC;
+    case 'elysium':
+      return isTestnet
+        ? process.env.ELYSIUM_RPC_URL || ELYSIUM_TESTNET_RPC
+        : process.env.ELYSIUM_MAINNET_RPC_URL || ELYSIUM_MAINNET_RPC;
+    case 'base':
+      return isTestnet
+        ? process.env.BASE_TESTNET_RPC_URL || 'https://sepolia.base.org'
+        : process.env.BASE_RPC_URL || BASE_MAINNET_RPC;
+    case 'arbitrum':
+      return isTestnet
+        ? process.env.ARBITRUM_TESTNET_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc'
+        : process.env.ARBITRUM_RPC_URL || ARBITRUM_MAINNET_RPC;
+    case 'ethereum':
+      return isTestnet
+        ? process.env.ETHEREUM_TESTNET_RPC_URL || 'https://rpc.sepolia.org'
+        : process.env.ETHEREUM_RPC_URL || ETHEREUM_MAINNET_RPC;
+    case 'zero':
+      return isTestnet
+        ? process.env.ZERO_CHAIN_TESTNET_RPC_URL || 'https://rpc-testnet.zero.network'
+        : process.env.ZERO_CHAIN_RPC_URL || process.env.ZERO_RPC_URL || ZERO_MAINNET_RPC;
+    default:
+      return HYPEREVM_MAINNET_RPC;
   }
-  if (isTestnet) {
-    return process.env.ELYSIUM_RPC_URL || ELYSIUM_TESTNET_RPC;
-  }
-  return process.env.ELYSIUM_MAINNET_RPC_URL || ELYSIUM_MAINNET_RPC;
 }
 
 export function getEvmChainId(chain: EvmChain, isTestnet = false): number {
-  if (chain === 'hyperevm') {
-    return isTestnet ? HYPEREVM_TESTNET_CHAIN_ID : HYPEREVM_MAINNET_CHAIN_ID;
+  switch (chain) {
+    case 'hyperevm':
+      return isTestnet ? HYPEREVM_TESTNET_CHAIN_ID : HYPEREVM_MAINNET_CHAIN_ID;
+    case 'elysium':
+      return isTestnet ? ELYSIUM_TESTNET_CHAIN_ID : ELYSIUM_MAINNET_CHAIN_ID;
+    case 'base':
+      return isTestnet ? BASE_TESTNET_CHAIN_ID : BASE_MAINNET_CHAIN_ID;
+    case 'arbitrum':
+      return isTestnet ? ARBITRUM_TESTNET_CHAIN_ID : ARBITRUM_MAINNET_CHAIN_ID;
+    case 'ethereum':
+      return isTestnet ? ETHEREUM_TESTNET_CHAIN_ID : ETHEREUM_MAINNET_CHAIN_ID;
+    case 'zero':
+      return isTestnet ? ZERO_CHAIN_TESTNET_CHAIN_ID : ZERO_CHAIN_MAINNET_CHAIN_ID;
+    default:
+      return HYPEREVM_MAINNET_CHAIN_ID;
   }
-  return isTestnet ? ELYSIUM_TESTNET_CHAIN_ID : ELYSIUM_MAINNET_CHAIN_ID;
 }
 
 /** Elysium mainnet RPCs, tried in order: the configured one(s) first, then Kinetiq's and Kleos's public nodes */
@@ -322,13 +473,14 @@ export function isValidEvmAddress(address: string): boolean {
 // ── Balance & Metadata Queries ──────────────────────────────────────────────
 
 /**
- * Fetches the native HYPE balance of an EVM address on HyperEVM or Elysium.
+ * Fetches native currency balance (HYPE, ETH, or ZRO) of an EVM address on any supported EVM chain.
  */
-export async function getHypeBalance(
+export async function getEvmNativeBalance(
   address: string,
   chain: EvmChain,
   isTestnet = false
-): Promise<{ raw: bigint; formatted: string; human: number }> {
+): Promise<{ raw: bigint; formatted: string; human: number; symbol: string }> {
+  const symbol = getEvmNativeSymbol(chain);
   try {
     const provider = getEvmProvider(chain, isTestnet);
     const raw = await provider.getBalance(address);
@@ -337,11 +489,24 @@ export async function getHypeBalance(
       raw,
       formatted,
       human: parseFloat(formatted),
+      symbol,
     };
   } catch (err: any) {
-    logger.warn(`Failed to fetch HYPE balance for ${address} on ${chain}`, { error: err?.message });
-    return { raw: 0n, formatted: '0.0', human: 0.0 };
+    logger.warn(`Failed to fetch native ${symbol} balance for ${address} on ${chain}`, { error: err?.message });
+    return { raw: 0n, formatted: '0.0', human: 0.0, symbol };
   }
+}
+
+/**
+ * Fetches the native HYPE balance of an EVM address on HyperEVM or Elysium.
+ */
+export async function getHypeBalance(
+  address: string,
+  chain: EvmChain,
+  isTestnet = false
+): Promise<{ raw: bigint; formatted: string; human: number }> {
+  const res = await getEvmNativeBalance(address, chain, isTestnet);
+  return { raw: res.raw, formatted: res.formatted, human: res.human };
 }
 
 /**
@@ -617,4 +782,64 @@ export async function getHypeUsdPrice(): Promise<number> {
   } catch { /* use last known */ }
 
   return cachedHypeUsdPrice || 74.0;
+}
+
+let cachedZroUsdPrice = 3.85;
+let lastZroUsdPriceTime = 0;
+
+export async function getZroUsdPrice(): Promise<number> {
+  const now = Date.now();
+  if (now - lastZroUsdPriceTime < 30_000 && cachedZroUsdPrice > 0) {
+    return cachedZroUsdPrice;
+  }
+
+  // 1. Primary: Binance spot ticker
+  try {
+    const res = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=ZROUSDT', {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const val = parseFloat(data?.price || '0');
+      if (val > 0) {
+        cachedZroUsdPrice = val;
+        lastZroUsdPriceTime = now;
+        return cachedZroUsdPrice;
+      }
+    }
+  } catch { /* fallback */ }
+
+  // 2. Secondary: Bybit spot ticker
+  try {
+    const res = await fetch('https://api.bybit.com/v5/market/tickers?category=spot&symbol=ZROUSDT', {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const val = parseFloat(data?.result?.list?.[0]?.lastPrice || '0');
+      if (val > 0) {
+        cachedZroUsdPrice = val;
+        lastZroUsdPriceTime = now;
+        return cachedZroUsdPrice;
+      }
+    }
+  } catch { /* fallback */ }
+
+  // 3. Tertiary: DexScreener ZRO on Ethereum
+  try {
+    const res = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x6985884C4392D348587B19cb9eAAf157F13271cd', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const val = parseFloat(data?.pairs?.[0]?.priceUsd || '0');
+      if (val > 0) {
+        cachedZroUsdPrice = val;
+        lastZroUsdPriceTime = now;
+        return cachedZroUsdPrice;
+      }
+    }
+  } catch { /* use last known */ }
+
+  return cachedZroUsdPrice || 3.85;
 }
