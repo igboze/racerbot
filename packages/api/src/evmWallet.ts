@@ -17,6 +17,7 @@ import {
   ERC20_ABI,
   elysiumInboxMaxFeePerGas,
   sendElysiumTransaction,
+  getEvmNativeSymbol,
   type EvmChain,
 } from '@racerbot/shared';
 import {
@@ -71,15 +72,15 @@ export function parseEvmSecret(input: string): ethers.HDNodeWallet | ethers.Wall
 export function evmRecipientProblem(dest: string, ownAddress?: string | null): string | null {
   const d = (dest || '').trim();
   if (/^0x[0-9a-fA-F]{41,64}$/.test(d)) {
-    return 'That looks like a Starknet or Sui address (longer than 40 hex characters). HyperEVM, Elysium and Kleos ' +
+    return 'That looks like a Starknet or Sui address (longer than 40 hex characters). EVM ' +
       'funds can only go to an EVM address: 0x followed by exactly 40 hex characters, like a MetaMask or Rabby address. ' +
       'Sending there would lose the funds.';
   }
   if (/\.near$/i.test(d) || /^[0-9a-f]{64}$/i.test(d)) {
-    return 'That is a NEAR account. HyperEVM, Elysium and Kleos funds can only go to an EVM address (0x + 40 hex characters).';
+    return 'That is a NEAR account. EVM funds can only go to an EVM address (0x + 40 hex characters).';
   }
   if (!d.startsWith('0x') && isSolanaAddress(d)) {
-    return 'That is a Solana address. HyperEVM, Elysium and Kleos funds can only go to an EVM address (0x + 40 hex characters).';
+    return 'That is a Solana address. EVM funds can only go to an EVM address (0x + 40 hex characters).';
   }
   if (!/^0x[0-9a-fA-F]{40}$/.test(d)) {
     return 'That is not an EVM address. It must be 0x followed by exactly 40 hex characters.';
@@ -186,41 +187,48 @@ export async function planEvmTokenSend(user: UserRecord, tokenInput: string, to:
     if (balance <= 0n) continue;
     if (await isContract(provider, recipient)) {
       throw new Error(
-        `The destination is a contract on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}, not a wallet. ` +
+        `The destination is a contract on ${chain}, not a wallet. ` +
         'Check the order: address first, then amount, then token.'
       );
     }
     const amountRaw = amount === 'all' ? balance : toTokenUnits(amount, decimals);
     if (amountRaw <= 0n) throw new Error('Amount must be greater than 0.');
     if (amountRaw > balance) {
-      throw new Error(`You hold ${ethers.formatUnits(balance, decimals)} ${symbol} on ${chain === 'elysium' ? 'Elysium' : 'HyperEVM'}.`);
+      throw new Error(`You hold ${ethers.formatUnits(balance, decimals)} ${symbol} on ${chain}.`);
     }
     return { chain, token, symbol, decimals, amountRaw, amountDisplay: ethers.formatUnits(amountRaw, decimals), to: recipient };
   }
-  throw new Error('Your EVM wallet holds none of that token on HyperEVM or Elysium. Check the token address.');
+  throw new Error('Your EVM wallet holds none of that token across supported EVM chains. Check the token address.');
 }
 
-/** Sends a planned ERC-20 transfer directly on HyperEVM or Elysium (the HyperEVM inbox when ELYSIUM_SEND_MODE=inbox) */
+/** Sends a planned ERC-20 transfer directly on the target EVM chain (or HyperEVM inbox when targeting Elysium with ELYSIUM_SEND_MODE=inbox) */
 export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Promise<{ txHash: string; elysiumTxHash?: string; viaInbox?: boolean }> {
   if (!user.evm_address || !user.evm_private_key_enc) throw new Error('EVM wallet not configured.');
   // Re-check right before signing: the plan may have waited on a confirm button
   const problem = evmRecipientProblem(plan.to, user.evm_address);
   if (problem) throw new Error(problem);
 
-  const hyperevm = getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true');
-  const l1Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, hyperevm);
   const data = new ethers.Interface(ERC20_ABI).encodeFunctionData('transfer', [plan.to, plan.amountRaw]);
 
-  if (plan.chain === 'hyperevm') {
-    const hype = await hyperevm.getBalance(user.evm_address);
-    if (hype < ethers.parseEther('0.0005')) throw new Error('You need a little HYPE on HyperEVM (about 0.0005) for gas.');
-    const tx = await l1Signer.sendTransaction({ to: plan.token, data, gasLimit: HYPEREVM_TOKEN_TRANSFER_GAS });
+  if (plan.chain !== 'elysium') {
+    const isTestnet = plan.chain === 'hyperevm' ? (process.env.HYPEREVM_TESTNET === 'true') : false;
+    const provider = getEvmProvider(plan.chain, isTestnet);
+    const signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, provider);
+    const nativeBal = await provider.getBalance(user.evm_address);
+    const nativeSym = getEvmNativeSymbol(plan.chain);
+    const minGas = plan.chain === 'ethereum' ? ethers.parseEther('0.003') : ethers.parseEther('0.0005');
+    if (nativeBal < minGas) {
+      throw new Error(`You need a little ${nativeSym} on ${plan.chain} (about ${ethers.formatEther(minGas)}) for gas.`);
+    }
+    const tx = await signer.sendTransaction({ to: plan.token, data, gasLimit: HYPEREVM_TOKEN_TRANSFER_GAS });
     const receipt = await tx.wait(1);
     if (receipt?.status !== 1) throw new Error('The token transfer reverted. Nothing was sent.');
     return { txHash: receipt.hash };
   }
 
   const elysium = getEvmProvider('elysium', false);
+  const hyperevm = getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true');
+  const l1Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, hyperevm);
   const l2Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, elysium);
   const [l2Balance, l2Block] = await Promise.all([elysium.getBalance(user.evm_address), elysium.getBlock('latest')]);
   const maxFeePerGas = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);

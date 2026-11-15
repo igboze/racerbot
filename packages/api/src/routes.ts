@@ -9908,6 +9908,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       if (send.kind === 'token') {
         const res = await sendEvmToken(user, send.plan);
         const sym = sanitizeMd(send.plan.symbol);
+        const chainExplorer = getEvmExplorerUrl(send.plan.chain);
         await ctx.reply(
           send.plan.chain === 'elysium'
             ? `✅ *Token Transfer Sent on Elysium!*\n\n💸 Amount: \`${send.plan.amountDisplay} ${sym}\`\n📬 To: \`${send.plan.to}\`\n\n` +
@@ -9915,7 +9916,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
                 ? `It entered the Elysium inbox and usually lands within a few minutes.\n` +
                   `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
                 : `🔗 [View on Elysium](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`)
-            : `✅ *Token Sent!*\n\n💸 Amount: \`${send.plan.amountDisplay} ${sym}\`\n📬 To: \`${send.plan.to}\`\n🔗 [View on Explorer](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash})`,
+            : `✅ *Token Sent!*\n\n⛓️ Chain: *${send.plan.chain.toUpperCase()}*\n💸 Amount: \`${send.plan.amountDisplay} ${sym}\`\n📬 To: \`${send.plan.to}\`\n🔗 [View on Explorer](${chainExplorer}/tx/${res.txHash})`,
           opts
         );
         return;

@@ -544,9 +544,9 @@ export async function getBatchTokenInfo(
   const toFetch = forceRefresh
     ? tokenAddresses
     : missingFromMem.filter((addr) => {
-        const existing = result.get(addr);
-        return !existing || !(parseFloat(existing.price || '0') > 0);
-      });
+      const existing = result.get(addr);
+      return !existing || !(parseFloat(existing.price || '0') > 0);
+    });
 
   if (toFetch.length > 0) {
     const timeoutMs = forceRefresh ? 4500 : 3000;
@@ -3262,11 +3262,12 @@ export async function executeEvmTrade(
   slippagePct = 2
 ): Promise<EvmSwapExecutionResult> {
   const ensuredUser = await ensureUserEvmWallet(user);
+  const nativeSym = getEvmNativeSymbol(chain);
   return await executeEvmSwap({
     type: 'execute_swap',
     user_id: ensuredUser.id,
-    token_in: side === 'buy' ? HYPE_SYMBOL : tokenAddress,
-    token_out: side === 'buy' ? tokenAddress : HYPE_SYMBOL,
+    token_in: side === 'buy' ? nativeSym : tokenAddress,
+    token_out: side === 'buy' ? tokenAddress : nativeSym,
     amount_in: String(amount),
     min_amount_out: '0',
     venue: `${chain}_dex` as any,

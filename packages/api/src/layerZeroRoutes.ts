@@ -134,25 +134,25 @@ export async function buildBridgeMenu(
   const buttons: any[] = [
     // ── 1-Click Bridge to Zero Network (All supported chains -> Zero) ──
     [
-      cb(sourceChain === 'base' && destChain === 'zero' ? '✅ 🔷 Base ➔ 🅾️ Zero' : '🔷 Base ➔ 🅾️ Zero', 'lz_route:base:zero'),
-      cb(sourceChain === 'arbitrum' && destChain === 'zero' ? '✅ 🔵 Arb ➔ 🅾️ Zero' : '🔵 Arb ➔ 🅾️ Zero', 'lz_route:arbitrum:zero'),
+      cb(sourceChain === 'base' && destChain === 'zero' ? '✅ 🔷 Base ➔ 🅾️ Zero' : '🔷 Base ➔ 🅾️ Zero', `lz_route:base:zero:${asset}:${amount}`),
+      cb(sourceChain === 'arbitrum' && destChain === 'zero' ? '✅ 🔵 Arb ➔ 🅾️ Zero' : '🔵 Arb ➔ 🅾️ Zero', `lz_route:arbitrum:zero:${asset}:${amount}`),
     ],
     [
-      cb(sourceChain === 'ethereum' && destChain === 'zero' ? '✅ ⟠ Eth ➔ 🅾️ Zero' : '⟠ Eth ➔ 🅾️ Zero', 'lz_route:ethereum:zero'),
-      cb(sourceChain === 'optimism' && destChain === 'zero' ? '✅ 🔴 OP ➔ 🅾️ Zero' : '🔴 OP ➔ 🅾️ Zero', 'lz_route:optimism:zero'),
+      cb(sourceChain === 'ethereum' && destChain === 'zero' ? '✅ ⟠ Eth ➔ 🅾️ Zero' : '⟠ Eth ➔ 🅾️ Zero', `lz_route:ethereum:zero:${asset}:${amount}`),
+      cb(sourceChain === 'optimism' && destChain === 'zero' ? '✅ 🔴 OP ➔ 🅾️ Zero' : '🔴 OP ➔ 🅾️ Zero', `lz_route:optimism:zero:${asset}:${amount}`),
     ],
     [
-      cb(sourceChain === 'bsc' && destChain === 'zero' ? '✅ 🟡 BSC ➔ 🅾️ Zero' : '🟡 BSC ➔ 🅾️ Zero', 'lz_route:bsc:zero'),
-      cb(sourceChain === 'polygon' && destChain === 'zero' ? '✅ 🟣 Polygon ➔ 🅾️ Zero' : '🟣 Polygon ➔ 🅾️ Zero', 'lz_route:polygon:zero'),
+      cb(sourceChain === 'bsc' && destChain === 'zero' ? '✅ 🟡 BSC ➔ 🅾️ Zero' : '🟡 BSC ➔ 🅾️ Zero', `lz_route:bsc:zero:${asset}:${amount}`),
+      cb(sourceChain === 'polygon' && destChain === 'zero' ? '✅ 🟣 Polygon ➔ 🅾️ Zero' : '🟣 Polygon ➔ 🅾️ Zero', `lz_route:polygon:zero:${asset}:${amount}`),
     ],
     // ── Bridge from Zero Network or L2 Cross-Chain ──
     [
-      cb(sourceChain === 'zero' && destChain === 'base' ? '✅ 🅾️ Zero ➔ 🔷 Base' : '🅾️ Zero ➔ 🔷 Base', 'lz_route:zero:base'),
-      cb(sourceChain === 'zero' && destChain === 'arbitrum' ? '✅ 🅾️ Zero ➔ 🔵 Arb' : '🅾️ Zero ➔ 🔵 Arb', 'lz_route:zero:arbitrum'),
+      cb(sourceChain === 'zero' && destChain === 'base' ? '✅ 🅾️ Zero ➔ 🔷 Base' : '🅾️ Zero ➔ 🔷 Base', `lz_route:zero:base:${asset}:${amount}`),
+      cb(sourceChain === 'zero' && destChain === 'arbitrum' ? '✅ 🅾️ Zero ➔ 🔵 Arb' : '🅾️ Zero ➔ 🔵 Arb', `lz_route:zero:arbitrum:${asset}:${amount}`),
     ],
     [
-      cb(sourceChain === 'base' && destChain === 'arbitrum' ? '✅ 🔷 Base ➔ 🔵 Arb' : '🔷 Base ➔ 🔵 Arb', 'lz_route:base:arbitrum'),
-      cb(sourceChain === 'arbitrum' && destChain === 'base' ? '✅ 🔵 Arb ➔ 🔷 Base' : '🔵 Arb ➔ 🔷 Base', 'lz_route:arbitrum:base'),
+      cb(sourceChain === 'base' && destChain === 'arbitrum' ? '✅ 🔷 Base ➔ 🔵 Arb' : '🔷 Base ➔ 🔵 Arb', `lz_route:base:arbitrum:${asset}:${amount}`),
+      cb(sourceChain === 'arbitrum' && destChain === 'base' ? '✅ 🔵 Arb ➔ 🔷 Base' : '🔵 Arb ➔ 🔷 Base', `lz_route:arbitrum:base:${asset}:${amount}`),
     ],
     // ── Interactive Custom Chain Selectors ──
     [
@@ -160,7 +160,7 @@ export async function buildBridgeMenu(
       cb(`🛬 To: ${destConfig.icon} ${destConfig.name}`, `lz_pick_dst:${sourceChain}:${destChain}:${asset}:${amount}`),
     ],
     [
-      cb(`🔄 Reverse Route (${destConfig.icon} ➔ ${sourceConfig.icon})`, `lz_route:${destChain}:${sourceChain}`),
+      cb(`🔄 Reverse Route (${destConfig.icon} ➔ ${sourceConfig.icon})`, `lz_route:${destChain}:${sourceChain}:${asset}:${amount}`),
     ],
     // ── Asset Selectors ──
     [
@@ -217,16 +217,23 @@ export function registerLayerZeroRoutes(bot: Telegraf<Context>): void {
   bot.action('menu_bridge', handleBridgeCommand);
 
   // ── Route Selector Action ─────────────────────────────────────────────────
-  bot.action(/^lz_route:([a-z0-9_]+):([a-z0-9_]+)$/, async (ctx) => {
+  bot.action(/^lz_route:([a-z0-9_]+):([a-z0-9_]+)(?::([A-Z0-9]+):([0-9.]+))?$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id;
     if (!telegramId) return;
 
     const sourceChain = (ctx as any).match[1] as LayerZeroChain;
     const destChain = (ctx as any).match[2] as LayerZeroChain;
+    const asset = (ctx as any).match[3] as StargateAsset | undefined;
+    const amount = (ctx as any).match[4] as string | undefined;
 
     try {
-      const menu = await buildBridgeMenu(telegramId, { sourceChain, destChain });
+      const menu = await buildBridgeMenu(telegramId, {
+        sourceChain,
+        destChain,
+        ...(asset ? { asset } : {}),
+        ...(amount ? { amount } : {}),
+      });
       await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => {});
     } catch (err: any) {
       await ctx.reply(`❌ ${err.message}`).catch(() => {});
@@ -248,7 +255,7 @@ export function registerLayerZeroRoutes(bot: Telegraf<Context>): void {
       .map((c) => {
         const conf = LZ_CHAINS[c];
         const isSelected = c === currentSrc;
-        return cb(`${isSelected ? '✅ ' : ''}${conf.icon} ${conf.name}`, `lz_route:${c}:${currentDest}`);
+        return cb(`${isSelected ? '✅ ' : ''}${conf.icon} ${conf.name}`, `lz_route:${c}:${currentDest}:${asset}:${amount}`);
       });
     for (let i = 0; i < chainButtons.length; i += 2) {
       buttons.push(chainButtons.slice(i, i + 2));
@@ -277,7 +284,7 @@ export function registerLayerZeroRoutes(bot: Telegraf<Context>): void {
       .map((c) => {
         const conf = LZ_CHAINS[c];
         const isSelected = c === currentDest;
-        return cb(`${isSelected ? '✅ ' : ''}${conf.icon} ${conf.name}`, `lz_route:${currentSrc}:${c}`);
+        return cb(`${isSelected ? '✅ ' : ''}${conf.icon} ${conf.name}`, `lz_route:${currentSrc}:${c}:${asset}:${amount}`);
       });
     for (let i = 0; i < chainButtons.length; i += 2) {
       buttons.push(chainButtons.slice(i, i + 2));
@@ -393,7 +400,7 @@ export function registerLayerZeroRoutes(bot: Telegraf<Context>): void {
         `🚀 <b>Sent:</b> <code>${result.amount} ${result.asset}</code>\n` +
         `🛣️ <b>Route:</b> ${sourceConfig.icon} ${sourceConfig.name} ➔ ${destConfig.icon} ${destConfig.name}\n` +
         `⏱️ <b>Est. Delivery:</b> ~${result.approxDurationSec} seconds\n` +
-        `💰 <b>Messaging Fee Paid:</b> ${result.nativeFee} ETH\n` +
+        `💰 <b>Messaging Fee Paid:</b> ${result.nativeFee} ${sourceConfig.nativeSymbol}\n` +
         `🔗 <b>Source Tx:</b> <code>${result.txHash}</code>\n\n` +
         `🔒 <b>Destination Sovereign EOA:</b>\n` +
         `<code>${escapeHtml(result.recipient)}</code>\n` +
