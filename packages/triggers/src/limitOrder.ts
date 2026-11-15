@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { ethers } from 'ethers';
 import {
   createRedis,
   CHANNELS,
@@ -16,6 +17,13 @@ import {
   solanaUiToRaw,
   SOL_MINT,
   SOLANA_MIN_RESERVE_LAMPORTS,
+  isEvmChainName,
+  isValidEvmAddress,
+  getEvmNativeSymbol,
+  getEvmProvider,
+  ERC20_ABI,
+  toTokenUnits,
+  type EvmChain,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -27,6 +35,7 @@ import {
   expirePastDueLimitOrders,
   getTokenCache,
   getUserById,
+  getActiveWallet,
   getActiveRaceFleetOrders,
   updateRaceFleetOrderStatus,
   getRaceFleetById,
@@ -273,6 +282,104 @@ async function executeSolanaLimitOrder(order: LimitOrderRecord, user: any, curre
   });
 }
 
+/**
+ * EVM limit order execution (Base, Arbitrum, Zero, HyperEVM, Elysium, Ethereum).
+ */
+async function executeEvmLimitOrder(order: LimitOrderRecord, user: any, currentPrice: number, currentMcap: number): Promise<void> {
+  const tokenCache = await getTokenCache(order.token_address).catch(() => null);
+  const chain: EvmChain = (isEvmChainName(order.chain)
+    ? order.chain
+    : (isEvmChainName(tokenCache?.chain) ? tokenCache.chain : 'base')) as EvmChain;
+
+  const activeWallet = await getActiveWallet(user.id, chain).catch(() => null);
+  const owner: string | null = activeWallet?.address || user.evm_address || null;
+  const symbol = tokenCache?.symbol || order.token_address.slice(0, 8);
+  const nativeSym = getEvmNativeSymbol(chain);
+
+  if (!owner) {
+    await markLimitOrderFailed(order.id, 'EVM wallet not set up');
+    await notifyLimit(user, 'limit_order_failed', { order_id: order.id, symbol, side: order.side, reason: 'EVM wallet not set up. Send /start.' });
+    return;
+  }
+
+  const userSlip = user?.slippage_pct ? Number(user.slippage_pct) : 0;
+  const defaultSlip = order.side === 'sell' && order.trigger_condition === 'lte' ? 5.0 : 3.0;
+  const slippagePct = order.max_slippage_pct || (userSlip > 0 ? userSlip : defaultSlip);
+
+  const provider = getEvmProvider(chain);
+
+  let amountInStr: string;
+
+  if (order.side === 'buy') {
+    amountInStr = order.amount_input.toString();
+    const balWei = await provider.getBalance(owner).catch(() => 0n);
+    const balNative = Number(ethers.formatEther(balWei));
+    const gasReserve = chain === 'zero' ? 0.01 : 0.0005;
+    const required = Number(order.amount_input) + gasReserve;
+
+    if (balNative < required) {
+      const reason = `Insufficient balance: needed ${required.toFixed(4)} ${nativeSym}, had ${balNative.toFixed(4)} ${nativeSym}`;
+      await markLimitOrderFailed(order.id, reason);
+      await notifyLimit(user, 'limit_order_failed', { order_id: order.id, symbol, side: 'buy', reason });
+      return;
+    }
+  } else {
+    // Sell: check ERC20 token balance
+    const tokenContract = new ethers.Contract(order.token_address, ERC20_ABI, provider);
+    const decimals = tokenCache?.decimals ?? Number(await tokenContract.decimals().catch(() => 18));
+    const balRaw: bigint = await tokenContract.balanceOf(owner).catch(() => 0n);
+
+    if (balRaw <= 0n) {
+      const reason = `No ${symbol} balance in wallet to sell`;
+      await markLimitOrderFailed(order.id, reason);
+      await notifyLimit(user, 'limit_order_failed', { order_id: order.id, symbol, side: 'sell', reason });
+      return;
+    }
+
+    let sellQtyRaw = balRaw;
+    if (order.sell_pct && order.sell_pct > 0 && order.sell_pct < 100) {
+      sellQtyRaw = (balRaw * BigInt(Math.round(order.sell_pct * 100))) / 10000n;
+    } else if (!order.sell_pct && order.amount_input > 0 && currentPrice > 0) {
+      const wantedTokens = Number(order.amount_input) / currentPrice;
+      const wantedRaw = toTokenUnits(wantedTokens, decimals);
+      if (wantedRaw > 0n && wantedRaw < balRaw) sellQtyRaw = wantedRaw;
+    }
+
+    if (sellQtyRaw <= 0n) {
+      await markLimitOrderFailed(order.id, 'Sell quantity computed to 0');
+      return;
+    }
+
+    amountInStr = ethers.formatUnits(sellQtyRaw, decimals);
+  }
+
+  const swapEvent: SwapEvent = {
+    type: 'execute_swap',
+    chain,
+    user_id: order.user_id,
+    token_in: order.side === 'buy' ? nativeSym : order.token_address,
+    token_out: order.side === 'buy' ? order.token_address : nativeSym,
+    amount_in: amountInStr,
+    min_amount_out: '1',
+    venue: `${chain}_dex`,
+    slippage_pct: slippagePct,
+    timestamp: Date.now(),
+    notify_user: true,
+  } as SwapEvent;
+
+  await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+  await markLimitOrderFilled(order.id, 'submitted', currentPrice);
+  await notifyLimit(user, 'limit_order_fill', {
+    order_id: order.id,
+    symbol,
+    side: order.side,
+    ...(order.side === 'buy' ? { amount_input: order.amount_input } : { sell_pct: order.sell_pct }),
+    current_price: currentPrice,
+    current_mcap: currentMcap,
+    unit: nativeSym,
+  });
+}
+
 export async function executeLimitOrder(order: LimitOrderRecord, currentPrice: number, currentMcap: number): Promise<void> {
   if (isSolanaToken(order.token_address)) {
     const solUser = await getUserById(order.user_id).catch(() => null);
@@ -281,6 +388,17 @@ export async function executeLimitOrder(order: LimitOrderRecord, currentPrice: n
       return;
     }
     await executeSolanaLimitOrder(order, solUser, currentPrice, currentMcap);
+    return;
+  }
+
+  const isEvm = isEvmChainName(order.chain) || (isValidEvmAddress(order.token_address) && order.chain !== 'starknet');
+  if (isEvm) {
+    const evmUser = await getUserById(order.user_id).catch(() => null);
+    if (!evmUser) {
+      await markLimitOrderFailed(order.id, 'User account not found');
+      return;
+    }
+    await executeEvmLimitOrder(order, evmUser, currentPrice, currentMcap);
     return;
   }
   const near = getNear();

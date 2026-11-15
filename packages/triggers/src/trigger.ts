@@ -1,5 +1,23 @@
 import 'dotenv/config';
-import { createRedis, CHANNELS, isTradableVenue, getNear, getSuiPumpCurveState, getSuiRouterQuote, isSolanaAddress, SOL_MINT, type SwapEvent } from '@racerbot/shared';
+import { ethers } from 'ethers';
+import {
+  createRedis,
+  CHANNELS,
+  isTradableVenue,
+  getNear,
+  getSuiPumpCurveState,
+  getSuiRouterQuote,
+  isSolanaAddress,
+  SOL_MINT,
+  isEvmChainName,
+  isValidEvmAddress,
+  getEvmNativeSymbol,
+  getEvmProvider,
+  resolveV2Router,
+  UNISWAP_V2_ROUTER_ABI,
+  type EvmChain,
+  type SwapEvent,
+} from '@racerbot/shared';
 import { refreshSolanaMarkets, getSolanaMarket } from './solanaMarket.js';
 import { getDb, getActiveTriggers, getPositionById, getPositionsByIds, getTokenCache, markTriggerFired, getUserById, type PositionRecord } from '@racerbot/db';
 
@@ -79,6 +97,64 @@ export async function refreshTokenPrice(tokenAddress: string): Promise<boolean> 
           return true;
         }
       }
+
+      return false;
+    }
+
+    // EVM: Multi-chain (Base, Arbitrum, Zero, HyperEVM, Elysium, Ethereum)
+    const isEvm = isEvmChainName(cache?.chain) || (isValidEvmAddress(tokenAddress) && cache?.chain !== 'starknet');
+    if (isEvm) {
+      const chain: EvmChain = (isEvmChainName(cache?.chain) ? cache.chain : 'base') as EvmChain;
+
+      // 1. Primary: DexScreener API
+      try {
+        const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const pairs = (data.pairs || [])
+            .filter((p: any) => {
+              if (chain) return p.chainId?.toLowerCase() === chain.toLowerCase();
+              return true;
+            })
+            .sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+          if (pairs.length > 0) {
+            const best = pairs[0];
+            const priceNative = parseFloat(best.priceNative || '0');
+            const marketCap = Number(best.marketCap || best.fdv || 0);
+            if (priceNative > 0) {
+              localPriceCache.set(tokenAddress, {
+                price: priceNative,
+                marketCap,
+                ts: Date.now(),
+              });
+              return true;
+            }
+          }
+        }
+      } catch { /* fallback to on-chain RPC router */ }
+
+      // 2. Secondary: On-chain Uniswap V2 router spot quote
+      try {
+        const { address: routerAddr, weth } = await resolveV2Router(chain, false);
+        const provider = getEvmProvider(chain);
+        const router = new ethers.Contract(routerAddr, UNISWAP_V2_ROUTER_ABI, provider);
+        const decimals = cache?.decimals ?? 18;
+        const amountIn = ethers.parseUnits('1', decimals);
+        const amounts = await router.getAmountsOut(amountIn, [tokenAddress, weth]);
+        const priceNative = Number(ethers.formatEther(amounts[1]));
+        if (priceNative > 0) {
+          const supply = parseFloat(cache?.total_supply ?? '0') / Math.pow(10, decimals);
+          const marketCap = supply > 0 ? priceNative * supply : 0;
+          localPriceCache.set(tokenAddress, {
+            price: priceNative,
+            marketCap,
+            ts: Date.now(),
+          });
+          return true;
+        }
+      } catch { /* router fallback failed */ }
 
       return false;
     }
@@ -356,6 +432,63 @@ export class TriggerEngine {
           quantity_held: amountIn,
           sell_pct: sellPct,
           chain: 'sui',
+          position_id: position.id,
+        },
+      }));
+      return;
+    }
+
+    // EVM Multi-Chain Trigger Route (Base, Arbitrum, Zero, HyperEVM, Elysium, Ethereum)
+    const isEvm = isEvmChainName(position.chain) || isEvmChainName(tokenRow?.chain) || (isValidEvmAddress(position.token_address) && position.chain !== 'starknet');
+    if (isEvm) {
+      const chain: EvmChain = (isEvmChainName(position.chain)
+        ? position.chain
+        : (isEvmChainName(tokenRow?.chain) ? tokenRow.chain : 'base')) as EvmChain;
+      const user = await getUserById(position.user_id).catch(() => null);
+      const userSlip = user?.slippage_pct != null ? parseFloat(String(user.slippage_pct)) : 0;
+      const slippagePct = isStopLoss ? Math.max(5.0, userSlip || 5.0) : (userSlip > 0 ? userSlip : 3.0);
+      const nativeSym = getEvmNativeSymbol(chain);
+
+      let evmAmountIn = String(position.quantity_held);
+      if (sellPct < 100) {
+        const fullQty = parseFloat(String(position.quantity_held));
+        if (fullQty > 0) {
+          evmAmountIn = (fullQty * (sellPct / 100)).toString();
+        }
+      }
+
+      const swapEvent = {
+        type: 'execute_swap',
+        chain,
+        user_id: position.user_id,
+        token_in: position.token_address,
+        token_out: nativeSym,
+        amount_in: evmAmountIn,
+        min_amount_out: '1',
+        venue: `${chain}_dex`,
+        slippage_pct: slippagePct,
+        quoted_at: Date.now(),
+        timestamp: Date.now(),
+        trigger_id: trigger.id,
+        trigger_type: trigger.type,
+      };
+
+      await redis.publish(CHANNELS.EXECUTE_SWAP, JSON.stringify(swapEvent));
+      await markTriggerFired(trigger.id);
+      await redis.publish(CHANNELS.NOTIFY_USER, JSON.stringify({
+        type: 'notify_user',
+        telegram_id: 0,
+        event: 'trigger_fired',
+        data: {
+          user_id: position.user_id,
+          trigger_type: trigger.type,
+          token_address: position.token_address,
+          current_price: currentPrice,
+          target_value: trigger.target_value,
+          entry_price: parseFloat(position.avg_entry_price || '0'),
+          quantity_held: evmAmountIn,
+          sell_pct: sellPct,
+          chain,
           position_id: position.id,
         },
       }));

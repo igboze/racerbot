@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { ethers } from 'ethers';
 import {
   createRedis,
   CHANNELS,
@@ -16,6 +17,13 @@ import {
   lamportsToSol,
   SOL_MINT,
   SOLANA_MIN_RESERVE_LAMPORTS,
+  isEvmChainName,
+  isValidEvmAddress,
+  getEvmNativeSymbol,
+  getEvmProvider,
+  ERC20_ABI,
+  toTokenUnits,
+  type EvmChain,
   type SwapEvent,
 } from '@racerbot/shared';
 import {
@@ -26,8 +34,10 @@ import {
   updateDcaOrderStatus,
   getTokenCache,
   getUserById,
+  getActiveWallet,
   type DcaOrderRecord,
 } from '@racerbot/db';
+import { localPriceCache, refreshTokenPrice } from './trigger.js';
 
 const logger = createLogger('dca');
 const REDIS_URL = process.env.REDIS_URL!;
@@ -129,13 +139,115 @@ async function executeSolanaDcaOrder(order: DcaOrderRecord): Promise<void> {
   await publishDcaTick(order, swapEvent, info.symbol || order.token_address.slice(0, 8), amountLabel);
 }
 
+/**
+ * EVM DCA tick (Base, Arbitrum, Zero, HyperEVM, Elysium, Ethereum).
+ */
+async function executeEvmDcaOrder(order: DcaOrderRecord, tokenCache: any): Promise<void> {
+  const chain: EvmChain = (isEvmChainName(tokenCache?.chain) ? tokenCache.chain : 'base') as EvmChain;
+  const user = await getUserById(order.user_id).catch(() => null);
+  if (!user) {
+    await updateDcaOrderStatus(order.id, 'cancelled');
+    return;
+  }
+
+  const activeWallet = await getActiveWallet(user.id, chain).catch(() => null);
+  const owner: string | null = activeWallet?.address || user.evm_address || null;
+  const tokenSymbol = tokenCache?.symbol || order.token_address.slice(0, 8);
+  const nativeSymbol = getEvmNativeSymbol(chain);
+
+  if (!owner) {
+    await failDcaOrderTick(order.id, `EVM wallet not set up. Send /start.`);
+    return;
+  }
+
+  // Price guard (optional)
+  if (order.min_price !== null || order.max_price !== null) {
+    let cached = localPriceCache.get(order.token_address);
+    if (!cached || Date.now() - cached.ts > 60_000) {
+      await refreshTokenPrice(order.token_address);
+      cached = localPriceCache.get(order.token_address);
+    }
+    const spotPrice = cached?.price;
+    if (spotPrice && spotPrice > 0) {
+      if (order.max_price !== null && order.side === 'buy' && spotPrice > order.max_price) {
+        logger.info('DCA buy skipped: price above max_price guard', {
+          orderId: order.id, price: spotPrice, maxPrice: order.max_price,
+        });
+        await failDcaOrderTick(order.id, `Price guard: ${spotPrice.toFixed(8)} > max ${order.max_price}`);
+        return;
+      }
+      if (order.min_price !== null && order.side === 'sell' && spotPrice < order.min_price) {
+        logger.info('DCA sell skipped: price below min_price guard', {
+          orderId: order.id, price: spotPrice, minPrice: order.min_price,
+        });
+        await failDcaOrderTick(order.id, `Price guard: ${spotPrice.toFixed(8)} < min ${order.min_price}`);
+        return;
+      }
+    }
+  }
+
+  const provider = getEvmProvider(chain);
+  const slippagePct = user.slippage_pct ? Number(user.slippage_pct) : 2.0;
+
+  let amountInStr: string;
+  let amountLabel: string;
+
+  if (order.side === 'buy') {
+    amountInStr = order.amount_per_order.toString();
+    const balWei = await provider.getBalance(owner).catch(() => 0n);
+    const balNative = Number(ethers.formatEther(balWei));
+    const gasReserve = chain === 'zero' ? 0.01 : 0.0005;
+    const required = Number(order.amount_per_order) + gasReserve;
+
+    if (balNative < required) {
+      await failDcaOrderTick(order.id, `Insufficient ${nativeSymbol} balance (${balNative.toFixed(4)} ${nativeSymbol})`);
+      return;
+    }
+    amountLabel = `${Number(order.amount_per_order).toFixed(4)} ${nativeSymbol}`;
+  } else {
+    // Sell side
+    const tokenContract = new ethers.Contract(order.token_address, ERC20_ABI, provider);
+    const decimals = tokenCache?.decimals ?? Number(await tokenContract.decimals().catch(() => 18));
+    const balRaw: bigint = await tokenContract.balanceOf(owner).catch(() => 0n);
+
+    if (balRaw <= 0n) {
+      await failDcaOrderTick(order.id, `No ${tokenSymbol} left in wallet to sell`);
+      return;
+    }
+
+    const wantedRaw = toTokenUnits(order.amount_per_order, decimals);
+    const sellRaw = balRaw < wantedRaw ? balRaw : wantedRaw;
+    if (sellRaw <= 0n) {
+      await failDcaOrderTick(order.id, 'Invalid sell amount');
+      return;
+    }
+
+    amountInStr = ethers.formatUnits(sellRaw, decimals);
+    amountLabel = `${Number(amountInStr).toFixed(2)} ${tokenSymbol}`;
+  }
+
+  const swapEvent: SwapEvent = {
+    type: 'execute_swap',
+    chain,
+    user_id: order.user_id,
+    token_in: order.side === 'buy' ? nativeSymbol : order.token_address,
+    token_out: order.side === 'buy' ? order.token_address : nativeSymbol,
+    amount_in: amountInStr,
+    min_amount_out: '1',
+    venue: `${chain}_dex`,
+    slippage_pct: slippagePct,
+    timestamp: Date.now(),
+    notify_user: false,
+  } as SwapEvent;
+
+  await publishDcaTick(order, swapEvent, tokenSymbol, amountLabel);
+}
+
 async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
   if (isSolanaToken(order.token_address)) {
     await executeSolanaDcaOrder(order);
     return;
   }
-  const near = getNear();
-  const db = await getDb();
 
   // -- Fetch token cache (venue, pool ids, price) --
   const tokenCache = await getTokenCache(order.token_address).catch(() => null);
@@ -143,6 +255,15 @@ async function executeDcaOrder(order: DcaOrderRecord): Promise<void> {
     await failDcaOrderTick(order.id, 'Token not found in cache');
     return;
   }
+
+  const isEvm = isEvmChainName(tokenCache.chain) || (isValidEvmAddress(order.token_address) && tokenCache.chain !== 'starknet');
+  if (isEvm) {
+    await executeEvmDcaOrder(order, tokenCache);
+    return;
+  }
+
+  const near = getNear();
+  const db = await getDb();
 
   const isSui = tokenCache.chain === 'sui' || tokenCache.venue === 'suipump' || order.token_address.includes('::');
   const venueRaw = tokenCache.venue as string | undefined;

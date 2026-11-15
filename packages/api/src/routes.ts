@@ -2255,8 +2255,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isEvm && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isEvm && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -2285,8 +2285,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isEvm && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isEvm && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -2318,8 +2318,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isEvm && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isEvm && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -5752,7 +5752,8 @@ export function setupRoutes(bot: Telegraf): void {
     const tokenCA = resolveTokenAddressFromKey(rawTokenParam);
     const shortKey = getShortTokenKey(tokenCA);
     await ctx.answerCbQuery().catch(() => { });
-    const dcaNative = isSolanaToken(tokenCA) ? 'SOL' : 'NEAR';
+    const user = await getUserByTelegramId(ctx.from!.id).catch(() => null);
+    const dcaNative = getChainNativeUnit(tokenCA, user);
     await ctx.reply(
       `🪙 *DCA Strategy for \`${tokenCA}\`*\n\n` +
       `Choose a direction:`,
@@ -5779,14 +5780,11 @@ export function setupRoutes(bot: Telegraf): void {
       expiresAt: Date.now() + 5 * 60_000,
     });
     await ctx.answerCbQuery().catch(() => { });
-    const isSolDca = isSolanaToken(tokenCA);
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    const dcaNative = getChainNativeUnit(tokenCA, user);
     const promptMsg = side === 'buy'
-      ? (isSolDca
-        ? `💰 *How much SOL should be spent on each order?*\n\nReply with a number (e.g. \`0.1\` or \`0.5\`):`
-        : `💰 *How much NEAR should be spent on each order?*\n\nReply with a number (e.g. \`1\` or \`5\`):`)
-      : (isSolDca
-        ? `💰 *How many tokens should be sold on each order?*\n\nReply with the token amount (e.g. \`250000\`):`
-        : `💰 *How many tokens should be sold on each order?*\n\nReply with raw token quantity (e.g. \`1000\`):`);
+      ? `💰 *How much ${dcaNative} should be spent on each order?*\n\nReply with a number (e.g. \`0.05\` or \`0.1\`):`
+      : `💰 *How many tokens should be sold on each order?*\n\nReply with the token amount (e.g. \`1000\`):`;
     await ctx.reply(promptMsg, { parse_mode: 'Markdown' });
   });
 
@@ -5904,13 +5902,15 @@ export function setupRoutes(bot: Telegraf): void {
       expiresAt: Date.now() + 5 * 60_000,
     });
     await ctx.answerCbQuery().catch(() => { });
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    const loNative = getChainNativeUnit(tokenCA, user);
     await ctx.reply(
       `✅ Direction: ${side === 'buy' ? '🟢 Buy' : '🔴 Sell'}\n\n` +
       `📐 *Choose the trigger condition:*`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [cb(`💲 Price (${isSolanaToken(tokenCA) ? 'SOL' : 'NEAR'} per token)`, `lo_cond:price:${shortKey}`, 'primary')],
+          [cb(`💲 Price (${loNative} per token)`, `lo_cond:price:${shortKey}`, 'primary')],
           [cb('📊 Market Cap (USD)', `lo_cond:market_cap:${shortKey}`, 'primary')],
           [cb('📈 % Change (from current)', `lo_cond:percent_change:${shortKey}`, 'primary')],
           [cb('🔙 Back', `lo_start:${shortKey}`, 'primary')],
@@ -5937,12 +5937,11 @@ export function setupRoutes(bot: Telegraf): void {
     });
     await ctx.answerCbQuery().catch(() => { });
 
+    const user = await getUserByTelegramId(telegramId).catch(() => null);
+    const loNative = getChainNativeUnit(tokenCA, user);
     const dip = pending.loSide === 'buy' ? 'drops to' : 'rises to';
-    const loIsSol = isSolanaToken(tokenCA);
     const condLabels: Record<string, string> = {
-      price: loIsSol
-        ? 'Reply with the *price in SOL* per token.\n_e.g._ `0.0000004` _means trigger when price ' + dip + ' 0.0000004 SOL_'
-        : 'Reply with the *price in NEAR* per token.\n_e.g._ `0.0005` _means trigger when price ' + dip + ' 0.0005 NEAR_',
+      price: `Reply with the *price in ${loNative}* per token.\n_e.g._ \`0.0000004\` _means trigger when price ${dip} 0.0000004 ${loNative}_`,
       market_cap: 'Reply with the *market cap in USD* that should trigger.\n_e.g._ `50000` _for $50k market cap_',
       percent_change: 'Reply with the *% change* from current price.\n_e.g._ `-20` _for -20% dip,_ `+50` _for +50% pump_',
     };
@@ -6014,10 +6013,12 @@ export function setupRoutes(bot: Telegraf): void {
 
     try {
       await ctx.answerCbQuery('Creating limit order...').catch(() => { });
+      const loResolvedChain = resolveTokenChain(pending.loTokenAddress!);
+      const loChain = isEvmChainName(loResolvedChain) ? loResolvedChain : (loIsSolana ? 'solana' : 'near');
       const order = await createLimitOrder({
         user_id: user.id,
         token_address: pending.loTokenAddress!,
-        chain: loIsSolana ? 'solana' : 'near',
+        chain: loChain,
         side: pending.loSide!,
         target_type: targetType,
         trigger_condition: triggerCondition,
@@ -6089,7 +6090,8 @@ export function setupRoutes(bot: Telegraf): void {
       const dir = o.trigger_condition === 'lte' ? '≤' : '≥';
       const token = o.token_address.length > 20 ? o.token_address.slice(0, 8) + '…' : o.token_address;
       const expiry = o.expires_at ? new Date(o.expires_at).toLocaleDateString() : 'GTC';
-      text += `${i + 1}. ${side} \`${token}\`\n   ${cond} ${dir} \`${o.target_value}\` • \`${o.amount_input} ${isSolanaToken(o.token_address) ? 'SOL' : 'NEAR'}\` • ${expiry}\n\n`;
+      const oUnit = getChainNativeUnit(o.token_address, user);
+      text += `${i + 1}. ${side} \`${token}\`\n   ${cond} ${dir} \`${o.target_value}\` • \`${o.amount_input} ${oUnit}\` • ${expiry}\n\n`;
       buttons.push([cb(`❌ Cancel #${i + 1} (${side} ${token})`, `lo_cancel:${o.id}`, 'danger')]);
     });
     buttons.push([cb('🔙 Back', 'menu_home', 'primary')]);
@@ -8937,7 +8939,7 @@ export function setupRoutes(bot: Telegraf): void {
       }
       buttons.push(customTradeRow);
 
-      if (!isSuiPos && !isEvmPos && !isStarknetPos) {
+      if (!isSuiPos && !isStarknetPos) {
         buttons.push([
           cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary'),
           cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary'),
@@ -14627,7 +14629,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         userPendingActions.delete(telegramId);
         const intervalHuman = formatDcaInterval(order.interval_seconds);
         const totalDisplay = order.total_orders === 0 ? '∞ (unlimited)' : `${order.total_orders} orders`;
-        const dcaNativeDone = isSolanaToken(order.token_address) ? 'SOL' : 'NEAR';
+        const dcaNativeDone = getChainNativeUnit(order.token_address, user);
         await ctx.reply(
           `🔁 *DCA Order Created!*\n\n` +
           `🪙 *Token*: \`${order.token_address}\`\n` +
@@ -14662,10 +14664,12 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         });
         const condLabel = pending.loConditionType === 'price' ? 'Price' : pending.loConditionType === 'market_cap' ? 'Market Cap' : '% Change';
         const valDisplay = isPercent ? (val > 0 ? `+${val}%` : `${val}%`) : `${val}`;
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        const loNative = getChainNativeUnit(pending.loTokenAddress || '', user);
         await ctx.reply(
           `✅ Target ${condLabel}: \`${valDisplay}\`\n\n` +
-          `💰 *How much ${isSolanaToken(pending.loTokenAddress || '') ? 'SOL' : 'NEAR'} ${pending.loSide === 'buy' ? 'to spend' : 'worth of tokens to sell'}?*\n\n` +
-          `Reply with a number (e.g. \`${isSolanaToken(pending.loTokenAddress || '') ? '0.5' : '5'}\`):`,
+          `💰 *How much ${loNative} ${pending.loSide === 'buy' ? 'to spend' : 'worth of tokens to sell'}?*\n\n` +
+          `Reply with a number (e.g. \`${loNative === 'ETH' ? '0.05' : loNative === 'SOL' ? '0.5' : '1'}\`):`,
           { parse_mode: 'Markdown' }
         );
         return;
@@ -14720,9 +14724,11 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
 
       if (pending.action === 'lo_amount') {
         const amt = parseFloat(rawText);
-        const loUnit = isSolanaToken(pending.loTokenAddress || '') ? 'SOL' : 'NEAR';
-        if (isNaN(amt) || amt < 0.01) {
-          await ctx.reply(`❌ Invalid amount. Must be ≥ 0.01 ${loUnit}.`);
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        const loUnit = getChainNativeUnit(pending.loTokenAddress || '', user);
+        const minAmt = (loUnit === 'ETH' || loUnit === 'ZRO' || loUnit === 'HYPE') ? 0.0001 : 0.01;
+        if (isNaN(amt) || amt < minAmt) {
+          await ctx.reply(`❌ Invalid amount. Must be ≥ ${minAmt} ${loUnit}.`);
           return;
         }
         userPendingActions.set(telegramId, {
