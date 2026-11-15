@@ -22,6 +22,7 @@ import {
   verifySovereignEvmWallet,
   buildStargateSendParam,
   quoteStargateSend,
+  getZroUsdPrice,
   type LayerZeroChain,
   type StargateAsset,
   type LayerZeroBridgeQuote,
@@ -139,8 +140,9 @@ export async function scanCrossChainEvmBalances(
     throw new Error(`Invalid EVM address: ${check.reason}`);
   }
   const cleanAddr = check.address;
+  const zroUsdPrice = await getZroUsdPrice().catch(() => 3.85);
 
-  const chains: LayerZeroChain[] = ['arbitrum', 'base', 'optimism', 'ethereum'];
+  const chains: LayerZeroChain[] = ['zero', 'base', 'arbitrum', 'optimism', 'ethereum', 'bsc', 'polygon'];
   const balances: Partial<Record<LayerZeroChain, EvmChainBalance>> = {};
   let totalPortfolioUsd = 0;
 
@@ -153,7 +155,15 @@ export async function scanCrossChainEvmBalances(
         // Query Native Balance
         const nativeRaw = await provider.getBalance(cleanAddr).catch(() => 0n);
         const nativeHuman = ethers.formatEther(nativeRaw);
-        const nativeUsd = parseFloat(nativeHuman) * ethUsdPrice;
+        const nativePrice =
+          config.nativeSymbol === 'ZRO'
+            ? zroUsdPrice
+            : config.nativeSymbol === 'BNB'
+              ? 600
+              : config.nativeSymbol === 'POL'
+                ? 0.40
+                : ethUsdPrice;
+        const nativeUsd = parseFloat(nativeHuman) * nativePrice;
 
         // Query USDC Balance
         let usdcRaw = 0n;
@@ -162,7 +172,8 @@ export async function scanCrossChainEvmBalances(
           const usdcContract = new ethers.Contract(usdcPool.tokenAddress, ERC20_ABI, provider);
           usdcRaw = await usdcContract.balanceOf(cleanAddr).catch(() => 0n);
         }
-        const usdcHuman = ethers.formatUnits(usdcRaw, 6);
+        const usdcDecimals = usdcPool?.decimals ?? 6;
+        const usdcHuman = ethers.formatUnits(usdcRaw, usdcDecimals);
         const usdcUsd = parseFloat(usdcHuman);
 
         // Query USDT Balance if pool exists
@@ -172,7 +183,8 @@ export async function scanCrossChainEvmBalances(
           const usdtContract = new ethers.Contract(usdtPool.tokenAddress, ERC20_ABI, provider);
           usdtRaw = await usdtContract.balanceOf(cleanAddr).catch(() => 0n);
         }
-        const usdtHuman = ethers.formatUnits(usdtRaw, 6);
+        const usdtDecimals = usdtPool?.decimals ?? 6;
+        const usdtHuman = ethers.formatUnits(usdtRaw, usdtDecimals);
         const usdtUsd = parseFloat(usdtHuman);
 
         const totalChainUsd = nativeUsd + usdcUsd + usdtUsd;
@@ -265,7 +277,7 @@ export async function executeLayerZeroBridge(params: {
   }
 
   // Pre-flight 1: Check token balance
-  if (params.asset === 'ETH') {
+  if (params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH') {
     const nativeBal = await wallet.provider!.getBalance(wallet.address);
     if (nativeBal < amountLD) {
       throw new Error(`Insufficient ETH balance on ${sourceConfig.name}. You have ${ethers.formatEther(nativeBal)} ETH.`);
@@ -295,7 +307,10 @@ export async function executeLayerZeroBridge(params: {
   // Pre-flight 2: Check native gas + reserve guard
   const nativeBal = await wallet.provider!.getBalance(wallet.address);
   const requiredNativeGas = quote.nativeFee + quote.sourceGasEstimate;
-  const totalRequiredNative = params.asset === 'ETH' ? amountLD + requiredNativeGas : requiredNativeGas;
+  const totalRequiredNative =
+    params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH'
+      ? amountLD + requiredNativeGas
+      : requiredNativeGas;
   const minReserve = sourceConfig.minNativeGasReserve;
 
   if (nativeBal < totalRequiredNative + minReserve) {
@@ -309,7 +324,7 @@ export async function executeLayerZeroBridge(params: {
   }
 
   // Step 3: Handle ERC20 Approval if needed
-  if (params.asset !== 'ETH') {
+  if (params.asset !== 'ETH' || sourceConfig.nativeSymbol !== 'ETH') {
     const tokenContract = new ethers.Contract(poolInfo.tokenAddress, ERC20_ABI, wallet);
     const currentAllowance: bigint = await tokenContract.allowance(wallet.address, poolInfo.poolAddress);
     if (currentAllowance < amountLD) {
@@ -329,8 +344,11 @@ export async function executeLayerZeroBridge(params: {
 
   const poolContract = new ethers.Contract(poolInfo.poolAddress, STARGATE_V2_POOL_ABI, wallet);
 
-  // Stargate send value: nativeFee (or nativeFee + amount if sending ETH)
-  const sendValue = params.asset === 'ETH' ? quote.nativeFee + amountLD : quote.nativeFee;
+  // Stargate send value: nativeFee (or nativeFee + amount if sending native ETH)
+  const sendValue =
+    params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH'
+      ? quote.nativeFee + amountLD
+      : quote.nativeFee;
 
   logger.info(`Broadcasting Stargate V2 send on ${params.sourceChain} to ${params.destChain}...`, {
     asset: params.asset,
@@ -405,7 +423,7 @@ export async function planCrossChain1ClickBuy(params: {
   }
 
   const portfolio = await scanCrossChainEvmBalances(user.evm_address);
-  const candidateChains: LayerZeroChain[] = (['base', 'arbitrum', 'optimism', 'ethereum'] as LayerZeroChain[]).filter(
+  const candidateChains: LayerZeroChain[] = (['base', 'arbitrum', 'zero', 'optimism', 'ethereum', 'bsc', 'polygon'] as LayerZeroChain[]).filter(
     (c) => c !== params.destChain
   );
 

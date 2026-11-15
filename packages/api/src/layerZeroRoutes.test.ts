@@ -30,6 +30,7 @@ describe('LayerZero Routes & UI Module', () => {
     expect(menu.text).toContain(TEST_WALLET.address);
     expect(menu.text).toContain('Universal Sovereign EVM Wallet');
     expect(menu.text).toContain('funds cannot be trapped');
+    expect(menu.text).toContain('Zero');
     expect(menu.text).toContain('Base');
     expect(menu.text).toContain('Arbitrum');
     expect(menu.text).toContain('50.0 USDC');
@@ -43,6 +44,20 @@ describe('LayerZero Routes & UI Module', () => {
     const flattened = rows.flat();
     const routeBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:base:arbitrum'));
     expect(routeBtn).toBeDefined();
+
+    // Zero bridge buttons present for all supported chains
+    const baseToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:base:zero'));
+    expect(baseToZeroBtn).toBeDefined();
+    const arbToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:arbitrum:zero'));
+    expect(arbToZeroBtn).toBeDefined();
+    const ethToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:ethereum:zero'));
+    expect(ethToZeroBtn).toBeDefined();
+    const opToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:optimism:zero'));
+    expect(opToZeroBtn).toBeDefined();
+    const bscToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:bsc:zero'));
+    expect(bscToZeroBtn).toBeDefined();
+    const polyToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:polygon:zero'));
+    expect(polyToZeroBtn).toBeDefined();
 
     // Confirm button present
     const confirmBtn = flattened.find((b: any) => b.callback_data?.includes('lz_confirm:base:arbitrum:USDC:50.0'));

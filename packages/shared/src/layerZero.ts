@@ -24,8 +24,9 @@ export const LZ_EID_ETHEREUM = 30101;
 export const LZ_EID_OPTIMISM = 30111;
 export const LZ_EID_POLYGON = 30109;
 export const LZ_EID_BSC = 30102;
+export const LZ_EID_ZERO = 30286;
 
-export type LayerZeroChain = 'arbitrum' | 'base' | 'ethereum' | 'optimism' | 'polygon' | 'bsc';
+export type LayerZeroChain = 'arbitrum' | 'base' | 'ethereum' | 'optimism' | 'polygon' | 'bsc' | 'zero';
 
 export interface LayerZeroChainConfig {
   chain: LayerZeroChain;
@@ -42,6 +43,22 @@ export interface LayerZeroChainConfig {
 }
 
 export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
+  zero: {
+    chain: 'zero',
+    name: 'Zero Network',
+    eid: LZ_EID_ZERO,
+    chainId: 4242,
+    nativeSymbol: 'ZRO',
+    nativeDecimals: 18,
+    rpcUrls: [
+      'https://rpc.zero.network',
+      'https://zero-network.rpc.subquery.network/public',
+    ],
+    explorerUrl: 'https://zeroscan.io',
+    minNativeGasReserve: 10_000_000_000_000_000n, // 0.01 ZRO (~$0.04)
+    approxBridgeTimeSec: 30,
+    icon: '🅾️',
+  },
   arbitrum: {
     chain: 'arbitrum',
     name: 'Arbitrum One',
@@ -209,6 +226,48 @@ export const STARGATE_V2_POOLS: Partial<Record<LayerZeroChain, Partial<Record<St
       tokenAddress: ethers.ZeroAddress,
       decimals: 18,
       sharedDecimals: 18,
+    },
+  },
+  zero: {
+    USDC: {
+      poolAddress: '0x27a16dc3771391a403d6d5ef62cfb37624522906',
+      tokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      decimals: 6,
+      sharedDecimals: 6,
+    },
+    ETH: {
+      poolAddress: '0x3ffb1b11b52a1eb54b423c4a452ef29b8a3e7284',
+      tokenAddress: ethers.ZeroAddress,
+      decimals: 18,
+      sharedDecimals: 18,
+    },
+  },
+  bsc: {
+    USDC: {
+      poolAddress: '0x160345fc359604fc6e70e3c5facbde5f7a9342d8',
+      tokenAddress: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+      decimals: 18,
+      sharedDecimals: 6,
+    },
+    USDT: {
+      poolAddress: '0x160345fc359604fc6e70e3c5facbde5f7a9342d8',
+      tokenAddress: '0x55d398326f99059fF775485246999027B3197955',
+      decimals: 18,
+      sharedDecimals: 6,
+    },
+  },
+  polygon: {
+    USDC: {
+      poolAddress: '0x9aa83081aa06af0208d066624ac9677579f60532',
+      tokenAddress: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+      decimals: 6,
+      sharedDecimals: 6,
+    },
+    USDT: {
+      poolAddress: '0x160345fc359604fc6e70e3c5facbde5f7a9342d8',
+      tokenAddress: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+      decimals: 6,
+      sharedDecimals: 6,
     },
   },
 };
@@ -500,17 +559,28 @@ export async function quoteStargateSend(params: {
     // Standard L2-to-L2 LayerZero native messaging fee estimate: ~0.0003 - 0.0008 ETH
     if (params.sourceChain === 'ethereum') {
       nativeFee = 2_500_000_000_000_000n; // ~0.0025 ETH on L1
+    } else if (params.sourceChain === 'bsc') {
+      nativeFee = 2_000_000_000_000_000n; // ~0.002 BNB
+    } else if (params.sourceChain === 'polygon') {
+      nativeFee = 1_000_000_000_000_000_000n; // ~1 POL
+    } else if (params.sourceChain === 'zero') {
+      nativeFee = 50_000_000_000_000_000n; // ~0.05 ZRO (~$0.20)
     } else {
       nativeFee = 400_000_000_000_000n; // ~0.0004 ETH on Arbitrum/Base/OP (~$1.20)
     }
   }
 
   // Estimated source transaction gas (approval + send)
-  const sourceGasEstimate = params.sourceChain === 'ethereum' ? 800_000_000_000_000n : 100_000_000_000_000n;
+  const sourceGasEstimate =
+    params.sourceChain === 'ethereum'
+      ? 800_000_000_000_000n
+      : params.sourceChain === 'zero'
+        ? 10_000_000_000_000_000n
+        : 100_000_000_000_000n;
 
   // Total native required: messagingFee + sourceGas (+ amount if bridging native ETH)
   let totalRequiredNative = nativeFee + sourceGasEstimate;
-  if (params.asset === 'ETH') {
+  if (params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH') {
     totalRequiredNative += amountLD;
   }
 
