@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { getNear, getSolanaTokenBalance, SOL_MINT, toTokenUnits, runAsTrade, isElysiumPadVenue } from '@racerbot/shared';
+import { getNear, getSolanaTokenBalance, SOL_MINT, toTokenUnits, runAsTrade, isElysiumPadVenue, isEvmChainName, getEvmNativeSymbol, type EvmChain } from '@racerbot/shared';
 import { getPositionById, getUserById, updatePosition } from '@racerbot/db';
 import { getTokenInfo, publishSwap } from './wallet.js';
 
@@ -24,8 +24,8 @@ async function sellAtTargetAsTrade(
   if (position.status === 'closed') return { success: false, reason: 'position_already_closed' };
   if (position.user_id !== userId) return { success: false, reason: 'not_your_position' };
 
-  // HyperEVM and Elysium positions hold human amounts ("0.5"), not raw units, so their integer part can be 0
-  const isEvmPosition = position.chain === 'hyperevm' || position.chain === 'elysium';
+  // EVM positions hold human amounts ("0.5"), not raw units, so their integer part can be 0
+  const isEvmPosition = isEvmChainName(position.chain);
   const rawQty = BigInt(position.quantity_held.split('.')[0] || '0');
   if (!isEvmPosition && rawQty <= 0n) return { success: false, reason: 'zero_quantity' };
 
@@ -87,19 +87,20 @@ async function sellAtTargetAsTrade(
     return { success: true, usdcReceived: swapResult.usdcReceived, nearReceived: swapResult.nearReceived };
   }
 
-  // HyperEVM & Elysium Chain Execution Route
-  if (position.chain === 'hyperevm' || position.chain === 'elysium' || info.chain === 'hyperevm' || info.chain === 'elysium') {
-    const chain = (position.chain || info.chain || 'hyperevm') as 'hyperevm' | 'elysium';
+  // Multi-Chain EVM Execution Route (Base, Arbitrum, Zero Network, HyperEVM, Elysium, Ethereum)
+  if (isEvmChainName(position.chain) || isEvmChainName(info.chain)) {
+    const chain = (position.chain || info.chain || 'base') as EvmChain;
     // Take the share of the decimal holding (18 places covers every ERC-20); the executor caps it at the wallet balance
     const heldUnits = toTokenUnits(position.quantity_held, 18);
     const evmSellUnits = fullExit ? heldUnits : (heldUnits * sellPctBps) / 10000n;
     if (evmSellUnits <= 0n) return { success: false, reason: 'zero_quantity' };
+    const nativeOut = getEvmNativeSymbol(chain);
     const swapEvent = {
       type: 'execute_swap' as const,
       chain,
       user_id: userId,
       token_in: position.token_address,
-      token_out: 'HYPE',
+      token_out: nativeOut,
       amount_in: ethers.formatUnits(evmSellUnits, 18),
       min_amount_out: '1',
       venue: isElysiumPadVenue(info.venue) ? info.venue : `${chain}_dex` as any,

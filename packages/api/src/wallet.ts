@@ -1458,6 +1458,8 @@ export interface TokenInfoResult {
   market_cap_usd: number;  // market cap in USD
   near_usd: number;        // NEAR/USD or SUI/USD exchange rate
   sui_usd?: number;
+  eth_usd?: number;
+  zro_usd?: number;
   strk_usd?: number;
   hype_usd?: number;
   venue: VenueName | 'unknown' | (string & {});
@@ -1987,6 +1989,9 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         market_cap: nativeUsd > 0 ? marketCapUsd / nativeUsd : 0,
         market_cap_usd: marketCapUsd,
         near_usd: nativeUsd,
+        eth_usd: (chain === 'base' || chain === 'arbitrum' || chain === 'ethereum') ? nativeUsd : undefined,
+        zro_usd: chain === 'zero' ? nativeUsd : undefined,
+        hype_usd: (chain === 'hyperevm' || chain === 'elysium') ? nativeUsd : undefined,
         venue: `${chain}_dex` as any,
         tradeable: true,
         buy_tax_pct: 0,
@@ -3203,25 +3208,28 @@ export async function withdrawEvmHype(
     return { success: false, error: recipientProblem };
   }
 
-  const hyperevm = getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true');
-  const l1Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, hyperevm);
-
   try {
-    if (chain === 'hyperevm') {
-      const [balance, feeData] = await Promise.all([hyperevm.getBalance(user.evm_address), hyperevm.getFeeData()]);
+    if (chain !== 'elysium') {
+      const isTestnet = chain === 'hyperevm' ? (process.env.HYPEREVM_TESTNET === 'true') : false;
+      const provider = getEvmProvider(chain, isTestnet);
+      const signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, provider);
+      const [balance, feeData] = await Promise.all([provider.getBalance(user.evm_address), provider.getFeeData()]);
       const gasPrice = feeData.maxFeePerGas ?? feeData.gasPrice ?? ethers.parseUnits('1', 'gwei');
       const gasCost = gasPrice * 21_000n * 2n; // headroom for a base-fee rise
       const value = amount === 'all' ? balance - gasCost : ethers.parseEther(String(amount));
+      const sym = getEvmNativeSymbol(chain);
       if (value <= 0n || balance < value + gasCost) {
-        return { success: false, error: `Insufficient HyperEVM HYPE for the transfer plus gas. Balance: ${ethers.formatEther(balance)} HYPE` };
+        return { success: false, error: `Insufficient ${sym} on ${chain} for the transfer plus gas. Balance: ${ethers.formatEther(balance)} ${sym}` };
       }
-      const tx = await l1Signer.sendTransaction({ to: toAddress, value, gasLimit: 21_000n });
+      const tx = await signer.sendTransaction({ to: toAddress, value, gasLimit: 21_000n });
       const receipt = await tx.wait(1);
-      if (receipt?.status !== 1) return { success: false, error: 'The HyperEVM transfer reverted.' };
+      if (receipt?.status !== 1) return { success: false, error: `The ${chain} transfer reverted.` };
       return { success: true, txHash: receipt.hash, amountHype: ethers.formatEther(value) };
     }
 
     const elysium = getEvmProvider('elysium', false);
+    const hyperevm = getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true');
+    const l1Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, hyperevm);
     const l2Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, elysium);
     const [l2Balance, l2Block] = await Promise.all([elysium.getBalance(user.evm_address), elysium.getBlock('latest')]);
     const maxFeePerGas = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);

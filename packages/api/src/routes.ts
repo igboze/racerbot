@@ -192,6 +192,8 @@ import {
   getEvmNativeBalance,
   getEvmNativeSymbol,
   getEvmExplorerUrl,
+  getEthUsdPrice,
+  getZroUsdPrice,
   ELYSIUM_TESTNET_EXPLORER_URL,
   ELYSIUM_MAINNET_EXPLORER_URL,
   KLEOS_TOKEN_URL,
@@ -426,7 +428,7 @@ interface PendingAction {
   importEvmSecret?: string;
   importEvmWalletName?: string;
   evmSend?:
-    | { kind: 'hype'; chain: 'hyperevm' | 'elysium'; to: string; amount: number | 'all' }
+    | { kind: 'hype'; chain: EvmChain; to: string; amount: number | 'all' }
     | { kind: 'token'; plan: EvmTokenSendPlan };
   // Copy trading wizard state
   copyWallet?: string;
@@ -1689,9 +1691,14 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isSolana = tokenInfo.chain === 'solana';
   const isStarknet = !isSolana && (tokenInfo.chain === 'starknet' || isStarknetToken(tokenAddress));
   const isSui = !isSolana && !isStarknet && (tokenInfo.chain === 'sui' || tokenInfo.venue === 'suipump' || isSuiToken(tokenAddress));
-  const isEvm = !isSolana && !isStarknet && !isSui && (tokenInfo.chain === 'hyperevm' || tokenInfo.chain === 'elysium' || isValidEvmAddress(tokenAddress));
-  const isHyperEvm = isEvm && tokenInfo.chain !== 'elysium' && !tokenAddress.toLowerCase().endsWith('.elysium');
-  const isElysium = isEvm && !isHyperEvm;
+  const isEvm = !isSolana && !isStarknet && !isSui && (isEvmChainName(tokenInfo.chain) || isValidEvmAddress(tokenAddress));
+  const evmResolvedChain = resolveTokenChain(tokenAddress, tokenInfo.chain);
+  const isBase = evmResolvedChain === 'base';
+  const isArbitrum = evmResolvedChain === 'arbitrum';
+  const isZero = evmResolvedChain === 'zero';
+  const isEthereum = evmResolvedChain === 'ethereum';
+  const isHyperEvm = evmResolvedChain === 'hyperevm';
+  const isElysium = evmResolvedChain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium');
   // Kleos and RonsPad coins live on Elysium mainnet (99901) and trade through the same executor
   const isKleos = isElysium && isElysiumPadVenue(tokenInfo.venue);
   const padName = elysiumPadName(tokenInfo.venue);
@@ -1699,9 +1706,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   // Kleos buys are paid from HyperEVM HYPE and sale proceeds land on Elysium mainnet, so the card shows both
   const kleosWallet = isKleos ? (b?.evmAddress || userRecord?.evm_address) : null;
   const kleosElysiumBal = kleosWallet ? await getHypeBalance(kleosWallet, 'elysium', false).catch(() => null) : null;
-  const isNearUsdcMode = !isSolana && !isStarknet && !isSui && userRecord?.near_trade_currency === 'usdc';
-  const nativeUnit = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'NEAR')));
-  const unitBtn = isSolana ? 'SOL' : isStarknet ? 'STRK' : (isSui ? 'SUI' : (isEvm ? 'HYPE' : (isNearUsdcMode ? 'USDC' : 'N')));
+  const isNearUsdcMode = !isSolana && !isStarknet && !isSui && !isEvm && userRecord?.near_trade_currency === 'usdc';
+  const nativeUnit = getChainNativeUnit(tokenAddress, userRecord, tokenInfo.chain);
+  const unitBtn = getChainUnitBtn(tokenAddress, userRecord);
   const nearModeBuyPresets = isNearUsdcMode && !userRecord?.custom_buy_amounts ? [5, 15, 50] : parseBuyAmounts(userRecord?.custom_buy_amounts);
 
   // Check if user has an active RaceFleet and whether it holds this target token
@@ -1823,6 +1830,14 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     const vKey = (tokenInfo.venue || '').toLowerCase();
     const vDisplayName = suiVenueMap[vKey] || (vKey && vKey !== 'sui_dex' && vKey !== 'unknown' ? vKey.charAt(0).toUpperCase() + vKey.slice(1) : null);
     venueText = vDisplayName ? `💧 *Venue*: ${vDisplayName} (Sui DEX)` : `💧 *Venue*: Sui DEX Router (Aftermath)`;
+  } else if (isBase) {
+    venueText = `🔵 *Venue*: Base DEX (Uniswap V3 / Aerodrome)`;
+  } else if (isArbitrum) {
+    venueText = `💙 *Venue*: Arbitrum One DEX (Uniswap / Camelot)`;
+  } else if (isZero) {
+    venueText = `🅾️ *Venue*: Zero Network DEX (LayerZero L1)`;
+  } else if (isEthereum) {
+    venueText = `💎 *Venue*: Ethereum DEX (Uniswap V2 / V3)`;
   } else if (isHyperEvm) {
     venueText = `⚡ *Venue*: HyperEVM DEX (Mainnet)`;
   } else if (isKleos) {
@@ -1840,7 +1855,27 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const linkRows = (() => {
     if (isEvm) {
       const rows: any[] = [];
-      if (isHyperEvm) {
+      if (isBase) {
+        rows.push([
+          Markup.button.url('🔍 BaseScan', `https://basescan.org/token/${tokenInfo.address}`),
+          Markup.button.url('📈 DexScreener', `https://dexscreener.com/base/${tokenInfo.address}`),
+        ]);
+      } else if (isArbitrum) {
+        rows.push([
+          Markup.button.url('🔍 Arbiscan', `https://arbiscan.io/token/${tokenInfo.address}`),
+          Markup.button.url('📈 DexScreener', `https://dexscreener.com/arbitrum/${tokenInfo.address}`),
+        ]);
+      } else if (isZero) {
+        rows.push([
+          Markup.button.url('🔍 ZeroScan', `https://scan.zero.network/token/${tokenInfo.address}`),
+          Markup.button.url('📈 DexScreener', `https://dexscreener.com/zero/${tokenInfo.address}`),
+        ]);
+      } else if (isEthereum) {
+        rows.push([
+          Markup.button.url('🔍 Etherscan', `https://etherscan.io/token/${tokenInfo.address}`),
+          Markup.button.url('📈 DexScreener', `https://dexscreener.com/ethereum/${tokenInfo.address}`),
+        ]);
+      } else if (isHyperEvm) {
         rows.push([
           Markup.button.url('🔍 HypurrScan', `https://hypurrscan.io/token/${tokenInfo.address}`),
           Markup.button.url('📈 DexScreener', `https://dexscreener.com/hyperevm/${tokenInfo.address}`),
@@ -1848,8 +1883,10 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       } else if (isKleos) {
         rows.push([Markup.button.url(`🏛️ View on ${padName}`, padUrl)]);
       } else {
+        const fallbackChain: EvmChain = isEvmChainName(evmResolvedChain) ? evmResolvedChain : 'base';
         rows.push([
-          Markup.button.url('🔍 Elysium Explorer', `https://elysium.kinetiq.xyz/testnet-explorer/token/${tokenInfo.address}`),
+          Markup.button.url('🔍 Explorer', `${getEvmExplorerUrl(fallbackChain)}/token/${tokenInfo.address}`),
+          Markup.button.url('📈 DexScreener', `https://dexscreener.com/${fallbackChain}/${tokenInfo.address}`),
         ]);
       }
       rows.push([cb('🛡️ Deep Security & Honeypot Audit', `audit:${getShortTokenKey(tokenInfo.address)}`, 'primary')]);
@@ -4002,9 +4039,12 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
     const info = await getFastTokenRoute(tokenAddress).catch(() => null);
     const evmUser = user.evm_address ? user : await ensureUserEvmWallet(user);
     if (!evmUser.evm_address) throw new Error('Your EVM wallet is not ready yet. Please send /start and try again.');
-    const chain: EvmChain = (info?.chain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) ? 'elysium' : 'hyperevm';
-    const isKleos = isElysiumPadVenue(info?.venue);
-    const isTestnet = chain === 'elysium' ? !isKleos : (process.env.HYPEREVM_TESTNET === 'true');
+    const chain: EvmChain = (info?.chain && isEvmChainName(info.chain))
+      ? info.chain
+      : (tokenAddress.toLowerCase().endsWith('.elysium') ? 'elysium' : resolveTokenChain(tokenAddress) as EvmChain);
+    const isKleos = chain === 'elysium' && isElysiumPadVenue(info?.venue);
+    const isTestnet = chain === 'hyperevm' ? (process.env.HYPEREVM_TESTNET === 'true') : false;
+    const nativeSym = getEvmNativeSymbol(chain);
     let spendable: number;
     if (isKleos) {
       // Kleos buys are paid from HyperEVM HYPE, or from Elysium HYPE when the wallet already holds enough there
@@ -4014,14 +4054,16 @@ async function executeBuyPctHelper(telegramId: number, rawTokenAddress: string, 
       ]);
       spendable = kleosSpendableHype(parseFloat(hyperevmBal.formatted || '0'), parseFloat(elysiumBal.formatted || '0'));
     } else {
-      const userBal = await getHypeBalance(evmUser.evm_address, chain, isTestnet);
-      spendable = Math.max(0, parseFloat(userBal.formatted || '0') - 0.002);
+      const userBal = await getEvmNativeBalance(evmUser.evm_address, chain, isTestnet);
+      const reserve = (chain === 'base' || chain === 'arbitrum' || chain === 'ethereum') ? 0.0005 : 0.002;
+      spendable = Math.max(0, parseFloat(userBal.formatted || '0') - reserve);
     }
-    const amountHype = (spendable * pct) / 100;
-    if (amountHype < 0.001) {
-      throw new Error(`Available balance (${spendable.toFixed(4)} HYPE after fee reserve) is too low to buy.`);
+    const amountNative = (spendable * pct) / 100;
+    const minBuy = (chain === 'base' || chain === 'arbitrum' || chain === 'ethereum') ? 0.0001 : 0.001;
+    if (amountNative < minBuy) {
+      throw new Error(`Available balance (${spendable.toFixed(4)} ${nativeSym} after gas reserve) is too low to buy.`);
     }
-    return executeBuyHelper(telegramId, tokenAddress, Number(amountHype.toFixed(6)), onProgress);
+    return executeBuyHelper(telegramId, tokenAddress, Number(amountNative.toFixed(6)), onProgress);
   }
 
   const balanceNear = await getTradeSpendableNear(telegramId);
@@ -4048,7 +4090,8 @@ async function buildBuySuccessKeyboard(telegramId: number, tokenAddress: string,
       const shareCode = await getOrCreateTokenShare(user.id, tokenAddress);
       const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
       const sym = tokenSymbol && tokenSymbol !== '???' ? tokenSymbol : 'TOKEN';
-      const buyChain = isSolanaToken(tokenAddress) ? 'Solana' : isStarknetToken(tokenAddress) ? 'Starknet' : isSuiToken(tokenAddress) ? 'Sui' : isValidEvmAddress(tokenAddress) ? 'HyperEVM' : 'NEAR';
+      const resolvedChain = resolveTokenChain(tokenAddress);
+      const buyChain = isSolanaToken(tokenAddress) ? 'Solana' : isStarknetToken(tokenAddress) ? 'Starknet' : isSuiToken(tokenAddress) ? 'Sui' : isEvmChainName(resolvedChain) ? resolvedChain.toUpperCase() : 'NEAR';
       const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Instant 1-click execution on ${buyChain} DEXs`;
       const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
       rows.push([Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]);
@@ -8091,7 +8134,9 @@ export function setupRoutes(bot: Telegraf): void {
       const isSuiPos = posChain === 'sui';
       const isStarknetPos = posChain === 'starknet';
       const isSolanaPosH = posChain === 'solana';
-      const isEvmPosH = posChain === 'hyperevm' || posChain === 'elysium';
+      const isEvmPosH = isEvmChainName(posChain);
+      const isEthChain = posChain === 'base' || posChain === 'arbitrum' || posChain === 'ethereum';
+      const isZeroChain = posChain === 'zero';
       const decimals = info?.decimals ?? (isSolanaPosH ? 6 : isSuiPos ? 9 : 18);
       const nativeUsdRate = isSolanaPosH
         ? (info?.sol_usd || 150)
@@ -8099,9 +8144,13 @@ export function setupRoutes(bot: Telegraf): void {
           ? (info?.strk_usd || 0.12)
           : isSuiPos
             ? (info?.sui_usd || 2.0)
-            : isEvmPosH
-              ? (info?.hype_usd || liveHypeUsd || 74.0)
-              : (info?.near_usd || 4.3);
+            : isEthChain
+              ? (info?.eth_usd || 2600.0)
+              : isZeroChain
+                ? (info?.zro_usd || 3.85)
+                : isEvmPosH
+                  ? (info?.hype_usd || liveHypeUsd || 74.0)
+                  : (info?.near_usd || 4.3);
 
       let humanQuantity = 0;
       try {
@@ -8495,7 +8544,7 @@ export function setupRoutes(bot: Telegraf): void {
       const isSolanaPos = posChain === 'solana';
       const isStarknetPos = posChain === 'starknet';
       const isSuiPos = posChain === 'sui';
-      const isEvmPos = posChain === 'hyperevm' || posChain === 'elysium';
+      const isEvmPos = isEvmChainName(posChain);
       // Live on-chain balance check: if user transferred this token out via another wallet,
       // close position in DB immediately and inform user.
       let onChainZero = false;
@@ -8625,24 +8674,34 @@ export function setupRoutes(bot: Telegraf): void {
       const symbol = info?.symbol ? sanitizeMd(info.symbol) : '???';
       let currentPrice = info ? parseFloat(info.price) : 0;
       const nativeUnit = getPositionNativeUnit(position, user);
+      const isEthChain = posChain === 'base' || posChain === 'arbitrum' || posChain === 'ethereum';
+      const isZeroChain = posChain === 'zero';
       const liveNativeUsd = isSolanaPos
         ? (info?.sol_usd || await withTimeout(getSolUsdPrice(), 3000).catch(() => 150))
         : isStarknetPos
           ? (info?.strk_usd || 0.12)
           : isSuiPos
             ? await withTimeout(getSuiUsdPrice(), 3000).catch(() => 2.0)
-            : isEvmPos
-              ? await withTimeout(getHypeUsdPrice(), 3000).catch(() => 74.0)
-              : await withTimeout(getNearUsdPrice(), 3000).catch(() => 5.16);
+            : isEthChain
+              ? (info?.eth_usd || await withTimeout(getEthUsdPrice(), 3000).catch(() => 2600.0))
+              : isZeroChain
+                ? (info?.zro_usd || await withTimeout(getZroUsdPrice(), 3000).catch(() => 3.85))
+                : isEvmPos
+                  ? await withTimeout(getHypeUsdPrice(), 3000).catch(() => 74.0)
+                  : await withTimeout(getNearUsdPrice(), 3000).catch(() => 5.16);
       const usdRate = isSolanaPos
         ? (info?.sol_usd || liveNativeUsd)
         : isStarknetPos
           ? (info?.strk_usd || liveNativeUsd)
           : isSuiPos
             ? (info?.sui_usd || liveNativeUsd)
-            : isEvmPos
-              ? (info?.hype_usd || liveNativeUsd)
-              : (info?.near_usd || liveNativeUsd);
+            : isEthChain
+              ? (info?.eth_usd || liveNativeUsd)
+              : isZeroChain
+                ? (info?.zro_usd || liveNativeUsd)
+                : isEvmPos
+                  ? (info?.hype_usd || liveNativeUsd)
+                  : (info?.near_usd || liveNativeUsd);
 
       const decimals = info?.decimals ?? (isSolanaPos ? 6 : isSuiPos ? 9 : 18);
       let mcNative = info?.market_cap || 0;
@@ -8892,13 +8951,38 @@ export function setupRoutes(bot: Telegraf): void {
       const linkRows = (() => {
         if (isEvmPos) {
           const rows: any[] = [];
-          if (posChain === 'hyperevm') {
+          if (posChain === 'base') {
+            rows.push([
+              Markup.button.url('🔍 BaseScan', `https://basescan.org/token/${position.token_address}`),
+              Markup.button.url('📈 DexScreener', `https://dexscreener.com/base/${position.token_address}`),
+            ]);
+          } else if (posChain === 'arbitrum') {
+            rows.push([
+              Markup.button.url('🔍 Arbiscan', `https://arbiscan.io/token/${position.token_address}`),
+              Markup.button.url('📈 DexScreener', `https://dexscreener.com/arbitrum/${position.token_address}`),
+            ]);
+          } else if (posChain === 'zero') {
+            rows.push([
+              Markup.button.url('🔍 ZeroScan', `https://scan.zero.network/token/${position.token_address}`),
+              Markup.button.url('📈 DexScreener', `https://dexscreener.com/zero/${position.token_address}`),
+            ]);
+          } else if (posChain === 'ethereum') {
+            rows.push([
+              Markup.button.url('🔍 Etherscan', `https://etherscan.io/token/${position.token_address}`),
+              Markup.button.url('📈 DexScreener', `https://dexscreener.com/ethereum/${position.token_address}`),
+            ]);
+          } else if (posChain === 'hyperevm') {
             rows.push([
               Markup.button.url('🔍 HypurrScan', `https://hypurrscan.io/token/${position.token_address}`),
               Markup.button.url('📈 DexScreener', `https://dexscreener.com/hyperevm/${position.token_address}`),
             ]);
-          } else {
+          } else if (isElysiumPadVenue(posVenue)) {
             rows.push([Markup.button.url(`🏛️ View on ${elysiumPadName(posVenue)}`, elysiumPadUrl(posVenue, position.token_address))]);
+          } else {
+            rows.push([
+              Markup.button.url('🔍 Explorer', `${getEvmExplorerUrl(posChain as EvmChain)}/token/${position.token_address}`),
+              Markup.button.url('📈 DexScreener', `https://dexscreener.com/${posChain}/${position.token_address}`),
+            ]);
           }
           return rows;
         }
@@ -9839,6 +9923,8 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         await ctx.reply(`❌ ${res.error || 'Transfer failed.'}`);
         return;
       }
+      const nativeSym = getEvmNativeSymbol(send.chain);
+      const explorerUrl = getEvmExplorerUrl(send.chain);
       await ctx.reply(
         send.chain === 'elysium'
           ? `✅ *Elysium Transfer Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${send.to}\`\n\n` +
@@ -9846,7 +9932,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
               ? `It entered the Elysium inbox and usually lands within a few minutes.\n` +
                 `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
               : `🔗 [View on Elysium](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`)
-          : `✅ *HYPE Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${send.to}\`\n🔗 [View on Explorer](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash})`,
+          : `✅ *${send.chain.toUpperCase()} Transfer Sent!*\n\n💸 Amount: \`${res.amountHype} ${nativeSym}\`\n📬 To: \`${send.to}\`\n🔗 [View on Explorer](${explorerUrl}/tx/${res.txHash})`,
         opts
       );
     } catch (err: any) {
@@ -10191,26 +10277,40 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       if (b.strkBalanceFormatted && Number(b.strkBalanceFormatted) > 0) {
         balSummary += '• ✨ STRK: `' + b.strkBalanceFormatted + ' STRK`\n';
       }
+      if (b.baseBalanceFormatted && Number(b.baseBalanceFormatted) > 0) {
+        balSummary += '• 🔵 Base: `' + b.baseBalanceFormatted + ' ETH`\n';
+      }
+      if (b.arbitrumBalanceFormatted && Number(b.arbitrumBalanceFormatted) > 0) {
+        balSummary += '• 💙 Arbitrum: `' + b.arbitrumBalanceFormatted + ' ETH`\n';
+      }
+      if (b.zeroBalanceFormatted && Number(b.zeroBalanceFormatted) > 0) {
+        balSummary += '• 🅾️ Zero: `' + b.zeroBalanceFormatted + ' ZRO`\n';
+      }
       if (b.hyperevmBalanceFormatted && Number(b.hyperevmBalanceFormatted) > 0) {
-        balSummary += '• ⚡ HYPE: `' + b.hyperevmBalanceFormatted + ' HYPE`\n';
+        balSummary += '• ⚡ HyperEVM: `' + b.hyperevmBalanceFormatted + ' HYPE`\n';
       }
       if (b.elysiumBalanceFormatted && Number(b.elysiumBalanceFormatted) > 0) {
-        balSummary += '• 🏛️ Elysium HYPE (Kleos): `' + b.elysiumBalanceFormatted + ' HYPE`\n';
+        balSummary += '• 🏛️ Elysium: `' + b.elysiumBalanceFormatted + ' HYPE`\n';
+      }
+      if (b.ethereumBalanceFormatted && Number(b.ethereumBalanceFormatted) > 0) {
+        balSummary += '• 💎 Ethereum: `' + b.ethereumBalanceFormatted + ' ETH`\n';
       }
       balSummary += '\n';
     }
 
     await ctx.reply(
-      '💸 *Withdraw & Send Funds (SOL, NEAR, SUI, Starknet, HYPE & Tokens)*\n\n' +
+      '💸 *Withdraw & Send Funds (Multi-Chain EVM, SOL, NEAR, SUI, Starknet)*\n\n' +
       balSummary +
       'Reply with the recipient address, amount, and optional token, for example:\n' +
+      '• *ETH (Base)*: `0x1234...abcd 0.1 ETH` or `0x1234...abcd all BASE`\n' +
+      '• *ETH (Arbitrum)*: `0x1234...abcd 0.1 ARB`\n' +
+      '• *ZRO (Zero)*: `0x1234...abcd 5 ZRO`\n' +
+      '• *HYPE*: `0x1234...abcd 1 HYPE` (HyperEVM) or `0x1234...abcd all ELYSIUM`\n' +
       '• *SOL*: `<solana_address> 0.5` or `<solana_address> all`\n' +
       '• *NEAR*: `mywallet.near 1.5` or `mywallet.near all`\n' +
-      '• *Token*: `mywallet.near 100 LONK` or `mywallet.near all blackdragon.tkn.near`\n' +
       '• *SUI*: `0x1234...abcd 1.0 SUI` or `0x1234...abcd all SUI`\n' +
       '• *Starknet*: `0x1234...abcd 10 STRK` or `0x1234...abcd all STRK`\n' +
-      '• *HYPE*: `0x1234...abcd 1 HYPE` (HyperEVM) or `0x1234...abcd all ELYSIUM` (Elysium HYPE from Kleos sales)\n' +
-      '• *EVM token / Kleos coin*: `0x1234...abcd 100 0xTOKEN_CONTRACT`\n' +
+      '• *EVM Token*: `0x1234...abcd 100 0xTOKEN_CONTRACT`\n' +
       '_EVM sends only go to 0x addresses with exactly 40 hex characters (MetaMask, Rabby). Starknet and Sui addresses are refused._\n\n' +
       '_Type /cancel or tap Cancel below to abort._',
       {
@@ -11010,9 +11110,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       let amountVal = rawClickedAmt;
       const telegramId = ctx.from!.id;
       const isStk = isStarknetToken(tokenAddress);
-      const isSui = !isStk && isSuiToken(tokenAddress);
-      const isEvmToken = !isStk && !isSui && (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'));
-      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : (isEvmToken ? 'HYPE' : 'NEAR'));
+      const unit = getChainNativeUnit(tokenAddress);
       let displayAmt = rawClickedAmt;
       let displayUnit = unit;
       if (unit === 'NEAR') {
@@ -11081,11 +11179,8 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       const tokenAddress = resolveTokenAddressFromKey(rawTokenParam);
       const pct = parseInt(ctx.match![2]);
       const telegramId = ctx.from!.id;
-      const isStk = isStarknetToken(tokenAddress);
-      const isSui = !isStk && isSuiToken(tokenAddress);
-      const isEvmToken = !isStk && !isSui && (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near'));
-      const unit = isSolanaToken(tokenAddress) ? 'SOL' : isStk ? 'STRK' : (isSui ? 'SUI' : (isEvmToken ? 'HYPE' : 'NEAR'));
-      console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}%`);
+      const unit = getChainNativeUnit(tokenAddress);
+      console.log(`[BUY_PCT] Click: user=${telegramId}, token=${tokenAddress}, pct=${pct}% (${unit})`);
 
       const guardKey = inFlightKey(telegramId, tokenAddress, 'buy');
       if (!(await tryAcquireInFlight(guardKey))) {
@@ -11704,7 +11799,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         const evmWallets = await listUserEvmWallets(user.id).catch(() => []);
         const activeEvm = evmWallets.find(w => w.is_active && w.address.toLowerCase() === user.evm_address!.toLowerCase());
         keyHtml +=
-          `⚡ <b>EVM Private Key</b>: HyperEVM · Elysium · Kleos${activeEvm ? ` [${escapeHtml(activeEvm.name)}]` : ''} (<code>${user.evm_address}</code>):\n` +
+          `⚡ <b>Unified EVM Private Key</b>: Base · Arbitrum · Zero · HyperEVM · Elysium · ETH${activeEvm ? ` [${escapeHtml(activeEvm.name)}]` : ''} (<code>${user.evm_address}</code>):\n` +
           `<tg-spoiler><code>${rawEvmKey}</code></tg-spoiler>\n\n`;
       }
 
@@ -11717,7 +11812,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       await ctx.reply(
         `🛡️ *Security Reminder*:\n` +
         `• Keep your private keys confidential.\n` +
-        `• Import into MyNearWallet/Meteor (NEAR), Sui Wallet (SUI), Argent X / Braavos (Starknet), Phantom / Solflare (Solana), or MetaMask / Rabby (HyperEVM, Elysium, Kleos) to manage outside RacerBot.`,
+        `• Import into MyNearWallet/Meteor (NEAR), Sui Wallet (SUI), Argent X / Braavos (Starknet), Phantom / Solflare (Solana), or MetaMask / Rabby (Base, Arbitrum, Zero, HyperEVM, Ethereum) to manage outside RacerBot.`,
         { parse_mode: 'Markdown' }
       );
 
@@ -13778,7 +13873,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         // longer), and Sui would pad a short address into one nobody controls.
         const evmTokRaw = (tokenToUse || '').trim();
         const evmTokLower = evmTokRaw.toLowerCase();
-        const isEvmAssetName = ['hype', 'hyperevm', 'elysium', 'kleos'].includes(evmTokLower);
+        const isEvmAssetName = ['hype', 'hyperevm', 'elysium', 'kleos', 'eth', 'base', 'arbitrum', 'zero', 'zro'].includes(evmTokLower);
         const isEvmTokenContract = /^0x[0-9a-fA-F]{40}$/.test(evmTokRaw);
         if (/^0x[0-9a-fA-F]{40}$/.test(dest) || isEvmAssetName || isEvmTokenContract) {
           const rearm = () => userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
@@ -13795,8 +13890,8 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
           }
           if (evmTokRaw && !isEvmAssetName && !isEvmTokenContract) {
             await ctx.reply(
-              '❌ Only HYPE and HyperEVM/Elysium tokens can be sent to an EVM address.\n\n' +
-              'Examples:\n`' + dest + ' 1 HYPE`\n`' + dest + ' all ELYSIUM`\n`' + dest + ' 100 0xTOKEN_CONTRACT`',
+              '❌ Supported EVM assets: ETH (Base/Arb/Mainnet), ZRO (Zero), HYPE (HyperEVM/Elysium) or any ERC-20 contract address.\n\n' +
+              'Examples:\n`' + dest + ' 0.1 ETH`\n`' + dest + ' 5 ZRO`\n`' + dest + ' 1 HYPE`\n`' + dest + ' 100 0xTOKEN_CONTRACT`',
               { parse_mode: 'Markdown' }
             );
             rearm();
@@ -13818,19 +13913,27 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
             evmSend = { kind: 'token', plan };
             card =
               `🔎 *Check this send carefully*\n\n` +
-              `⛓️ Chain: *${plan.chain === 'elysium' ? 'Elysium (Kleos)' : 'HyperEVM'}*\n` +
+              `⛓️ Chain: *${plan.chain === 'elysium' ? 'Elysium (Kleos)' : plan.chain.toUpperCase()}*\n` +
               `🪙 Token: *${sanitizeMd(plan.symbol)}* \`${plan.token}\`\n` +
               `💸 Amount: \`${plan.amountDisplay} ${sanitizeMd(plan.symbol)}\`\n` +
               `📬 To: \`${plan.to}\`\n\n` +
               `Sends on EVM chains cannot be reversed.`;
           } else {
-            const chain = evmTokLower === 'elysium' || evmTokLower === 'kleos' ? 'elysium' as const : 'hyperevm' as const;
+            let chain: EvmChain;
+            if (evmTokLower === 'elysium' || evmTokLower === 'kleos') chain = 'elysium';
+            else if (evmTokLower === 'hyperevm' || evmTokLower === 'hype') chain = 'hyperevm';
+            else if (evmTokLower === 'arbitrum' || evmTokLower === 'arb') chain = 'arbitrum';
+            else if (evmTokLower === 'zero' || evmTokLower === 'zro') chain = 'zero';
+            else if (evmTokLower === 'ethereum' || evmTokLower === 'mainnet') chain = 'ethereum';
+            else chain = 'base';
+
+            const nativeSym = getEvmNativeSymbol(chain);
             evmSend = { kind: 'hype', chain, to, amount: amt };
             card =
               `🔎 *Check this send carefully*\n\n` +
-              `⛓️ Chain: *${chain === 'elysium' ? 'Elysium (Kleos)' : 'HyperEVM'}*\n` +
-              `🪙 Asset: *HYPE*\n` +
-              `💸 Amount: \`${amt === 'all' ? 'All (minus gas)' : `${amt} HYPE`}\`\n` +
+              `⛓️ Chain: *${chain === 'elysium' ? 'Elysium (Kleos)' : chain.toUpperCase()}*\n` +
+              `🪙 Asset: *${nativeSym}*\n` +
+              `💸 Amount: \`${amt === 'all' ? 'All (minus gas)' : `${amt} ${nativeSym}`}\`\n` +
               `📬 To: \`${to}\`\n\n` +
               `Sends on EVM chains cannot be reversed.`;
           }
