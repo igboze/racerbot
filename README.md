@@ -1,6 +1,12 @@
 # Racer (Web Application) 🏎️💨
 ### High-Speed Non-Custodial Cross-Chain Trading Web Terminal, Keyless Execution & Social Alpha on NEAR Protocol
 
+> [!IMPORTANT]
+> ### 📅 Hackathon Evaluation Note (November 16, 2026)
+> - **Submission Scope**: The hackathon submission is strictly the **Racer Web Application** ([racerbot.io](https://racerbot.io)); the Telegram bot is a legacy companion and is **strictly OUT OF SCOPE**.
+> - **Build & Test Instructions**: Always run `npm run build` before `npm test` (compiles workspace packages across the monorepo); database tests (`packages/db`) require a running PostgreSQL instance (`DATABASE_URL`).
+> - **Live Mainnet Executor Proof**: Ephemeral position executors (`<id>.racerbot.near`) execute under the NEP-518 Global Contract on NEAR Mainnet (Code Hash: `812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e`, Mainnet Deploy Tx: [`B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r`](https://nearblocks.io/txns/B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r)). Executors execute atomic swaps, sweep funds to shielded intents, and immediately invoke `DeleteAccount` to prune on-chain state and preserve trader privacy.
+
 > 🏆 **OFFICIAL NEAR HACKATHON SUBMISSION: RACER WEB APPLICATION**
 >
 > 🌐 **Live Web Application:** [racerbot.io](https://racerbot.io) *(Web Terminal: Home `/`, Alpha `/alpha`, Fleet `/fleet`, Bubblemap `/bubblemap`, Arena `/competition`)*
