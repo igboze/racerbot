@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { createInMemoryTestPool } from './inMemoryTestDb.js';
 
 let curr = process.cwd();
 for (let i = 0; i < 5; i++) {
@@ -432,19 +433,33 @@ export async function getDb(): Promise<Pool> {
   const isRemote = rawUrl && !rawUrl.includes('localhost') && !rawUrl.includes('127.0.0.1');
   const useSsl = isRemote || rawUrl.includes('neon.tech') || rawUrl.includes('sslmode=require');
 
-  pool = new Pool({
+  const candidate = new Pool({
     connectionString,
-    min: parseInt(process.env.POOL_MIN || '2'),
+    min: process.env.VITEST ? 0 : parseInt(process.env.POOL_MIN || '2'),
     max: parseInt(process.env.POOL_MAX || '35'),
     idleTimeoutMillis: parseInt(process.env.IDLE_TIMEOUT || '15000'),
-    connectionTimeoutMillis: parseInt(process.env.CONN_TIMEOUT || '6000'),
+    connectionTimeoutMillis: (process.env.VITEST && !rawUrl) ? 1000 : parseInt(process.env.CONN_TIMEOUT || '6000'),
     ...(useSsl ? { ssl: { rejectUnauthorized: false } } : {}),
   });
-  pool.on('error', (err: any) => console.error('[DB] Connection pool error:', err));
-  pool.on('connect', () => {
+  candidate.on('error', (err: any) => {
+    if (!process.env.VITEST) console.error('[DB] Connection pool error:', err);
+  });
+  candidate.on('connect', () => {
     // Connection established
   });
 
+  if (process.env.VITEST && !rawUrl.includes(':1/none')) {
+    try {
+      await candidate.query('SELECT 1');
+      pool = candidate;
+    } catch {
+      await candidate.end().catch(() => {});
+      pool = createInMemoryTestPool();
+    }
+    return pool!;
+  }
+
+  pool = candidate;
   return pool;
 }
 
@@ -587,13 +602,17 @@ function invalidateUserCache(userId?: string, telegramId?: number) {
   if (telegramId !== undefined) {
     const hit = userCache.get(telegramId);
     userCache.delete(telegramId);
-    if (hit?.user) userIdCache.delete(hit.user.id);
+    if (hit?.user) {
+      userIdCache.delete(hit.user.id);
+      invalidateActiveWalletCache(hit.user.id);
+    }
   }
   if (userId) {
     userIdCache.delete(userId);
     const tid = userIdToTelegramId.get(userId);
     if (tid !== undefined) userCache.delete(tid);
     userIdToTelegramId.delete(userId);
+    invalidateActiveWalletCache(userId);
   }
 }
 
@@ -883,7 +902,14 @@ export async function getActiveWallet(userId: string, chain: DbChain): Promise<U
       } else if (chain === 'solana') {
         address = u.solana_address;
         encKey = u.solana_private_key_enc;
-      } else if (chain === 'hyperevm' || chain === 'elysium') {
+      } else if (
+        chain === 'hyperevm' ||
+        chain === 'elysium' ||
+        chain === 'base' ||
+        chain === 'arbitrum' ||
+        chain === 'ethereum' ||
+        chain === 'zero'
+      ) {
         address = u.evm_address;
         encKey = u.evm_private_key_enc;
       }
@@ -1197,7 +1223,14 @@ export async function setActiveWallet(userId: string, chain: DbChain, walletId: 
         'UPDATE users SET solana_address = $1, solana_private_key_enc = $2 WHERE id = $3',
         [targetWallet.address, targetWallet.encrypted_private_key, userId]
       );
-    } else if (chain === 'hyperevm' || chain === 'elysium') {
+    } else if (
+      chain === 'hyperevm' ||
+      chain === 'elysium' ||
+      chain === 'base' ||
+      chain === 'arbitrum' ||
+      chain === 'ethereum' ||
+      chain === 'zero'
+    ) {
       await client.query(
         'UPDATE users SET evm_address = $1, evm_private_key_enc = $2 WHERE id = $3',
         [targetWallet.address, targetWallet.encrypted_private_key, userId]
@@ -4971,10 +5004,21 @@ export async function expireStaleConfidentialQuotes(olderThanHours = 48): Promis
   const db = await getDb();
   const res = await db.query(
     `UPDATE confidential_moves SET status = 'EXPIRED', settled_at = NOW(), updated_at = NOW()
-      WHERE kind = 'deposit' AND status = 'PENDING_DEPOSIT'
-        AND created_at < NOW() - make_interval(hours => $1)`,
+      WHERE kind IN ('deposit', 'refill', 'withdraw') AND status = 'PENDING_DEPOSIT'
+        AND created_at < NOW() - make_interval(hours => $1)
+      RETURNING kind, executor_account_id`,
     [olderThanHours]
   );
+  const expiredRefills = (res.rows || [])
+    .filter((r: any) => r.kind === 'refill' && r.executor_account_id)
+    .map((r: any) => r.executor_account_id);
+  if (expiredRefills.length > 0) {
+    await db.query(
+      `UPDATE confidential_executors SET status = 'failed', last_error = 'funding EXPIRED', updated_at = NOW()
+        WHERE account_id = ANY($1) AND status = 'funding'`,
+      [expiredRefills]
+    ).catch(() => {});
+  }
   return res.rowCount ?? 0;
 }
 

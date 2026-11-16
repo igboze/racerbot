@@ -134,10 +134,12 @@ export async function refresh1ClickTokens(): Promise<void> {
   }
 }
 
-// Initial prefetch on startup
-refresh1ClickTokens().catch(() => {});
-// Refresh every 15 minutes
-setInterval(() => refresh1ClickTokens().catch(() => {}), 15 * 60 * 1000);
+// Initial prefetch on startup (skipped in unit test workers to prevent background network logs during teardown)
+if (!process.env.VITEST && process.env.NODE_ENV !== 'test') {
+  refresh1ClickTokens().catch(() => {});
+  const refreshTimer = setInterval(() => refresh1ClickTokens().catch(() => {}), 15 * 60 * 1000);
+  refreshTimer.unref?.();
+}
 
 
 export interface MinimumDepositInfo {

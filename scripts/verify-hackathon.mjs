@@ -134,7 +134,13 @@ async function runVerification() {
   console.log(`✅ PASS`);
   console.log(`   ℹ️ Privacy Design: <id>.racerbot.near subaccounts execute swaps atomically,`);
   console.log(`      sweep proceeds to shielded intents, and immediately call DeleteAccount to prune state.`);
-  results.push({ component: 'Ephemeral Subaccount Self-Destruct', status: 'PASS', details: 'Zero On-Chain Footprint' });
+  console.log(`   📜 Mainnet Lifecycle Proof (45b6d2bc684398bc.racerbot.near):`);
+  console.log(`      1. Create Executor: https://nearblocks.io/txns/FsWGQ5YMVbREAuD6KWnxRXhbZMntbezN2tkJokhNHEju`);
+  console.log(`      2. DCL Buy Swap:    https://nearblocks.io/txns/ExuQpkYgSREvrn6dR2hv1MrNz7d5AP6KFUWVnRSDYFTz`);
+  console.log(`      3. DCL Sell Swap:   https://nearblocks.io/txns/7Ep1zF3Lcqga76DERUPB3hFaYkpUr24UnK1oGGprDA65`);
+  console.log(`      4. Shielded Exit:   https://nearblocks.io/txns/2oNdYyxv5Qu1PGY2yZMe7v2vkYMSicvQo4MzQW7h3v9s`);
+  console.log(`      5. DeleteAccount:   https://nearblocks.io/txns/F6xfsHJrBNNfySDbzR3XNdpsRHJt9mdPCbpecnDuHNS2`);
+  results.push({ component: 'Ephemeral Subaccount Self-Destruct', status: 'PASS', details: '5-Step Mainnet Proof' });
 
   // 5. Verify NEAR Intents Cross-Chain Solver (SOL, EVM, NEAR deposits)
   process.stdout.write('🔍 Checking NEAR Intents Cross-Chain Solver (1click.chaindefuser.com)... ');

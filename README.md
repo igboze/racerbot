@@ -3,9 +3,16 @@
 
 > [!IMPORTANT]
 > ### 📅 Hackathon Evaluation Note (November 16, 2026)
-> - **Submission Scope**: The hackathon submission is strictly the **Racer Web Application** ([racertrades.xyz](https://racertrades.xyz)); the Telegram bot is a legacy companion and is **strictly OUT OF SCOPE**.
-> - **Build & Test Instructions**: Always run `npm run build` before `npm test` (compiles workspace packages across the monorepo); database tests (`packages/db`) require a running PostgreSQL instance (`DATABASE_URL`).
-> - **Live Mainnet Executor Proof**: Ephemeral position executors (`<id>.racerbot.near`) execute under the NEP-518 Global Contract on NEAR Mainnet (Code Hash: `812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e`, Mainnet Deploy Tx: [`B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r`](https://nearblocks.io/txns/B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r)). Executors execute atomic swaps, sweep funds to shielded intents, and immediately invoke `DeleteAccount` to prune on-chain state and preserve trader privacy.
+> - **Submission Scope**: The hackathon submission is strictly the **Racer Web Application** ([racertrades.xyz](https://racertrades.xyz)); the Telegram bot is a legacy companion with server-managed convenience custody and is **strictly OUT OF SCOPE**. The Web App has **zero server custody** (users connect their own browser wallets and trade through keyless NEP-518 executors).
+> - **Build & Test Instructions**: Always run `npm run build` before `npm test` (compiles workspace packages across the monorepo); database tests (`packages/db`) use PostgreSQL (`DATABASE_URL`) when available and automatically fall back to an in-memory adapter in offline environments.
+> - **Live Mainnet Executor Lifecycle Proof (`45b6d2bc684398bc.racerbot.near`)**:
+>   - **Global Contract Deploy (`NEP-518`)**: Code Hash `812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e` (Tx: [`B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r`](https://nearblocks.io/txns/B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r))
+>   - **1. Create Ephemeral Executor Subaccount**: [`FsWGQ5YMVbREAuD6KWnxRXhbZMntbezN2tkJokhNHEju`](https://nearblocks.io/txns/FsWGQ5YMVbREAuD6KWnxRXhbZMntbezN2tkJokhNHEju)
+>   - **2. Confidential Buy on Ref DCL (`0.4925 NEAR` swapped + `0.0075 NEAR` fee)**: [`ExuQpkYgSREvrn6dR2hv1MrNz7d5AP6KFUWVnRSDYFTz`](https://nearblocks.io/txns/ExuQpkYgSREvrn6dR2hv1MrNz7d5AP6KFUWVnRSDYFTz)
+>   - **3. Confidential Sell on Ref DCL (`20,771.599` tokens sold)**: [`7Ep1zF3Lcqga76DERUPB3hFaYkpUr24UnK1oGGprDA65`](https://nearblocks.io/txns/7Ep1zF3Lcqga76DERUPB3hFaYkpUr24UnK1oGGprDA65)
+>   - **4. Shielded Exit to Private Intent Balance (`0.9474 NEAR` returned)**: [`2oNdYyxv5Qu1PGY2yZMe7v2vkYMSicvQo4MzQW7h3v9s`](https://nearblocks.io/txns/2oNdYyxv5Qu1PGY2yZMe7v2vkYMSicvQo4MzQW7h3v9s)
+>   - **5. Self-Destruct & State Purge (`DeleteAccount`)**: [`F6xfsHJrBNNfySDbzR3XNdpsRHJt9mdPCbpecnDuHNS2`](https://nearblocks.io/txns/F6xfsHJrBNNfySDbzR3XNdpsRHJt9mdPCbpecnDuHNS2)
+>   - *(Second full lifecycle example on `3c1d84a8e8baa1af.racerbot.near`: Create [`A12b5QMssGCZXhKCD52rL14ACm3ocC5UKHcanGiDbRrw`](https://nearblocks.io/txns/A12b5QMssGCZXhKCD52rL14ACm3ocC5UKHcanGiDbRrw) → Buy [`2qcPbVwpgPwB1CPPcqBzASwUmgAJoNnqLqcZQyoJhaBU`](https://nearblocks.io/txns/2qcPbVwpgPwB1CPPcqBzASwUmgAJoNnqLqcZQyoJhaBU) → Sell [`4yjVaZuGiX7viRTNCnx3J7EBvAcTR9cFyTsakwdenri2`](https://nearblocks.io/txns/4yjVaZuGiX7viRTNCnx3J7EBvAcTR9cFyTsakwdenri2) → Exit [`J2BR9FgtBjLpBrmsEgiK7xF58N7JAfqQxBmn3Kc9KzMh`](https://nearblocks.io/txns/J2BR9FgtBjLpBrmsEgiK7xF58N7JAfqQxBmn3Kc9KzMh) → Delete [`6GssB5aJswRtgAiRaN2T9KgitR2FtWMJc65HUsKFN9SY`](https://nearblocks.io/txns/6GssB5aJswRtgAiRaN2T9KgitR2FtWMJc65HUsKFN9SY)).*
 
 > 🏆 **OFFICIAL NEAR HACKATHON SUBMISSION: RACER WEB APPLICATION**
 >
@@ -542,6 +549,23 @@ flowchart TD
 3. **Exact Balance Accounting (No Router)**: Executors hold exactly one position in their own keyless subaccount. Balance accounting is mathematically exact with zero co-mingling risk across users.
 4. **Hedged Multi-RPC Broadcaster**: Sends signed transactions to multiple independent RPC providers (FastNEAR, QuickNode, public nodes) simultaneously, preventing single-node failures or censorship.
 5. **Continuous On-Chain Verification**: Positions are continually validated against real on-chain contract states to prevent phantom positions or stale balances.
+
+---
+
+## 🔧 Platform Reliability & User Experience Engineering
+
+To guarantee a fast, predictable, and zero-friction experience for users across all trading flows, the platform incorporates targeted reliability and UX safeguards:
+
+1. **Idempotent Confidential Executor Exits (`packages/api/src/executorPool.ts`)**:
+   - *Why it matters for users*: When a trader closes a confidential position, network congestion or solver rate-limits can delay the 1Click shield quote. By inspecting on-chain `state.status === 'Exiting'` and reusing the already-measured `exit_amount` instead of re-dispatching `prepare_exit`, user proceeds return faster to their private balance without wasting gas or emitting duplicate exit receipts.
+2. **Fleet Split Cap Enforcement (`packages/api/src/executorPool.ts`)**:
+   - *Why it matters for users*: When splitting a multi-executor Fleet buy across ready subaccounts, integer division remainders are strictly capped at each executor's funded `size_yocto` balance, preventing partial-fill reverts on the final executor leg.
+3. **Automatic Stale Quote & Funding Reclamation (`packages/db/src/db.ts`)**:
+   - *Why it matters for users*: Unpaid or expired `deposit`, `refill`, and `withdraw` quotes are automatically expired and any stalled `funding` executors are transitioned to `failed` for cleanup, keeping the user's ready-pool queue responsive and reclaiming locked storage deposits.
+4. **Instant Active-Wallet Cache Synchronization (`packages/db/src/db.ts`)**:
+   - *Why it matters for users*: Importing or switching active wallets across NEAR, Solana, or EVM chains (`Base`, `Arbitrum`, `Ethereum`, `Zero`, `HyperEVM`, `Elysium`) immediately invalidates both the user cache and active-wallet cache, ensuring the very next trade uses the newly selected wallet without a 60-second cache delay.
+5. **Chain-Accurate Token Cards, Presets & Cross-Chain Bridge Guards (`packages/api/src/routes.ts`, `layerZeroBridge.ts`)**:
+   - *Why it matters for users*: Token cards dynamically display the exact native gas symbol (`ETH`, `ZRO`, `HYPE`, `SOL`, `NEAR`) and chain-specific explorer links, while Stargate V2 1-Click cross-chain routing validates native vs. ERC-20 pool token addresses (`ZeroAddress`) and prices bridge fees in the source chain's actual native asset.
 
 ---
 

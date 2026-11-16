@@ -564,11 +564,15 @@ async function confidentialBuyLocked(p: Parameters<typeof confidentialBuy>[0], f
   // Each executor spends its share, never more than it holds
   let left = p.amountYocto;
   const shares = claimed.map((e, i) => {
+    const maxCap = BigInt(e.size_yocto);
     const even = p.amountYocto / BigInt(claimed.length);
     const want = acct.buy_mode === 'fleet' ? even : left;
-    const share = want < BigInt(e.size_yocto) ? want : BigInt(e.size_yocto);
+    const share = want < maxCap ? want : maxCap;
     left -= share;
-    return i === claimed.length - 1 && acct.buy_mode === 'fleet' ? share + left : share;
+    if (i === claimed.length - 1 && acct.buy_mode === 'fleet') {
+      return share + left <= maxCap ? share + left : maxCap;
+    }
+    return share;
   });
 
   const results = await Promise.all(claimed.map(async (e, i) => {
@@ -876,12 +880,19 @@ export async function closeExecutor(executor: string): Promise<void> {
   }
   await updateExecutor(executor, { status: 'exiting' });
 
-  const fee = await exitFeeBps(executor, state);
-  const prepared = await callExecutor(executor, 'prepare_exit', new Uint8Array(u32le(fee)), 150);
-  const ready = extractExecutorEvents(prepared).find(ev => ev.event === 'exit_ready');
-  if (!ready) throw new Error(`prepare_exit: ${failureOf(prepared) || 'no exit amount'}`);
-  const amount = BigInt(ready.data.amount || 0);
-  await updateExecutor(executor, { event: ready, tx_hash: prepared?.transaction?.hash });
+  let amount = BigInt(state?.exit_amount || 0);
+  if (state?.status === 'Exited') {
+    await updateExecutor(executor, { status: 'exited' });
+    return;
+  }
+  if (state?.status !== 'Exiting' || amount <= 0n) {
+    const fee = await exitFeeBps(executor, state);
+    const prepared = await callExecutor(executor, 'prepare_exit', new Uint8Array(u32le(fee)), 150);
+    const ready = extractExecutorEvents(prepared).find(ev => ev.event === 'exit_ready');
+    if (!ready) throw new Error(`prepare_exit: ${failureOf(prepared) || 'no exit amount'}`);
+    amount = BigInt(ready.data.amount || 0);
+    await updateExecutor(executor, { event: ready, tx_hash: prepared?.transaction?.hash });
+  }
   if (amount === 0n) {
     await updateExecutor(executor, { status: 'exited' });
     return;

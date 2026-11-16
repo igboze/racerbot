@@ -29,7 +29,9 @@ import {
   type UserWalletRecord,
 } from '@racerbot/db';
 
-const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || '';
+function getMasterKey(): string {
+  return process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '';
+}
 export const MAX_EVM_WALLETS_PER_USER = 5;
 
 /** Gas for the HyperEVM transaction that posts an Elysium call into the inbox */
@@ -123,7 +125,7 @@ export async function importEvmWallet(
     userId: user.id,
     address,
     name: walletName.trim().slice(0, 30) || `EVM Wallet ${existing.length + 1}`,
-    encryptedPrivateKey: encrypt(restored.privateKey, MASTER_KEY),
+    encryptedPrivateKey: encrypt(restored.privateKey, getMasterKey()),
     isImported: true,
     isActive: setAsActive,
   });
@@ -213,7 +215,7 @@ export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Pr
   if (plan.chain !== 'elysium') {
     const isTestnet = plan.chain === 'hyperevm' ? (process.env.HYPEREVM_TESTNET === 'true') : false;
     const provider = getEvmProvider(plan.chain, isTestnet);
-    const signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, provider);
+    const signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, getMasterKey(), provider);
     const nativeBal = await provider.getBalance(user.evm_address);
     const nativeSym = getEvmNativeSymbol(plan.chain);
     const minGas = plan.chain === 'ethereum' ? ethers.parseEther('0.003') : ethers.parseEther('0.0005');
@@ -228,8 +230,8 @@ export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Pr
 
   const elysium = getEvmProvider('elysium', false);
   const hyperevm = getEvmProvider('hyperevm', process.env.HYPEREVM_TESTNET === 'true');
-  const l1Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, hyperevm);
-  const l2Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, MASTER_KEY, elysium);
+  const l1Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, getMasterKey(), hyperevm);
+  const l2Signer = getEvmWalletFromEncrypted(user.evm_private_key_enc, getMasterKey(), elysium);
   const [l2Balance, l2Block] = await Promise.all([elysium.getBalance(user.evm_address), elysium.getBlock('latest')]);
   const maxFeePerGas = elysiumInboxMaxFeePerGas(l2Block?.baseFeePerGas ?? 0n);
   if (l2Balance < ELYSIUM_TOKEN_TRANSFER_GAS * maxFeePerGas) {

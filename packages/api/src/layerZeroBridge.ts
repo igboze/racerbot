@@ -276,11 +276,13 @@ export async function executeLayerZeroBridge(params: {
     throw new Error('Bridge amount must be greater than zero');
   }
 
+  const isNativeTransfer = poolInfo.tokenAddress === ethers.ZeroAddress;
+
   // Pre-flight 1: Check token balance
-  if (params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH') {
+  if (isNativeTransfer) {
     const nativeBal = await wallet.provider!.getBalance(wallet.address);
     if (nativeBal < amountLD) {
-      throw new Error(`Insufficient ETH balance on ${sourceConfig.name}. You have ${ethers.formatEther(nativeBal)} ETH.`);
+      throw new Error(`Insufficient ${params.asset} balance on ${sourceConfig.name}. You have ${ethers.formatEther(nativeBal)} ${params.asset}.`);
     }
   } else {
     const tokenContract = new ethers.Contract(poolInfo.tokenAddress, ERC20_ABI, wallet);
@@ -307,10 +309,9 @@ export async function executeLayerZeroBridge(params: {
   // Pre-flight 2: Check native gas + reserve guard
   const nativeBal = await wallet.provider!.getBalance(wallet.address);
   const requiredNativeGas = quote.nativeFee + quote.sourceGasEstimate;
-  const totalRequiredNative =
-    params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH'
-      ? amountLD + requiredNativeGas
-      : requiredNativeGas;
+  const totalRequiredNative = isNativeTransfer
+    ? amountLD + requiredNativeGas
+    : requiredNativeGas;
   const minReserve = sourceConfig.minNativeGasReserve;
 
   if (nativeBal < totalRequiredNative + minReserve) {
@@ -324,7 +325,7 @@ export async function executeLayerZeroBridge(params: {
   }
 
   // Step 3: Handle ERC20 Approval if needed
-  if (params.asset !== 'ETH' || sourceConfig.nativeSymbol !== 'ETH') {
+  if (!isNativeTransfer) {
     const tokenContract = new ethers.Contract(poolInfo.tokenAddress, ERC20_ABI, wallet);
     const currentAllowance: bigint = await tokenContract.allowance(wallet.address, poolInfo.poolAddress);
     if (currentAllowance < amountLD) {
@@ -344,11 +345,10 @@ export async function executeLayerZeroBridge(params: {
 
   const poolContract = new ethers.Contract(poolInfo.poolAddress, STARGATE_V2_POOL_ABI, wallet);
 
-  // Stargate send value: nativeFee (or nativeFee + amount if sending native ETH)
-  const sendValue =
-    params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH'
-      ? quote.nativeFee + amountLD
-      : quote.nativeFee;
+  // Stargate send value: nativeFee (or nativeFee + amount if sending native token)
+  const sendValue = isNativeTransfer
+    ? quote.nativeFee + amountLD
+    : quote.nativeFee;
 
   logger.info(`Broadcasting Stargate V2 send on ${params.sourceChain} to ${params.destChain}...`, {
     asset: params.asset,
@@ -427,10 +427,18 @@ export async function planCrossChain1ClickBuy(params: {
     (c) => c !== params.destChain
   );
 
+  const getNativeUnitUsd = (chain: LayerZeroChain): number => {
+    const sym = LZ_CHAINS[chain]?.nativeSymbol;
+    if (sym === 'ZRO') return 3.85;
+    if (sym === 'BNB') return 620.0;
+    if (sym === 'POL') return 0.45;
+    return 3200.0;
+  };
+
   // Search for sufficient USDC first (most stable & predictable)
   for (const chain of candidateChains) {
     const bal = portfolio.balances[chain];
-    if (bal && bal.usdcUsd >= params.requiredAmountUsd + 1.5) {
+    if (bal && bal.usdcUsd >= params.requiredAmountUsd + 1.5 && STARGATE_V2_POOLS[chain]?.USDC) {
       // Found funding!
       const quote = await quoteStargateSend({
         sourceChain: chain,
@@ -448,7 +456,7 @@ export async function planCrossChain1ClickBuy(params: {
         fundingChain: chain,
         fundingAsset: 'USDC',
         fundingAmount: params.requiredAmountUsd.toFixed(2),
-        bridgeFeeUsd: parseFloat(quote.humanNativeFee) * 3200,
+        bridgeFeeUsd: parseFloat(quote.humanNativeFee) * getNativeUnitUsd(chain),
         bridgeDurationSec: quote.approxDurationSec,
         quote,
         evmAddress: user.evm_address,
@@ -456,8 +464,9 @@ export async function planCrossChain1ClickBuy(params: {
     }
   }
 
-  // Next search for sufficient native ETH
+  // Next search for sufficient native ETH on ETH-native chains with Stargate ETH pools
   for (const chain of candidateChains) {
+    if (LZ_CHAINS[chain]?.nativeSymbol !== 'ETH' || !STARGATE_V2_POOLS[chain]?.ETH) continue;
     const bal = portfolio.balances[chain];
     if (bal && bal.nativeUsd >= params.requiredAmountUsd + 5.0) {
       const ethAmount = (params.requiredAmountUsd / 3200).toFixed(4);

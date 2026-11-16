@@ -652,8 +652,8 @@ export function getPositionNativeUnit(pos: { chain?: string | null; token_addres
   return getChainNativeUnit(pos.chain || pos.token_address, user, pos.chain || undefined);
 }
 
-export function getChainUnitBtn(tokenAddressOrChain: string, user?: UserRecord | null): string {
-  const chain = resolveTokenChain(tokenAddressOrChain);
+export function getChainUnitBtn(tokenAddressOrChain: string, user?: UserRecord | null, chainHint?: string): string {
+  const chain = resolveTokenChain(tokenAddressOrChain, chainHint);
   switch (chain) {
     case 'solana':
       return 'SOL';
@@ -1708,7 +1708,18 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const kleosElysiumBal = kleosWallet ? await getHypeBalance(kleosWallet, 'elysium', false).catch(() => null) : null;
   const isNearUsdcMode = !isSolana && !isStarknet && !isSui && !isEvm && userRecord?.near_trade_currency === 'usdc';
   const nativeUnit = getChainNativeUnit(tokenAddress, userRecord, tokenInfo.chain);
-  const unitBtn = getChainUnitBtn(tokenAddress, userRecord);
+  const unitBtn = getChainUnitBtn(tokenAddress, userRecord, tokenInfo.chain);
+  const evmChainLabel = isBase
+    ? 'Base'
+    : isArbitrum
+      ? 'Arbitrum'
+      : isZero
+        ? 'Zero'
+        : isEthereum
+          ? 'Ethereum'
+          : isHyperEvm
+            ? 'HyperEVM'
+            : 'Elysium';
   const nearModeBuyPresets = isNearUsdcMode && !userRecord?.custom_buy_amounts ? [5, 15, 50] : parseBuyAmounts(userRecord?.custom_buy_amounts);
 
   // Check if user has an active RaceFleet and whether it holds this target token
@@ -1726,6 +1737,18 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   }
   const fleetHoldsToken = Boolean(fleetPosition && fleetPosition.totalBalanceHuman > 0.000001);
 
+  const evmFormattedBal = isBase
+    ? ((b as any)?.baseBalanceFormatted || '0.0000')
+    : isArbitrum
+      ? ((b as any)?.arbitrumBalanceFormatted || '0.0000')
+      : isZero
+        ? ((b as any)?.zeroBalanceFormatted || '0.0000')
+        : isEthereum
+          ? ((b as any)?.ethereumBalanceFormatted || '0.0000')
+          : isHyperEvm
+            ? (b?.hyperevmBalanceFormatted || '0.0000')
+            : (b?.elysiumBalanceFormatted || '0.0000');
+
   const balanceText = isSolana
     ? (b ? `💳 *SOL Wallet Balance*: \`${b.solBalanceFormatted || '0.0000'} SOL\` (\`${b.solBalanceUsd || '$0.00'}\`)\n\n` : '')
     : isStarknet
@@ -1735,7 +1758,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         : (isKleos
           ? (b ? `💳 *HYPE*: HyperEVM \`${Number(b.hyperevmBalanceFormatted || 0).toFixed(4)}\` • Elysium \`${kleosElysiumBal ? Number(kleosElysiumBal.formatted).toFixed(4) : '0.0000'}\`\n\n` : '')
           : isEvm
-          ? (b ? `💳 *${isHyperEvm ? 'HyperEVM' : 'Elysium'} HYPE Balance*: \`${isHyperEvm ? (b.hyperevmBalanceFormatted || '0.0000') : (b.elysiumBalanceFormatted || '0.0000')} HYPE\`\n\n` : '')
+          ? (b ? `💳 *${evmChainLabel} ${nativeUnit} Balance*: \`${evmFormattedBal} ${nativeUnit}\`\n\n` : '')
           : (b ? `💳 *Wallet Balance*: \`${b.nativeNearFormatted} NEAR\` | \`${b.wrapNearFormatted} wNEAR\` | \`${b.usdcNearFormatted || '0.00'} USDC\`\n⚡ *Trade Mode*: ${isNearUsdcMode ? '💵 *USDC Only* (Buy & Sell in USDC)' : '⬛ *NEAR + USDC* (Auto-combines USDC)'}\n\n` : '')));
 
   // -- Venue label --
@@ -2118,7 +2141,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       const shareCode = await getOrCreateTokenShare(userRecord.id, tokenAddress);
       const shareDeepLink = `https://t.me/racertradingbot?start=${shareCode}`;
       const sym = tokenInfo.symbol || 'TOKEN';
-      const cardChainName = isSolana ? 'Solana' : isStarknet ? 'Starknet' : isSui ? 'SUI' : isEvm ? (isHyperEvm ? 'HyperEVM' : 'Elysium') : 'NEAR';
+      const cardChainName = isSolana ? 'Solana' : isStarknet ? 'Starknet' : isSui ? 'SUI' : isEvm ? evmChainLabel : 'NEAR';
       const shareText = `Trade $${sym} on RacerBot 🏎\n⚡ Fast 1-click execution on ${cardChainName}`;
       const tgShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareDeepLink)}&text=${encodeURIComponent(shareText)}`;
       shareButtonRow = [[Markup.button.url('📤 Share Token (Earn 5% Fees)', tgShareUrl)]];
@@ -2302,7 +2325,7 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
       text += isKleos
         ? `⚡ *Buy with HYPE*: a fixed amount, or a % of your HYPE:\n`
         : isEvm
-          ? `⚡ *Buy with HYPE*: a fixed amount, or a % of your ${isHyperEvm ? 'HyperEVM' : 'Elysium'} HYPE:\n`
+          ? `⚡ *Buy with ${nativeUnit}*: a fixed amount, or a % of your ${evmChainLabel} ${nativeUnit}:\n`
           : `⚡ *Choose Buy Amount* (Fixed or % of Balance):\n`;
       keyboard = Markup.inlineKeyboard([
         ...unlockedRiskRow,

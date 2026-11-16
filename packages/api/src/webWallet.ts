@@ -1,13 +1,14 @@
 /**
- * RacerBot-managed NEAR wallets for Racer Alpha web users who sign in with their own NEAR wallet.
+ * External wallet marker (`EXTERNAL_CONNECTED_WALLET`) and optional implicit payout address
+ * helper.
  *
- * The wallet is an implicit account: its address is the new key's public key, so creating it costs
- * RacerBot nothing (it cannot be farmed) and it exists on-chain once the user first sends NEAR to it.
- * Like a Telegram user's wallet, its key is generated and encrypted on the server and never leaves
- * it: no route returns it, so nothing in the browser (or its developer console) can see it.
+ * On the Racer Web App, users connect their own self-custodial browser wallets (Meteor, Here,
+ * MyNearWallet, Phantom, MetaMask) marked with `EXTERNAL_CONNECTED_WALLET` (RacerBot holds no
+ * private key for them) and trade through client-signed transactions or keyless NEP-518 Global
+ * Contract position executors (`<id>.racerbot.near`).
  *
- * The connected wallet stays linked as the way to sign in, so the same signature that proves who the
- * user is keeps reaching this account.
+ * `createWebManagedWallet` is a legacy / Telegram-paired helper retained only for cross-client
+ * parity or when a non-NEAR account requires a deterministic implicit NEAR settlement address.
  */
 import { createLogger, encrypt, generateScopedAccessKey } from '@racerbot/shared';
 import { createUserWallet, getUserById, getUserWallets, type UserRecord } from '@racerbot/db';

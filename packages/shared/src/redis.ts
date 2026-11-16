@@ -215,12 +215,123 @@ function maskRedisUrl(rawUrl: string): string {
   }
 }
 
+function createInMemoryRedis(): RedisClient {
+  const kv = new Map<string, { value: string; expiresAt?: number }>();
+  const hashes = new Map<string, Map<string, string>>();
+  const sets = new Map<string, Set<string>>();
+  const handlers = new Map<string, (msg: string) => void>();
+
+  const readKv = (key: string): string | null => {
+    const entry = kv.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt && entry.expiresAt <= Date.now()) {
+      kv.delete(key);
+      return null;
+    }
+    return entry.value;
+  };
+
+  return {
+    isConnected() {
+      return true;
+    },
+    getStatus() {
+      return 'ready';
+    },
+    async publish(channel, message) {
+      const handler = handlers.get(channel);
+      if (handler) {
+        handler(message);
+        return 1;
+      }
+      return 0;
+    },
+    async subscribe(channel, handler) {
+      handlers.set(channel, handler);
+    },
+    async unsubscribe(channel?) {
+      if (channel) handlers.delete(channel);
+      else handlers.clear();
+    },
+    async get(key) {
+      return readKv(key);
+    },
+    async set(key, value, ttlSeconds?) {
+      kv.set(key, {
+        value,
+        expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : undefined,
+      });
+    },
+    async setNxPx(key, value, ttlMs) {
+      if (readKv(key) !== null) return false;
+      kv.set(key, { value, expiresAt: Date.now() + ttlMs });
+      return true;
+    },
+    async eval(_script, _numkeys, ...args) {
+      const key = String(args[0]);
+      const token = String(args[1]);
+      if (readKv(key) === token) {
+        kv.delete(key);
+        return 1;
+      }
+      return 0;
+    },
+    async del(key) {
+      kv.delete(key);
+      hashes.delete(key);
+      sets.delete(key);
+    },
+    async hget(key, field) {
+      return hashes.get(key)?.get(field) ?? null;
+    },
+    async hset(key, fields) {
+      let map = hashes.get(key);
+      if (!map) {
+        map = new Map();
+        hashes.set(key, map);
+      }
+      for (const [k, v] of Object.entries(fields)) {
+        map.set(k, String(v));
+      }
+    },
+    async hgetall(key) {
+      const map = hashes.get(key);
+      if (!map) return {};
+      return Object.fromEntries(map.entries());
+    },
+    async sadd(key, ...members) {
+      let set = sets.get(key);
+      if (!set) {
+        set = new Set();
+        sets.set(key, set);
+      }
+      let added = 0;
+      for (const m of members) {
+        if (!set.has(m)) {
+          set.add(m);
+          added++;
+        }
+      }
+      return added;
+    },
+    async smembers(key) {
+      return Array.from(sets.get(key) ?? []);
+    },
+    async disconnect() {
+      handlers.clear();
+    },
+  };
+}
+
 /**
  * Create a Redis client backed by ioredis.
  * Separate pub and sub connections are required by Redis protocol —
  * a subscribed connection cannot issue regular commands.
  */
 export function createRedis(url: string): RedisClient {
+  if (process.env.VITEST && process.env.TEST_REAL_REDIS !== 'true') {
+    return createInMemoryRedis();
+  }
   const maskedUrl = maskRedisUrl(url);
   console.log(`[REDIS] Initializing Redis client for: ${maskedUrl}`);
 

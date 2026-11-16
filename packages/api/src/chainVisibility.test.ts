@@ -73,16 +73,20 @@ describe('Chain Visibility Settings', () => {
 
     expect(callbackDataList).toContain('toggle_chain_vis:near');
     expect(callbackDataList).toContain('toggle_chain_vis:solana');
+    expect(callbackDataList).toContain('toggle_chain_vis:base');
+    expect(callbackDataList).toContain('toggle_chain_vis:arbitrum');
+    expect(callbackDataList).toContain('toggle_chain_vis:zero');
+    expect(callbackDataList).toContain('toggle_chain_vis:ethereum');
     expect(callbackDataList).toContain('toggle_chain_vis:hyperevm');
     expect(callbackDataList).toContain('toggle_chain_vis:elysium');
     expect(callbackDataList).toContain('toggle_chain_vis:sui');
     expect(callbackDataList).toContain('toggle_chain_vis:starknet');
 
     expect(callbackDataList).toContain('preset_chain_vis:near');
+    expect(callbackDataList).toContain('preset_chain_vis:base');
     expect(callbackDataList).toContain('preset_chain_vis:solana');
+    expect(callbackDataList).toContain('preset_chain_vis:zero');
     expect(callbackDataList).toContain('preset_chain_vis:hyperevm');
-    expect(callbackDataList).toContain('preset_chain_vis:sui');
-    expect(callbackDataList).toContain('preset_chain_vis:starknet');
     expect(callbackDataList).toContain('preset_chain_vis:all');
   });
 });

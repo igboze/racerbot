@@ -1,7 +1,7 @@
 /**
- * Racer Alpha wallet routes: which NEAR wallet the signed-in user trades with, and creating a
- * RacerBot-managed one for users who signed in with their own wallet. Only public addresses are
- * ever returned; keys stay encrypted on the server.
+ * Racer Alpha wallet inspection & legacy fallback routes: reports the user's connected
+ * self-custodial browser wallets (`EXTERNAL_CONNECTED_WALLET`) and active NEAR settlement
+ * address.
  */
 import type { Router } from 'express';
 import { createLogger } from '@racerbot/shared';
