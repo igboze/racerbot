@@ -1926,6 +1926,32 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
 
       const isTestnet = chain === 'hyperevm' ? (process.env.HYPEREVM_TESTNET === 'true') : false;
 
+      // For Elysium L2, check its native DEX/launchpads (Kleos, Ascend, Montra, RonsPad) first
+      if (chain === 'elysium' || (!explicitChain && dexscreenerAny?.chainId?.toLowerCase() === 'elysium')) {
+        const [ronsPad, montra, ascend, kleosCard, pad, univ4] = await Promise.all([
+          lookupRonsPadToken(tokenAddress).catch(() => null),
+          lookupMontraToken(tokenAddress, null).catch(() => null),
+          lookupAscendToken(tokenAddress).catch(() => null),
+          lookupKleosToken(tokenAddress, null).catch(() => null),
+          lookupPadToken(tokenAddress).catch(() => null),
+          lookupUniV4Token(tokenAddress).catch(() => null),
+        ]);
+        const kleosTradeable = kleosCard && !kleosCard.trade_block_reason ? kleosCard : null;
+        const elysiumToken = ronsPad ?? montra ?? ascend ?? kleosTradeable ?? pad ?? univ4 ?? kleosCard;
+        if (elysiumToken) {
+          if (dexscreenerAny?.priceUsd && (!elysiumToken.price_usd || elysiumToken.price_usd === '0')) {
+            elysiumToken.price_usd = dexscreenerAny.priceUsd.toString();
+          }
+          if (dexscreenerAny?.liquidityUsd && (!elysiumToken.liquidity_usd || elysiumToken.liquidity_usd === '0')) {
+            elysiumToken.liquidity_usd = Number(dexscreenerAny.liquidityUsd).toFixed(2);
+          }
+          tokenInfoCache.set(tokenAddress, { data: elysiumToken, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          tokenInfoCache.set(rawTokenAddress, { data: elysiumToken, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          rememberEvmToken(elysiumToken);
+          return elysiumToken;
+        }
+      }
+
       const [tokenMeta] = await Promise.all([
         getErc20TokenInfo(tokenAddress, chain, isTestnet).catch(() => null),
       ]);
@@ -1934,25 +1960,6 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         : null;
 
       if (!tokenMeta && !dexscreenerData) {
-        if (chain === 'elysium' || !explicitChain) {
-          // Elysium mainnet launchpads: RonsPad, Montra and Ascend name their launches on chain, then Kleos coins newer than its board
-          const [ronsPad, montra, ascend, kleosCard, pad, univ4] = await Promise.all([
-            lookupRonsPadToken(tokenAddress).catch(() => null),
-            lookupMontraToken(tokenAddress, null).catch(() => null),
-            lookupAscendToken(tokenAddress).catch(() => null),
-            lookupKleosToken(tokenAddress, null).catch(() => null),
-            lookupPadToken(tokenAddress).catch(() => null),
-            lookupUniV4Token(tokenAddress).catch(() => null),
-          ]);
-          const kleosTradeable = kleosCard && !kleosCard.trade_block_reason ? kleosCard : null;
-          const kleos = ronsPad ?? montra ?? ascend ?? kleosTradeable ?? pad ?? univ4 ?? kleosCard;
-          if (kleos) {
-            tokenInfoCache.set(tokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-            tokenInfoCache.set(rawTokenAddress, { data: kleos, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
-            rememberEvmToken(kleos);
-            return kleos;
-          }
-        }
         throw await explainMissingEvmToken(tokenAddress);
       }
 
