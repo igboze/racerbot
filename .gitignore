@@ -16,6 +16,12 @@ scratch*
 *.scratch.*
 *.vsix
 
+# AI Tools & Agent configurations
+.claude/
+.cursor/
+.gemini/
+.agents/
+
 # Keys and credentials
 .secrets/
 *.pem

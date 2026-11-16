@@ -324,8 +324,8 @@ Instead of wrestling with clunky DEX interfaces, approving endless wallet popups
 - **Live On-Chain Balance Sync**: Real-time RPC reconciliation reflects external transfers and DEX trades instantly, clearing empty positions automatically.
 - **Shareable PnL Cards**: Generates high-resolution social PnL cards displaying ROI percentages, profit in native tokens, hold duration, and token badges.
 
-### 📢 Community Buy Bot Alerts
-- Add RacerBot to Telegram groups to track token buys in real-time. Features animated buy steps, market cap trackers, whale alerts, customizable media banners, and instant buy shortcuts.
+### 📢 Real-Time Community Buy Alerts & Live Ticker
+- Real-time stream broadcasting verified DEX buy transactions on-chain. Features animated buy tiers, live market cap tracking, whale alerts, and instant 1-click buy shortcuts directly on the Web Terminal.
 
 ### 🏛️ NEAR Builders Activity Protocol
 - Cryptographically signs and publishes on-chain activity events (`trade.buy`, `trade.sell`, `snipe.executed`) to Nostr relays via the [NEAR Builders Activity protocol](https://activity.nearbuilders.org), allowing traders to earn verifiable ecosystem reputation.
@@ -556,11 +556,11 @@ The repository is structured as a **Turborepo** monorepo:
    Fill in your configuration details in `.env`:
    - `DATABASE_URL`: Connection string to your PostgreSQL instance.
    - `REDIS_URL`: Connection string to your Redis server.
-   - `TELEGRAM_BOT_TOKEN`: Bot token from Telegram's `@BotFather`.
-   - `KEY_ENCRYPTION_MASTER_KEY`: 64-character hex string for AES-256-GCM encryption.
    - `RACERBOT_PARENT_ACCOUNT`: Master controller account ID (`racerbot.near`).
    - `RPC_PROVIDERS`: Comma-separated list of NEAR RPC endpoints (e.g. FastNEAR, QuickNode).
    - `NEAR_INTENTS_API_URL`: NEAR Intents API solver endpoint (`https://1click.chaindefuser.com`).
+   - `TELEGRAM_BOT_TOKEN`: *(Optional — only required for the legacy bot client; not used by the Web App)*.
+   - `KEY_ENCRYPTION_MASTER_KEY`: *(Optional — legacy bot key encryption; not used by the Web App)*.
 
 4. **Run Database Migrations**:
    ```bash
@@ -631,12 +631,13 @@ bash scripts/deploy.sh
 
 ## 🤝 Community & Socials
 
-- **Live Web Terminal**: [racerbot.io](https://racerbot.io)
-- **Telegram Bot *(Legacy / Companion)***: [@racertradingbot](https://t.me/racertradingbot)
+- **Official Web Application**: [racerbot.io](https://racerbot.io)
 - **Community Chat**: [t.me/racerbot_community](https://t.me/racerbot_community)
 - **Announcements**: [t.me/racertrading](https://t.me/racertrading)
 - **Twitter / X**: [@racertradingbot](https://x.com/racertradingbot)
 - **Ecosystem Activity**: [activity.nearbuilders.org](https://activity.nearbuilders.org/activity-sources)
+
+*(Note: Legacy companion bot: `@racertradingbot` — explicitly out of scope for hackathon evaluation).*
 
 ---
 
