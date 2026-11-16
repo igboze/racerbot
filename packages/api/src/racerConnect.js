@@ -462,7 +462,7 @@
             footerBranding: {
               icon: '/assets/logo.png',
               heading: 'Racer Connect',
-              link: 'https://racerbot.io',
+              link: 'https://racertrades.xyz',
               linkText: 'Powered by NEAR Connect',
             },
           });

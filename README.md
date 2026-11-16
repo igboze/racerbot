@@ -3,13 +3,13 @@
 
 > [!IMPORTANT]
 > ### 📅 Hackathon Evaluation Note (November 16, 2026)
-> - **Submission Scope**: The hackathon submission is strictly the **Racer Web Application** ([racerbot.io](https://racerbot.io)); the Telegram bot is a legacy companion and is **strictly OUT OF SCOPE**.
+> - **Submission Scope**: The hackathon submission is strictly the **Racer Web Application** ([racertrades.xyz](https://racertrades.xyz)); the Telegram bot is a legacy companion and is **strictly OUT OF SCOPE**.
 > - **Build & Test Instructions**: Always run `npm run build` before `npm test` (compiles workspace packages across the monorepo); database tests (`packages/db`) require a running PostgreSQL instance (`DATABASE_URL`).
 > - **Live Mainnet Executor Proof**: Ephemeral position executors (`<id>.racerbot.near`) execute under the NEP-518 Global Contract on NEAR Mainnet (Code Hash: `812af58d8779a100dbcf61c94d9155f93f32bd4b2ecb00255b48d50e71888d7e`, Mainnet Deploy Tx: [`B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r`](https://nearblocks.io/txns/B8T1QjEacWbS4yT67idycGfZaVLm6AQWz11AtseC925r)). Executors execute atomic swaps, sweep funds to shielded intents, and immediately invoke `DeleteAccount` to prune on-chain state and preserve trader privacy.
 
 > 🏆 **OFFICIAL NEAR HACKATHON SUBMISSION: RACER WEB APPLICATION**
 >
-> 🌐 **Live Web Application:** [racerbot.io](https://racerbot.io) *(Web Terminal: Home `/`, Alpha `/alpha`, Fleet `/fleet`, Bubblemap `/bubblemap`, Arena `/competition`)*
+> 🌐 **Live Web Application:** [racertrades.xyz](https://racertrades.xyz) *(Web Terminal: Home `/`, Alpha `/alpha`, Fleet `/fleet`, Bubblemap `/bubblemap`, Arena `/competition`)*
 > ⚡ **Self-Custodial & Non-Custodial:** Connect personal **NEAR** (Meteor, Here, MyNearWallet, Nightly), **Solana** (Phantom, Solflare), or **EVM** (MetaMask, Rabby) wallets and trade directly through **Keyless NEP-518 Global Position Executors** (`<id>.racerbot.near`) and **NEAR Intents**.
 >
 > 📊 **Hackathon Production Traction (Zero Overclaiming):**
@@ -30,7 +30,7 @@
 > ### 🏛️ JUDGES & SCREENING NOTICE: SUBMISSION SCOPE & CUSTODY SEPARATION
 > 
 > 1. **Submission Scope (Web Application ONLY)**:
->    - **The Hackathon Submission is strictly the Racer Web Application** ([racerbot.io](https://racerbot.io) / web routes in `packages/api/src/*.html`).
+>    - **The Hackathon Submission is strictly the Racer Web Application** ([racertrades.xyz](https://racertrades.xyz) / web routes in `packages/api/src/*.html`).
 >    - **The Telegram Bot (`@racertradingbot`) is an existing legacy / automated client and is STRICTLY OUT OF SCOPE for hackathon scoring.** It is co-located in this monorepo purely to share underlying transaction execution (`@racerbot/executor`) and block detector (`@racerbot/detector`) modules.
 > 
 > 2. **Custody & Key Management (100% Non-Custodial Web App)**:
@@ -90,7 +90,7 @@ Racer is built natively on NEAR Protocol as a high-speed, non-custodial cross-ch
 
 - **Submission ID:** `ba9e160b-47b4-453d-8e09-aa99fbfabc74` (Project: **Racer**)
 - **Target Hackathon Track:** **Privacy Track** *(Primary Target: Confidential Trading & TEE Intent Settlement on NEAR Mainnet)*
-- **Live Web Application URL:** [racerbot.io](https://racerbot.io) *(Production Web Terminal on NEAR Mainnet)*
+- **Live Web Application URL:** [racertrades.xyz](https://racertrades.xyz) *(Production Web Terminal on NEAR Mainnet)*
 - **Primary Submission Scope:** **Racer Web Application Suite** (`/`, `/alpha`, `/fleet`, `/bubblemap`, `/competition`)
 - **Explicit Scope Exclusion:** **The Telegram Bot (`@racertradingbot`) is an existing legacy bot and is strictly OUT OF SCOPE for hackathon scoring.**
 - **Global Contract & Master Controller:** `racerbot.near` (On-Chain Controller & Keyless Executor Factory; 264-byte base storage as contract code is deployed globally under NEP-518)
@@ -295,7 +295,7 @@ Racer utilizes a non-custodial, keyless position executor architecture governed 
 
 ## 💡 What is Racer?
 
-**Racer** ([racerbot.io](https://racerbot.io)) is an automated, lightning-fast decentralized trading web terminal built natively on NEAR Protocol. It empowers traders to buy, sell, snipe, copy-trade, and automate orders across **NEAR Protocol**, **Solana**, and **EVMs** with 100% non-custodial wallet connectivity.
+**Racer** ([racertrades.xyz](https://racertrades.xyz)) is an automated, lightning-fast decentralized trading web terminal built natively on NEAR Protocol. It empowers traders to buy, sell, snipe, copy-trade, and automate orders across **NEAR Protocol**, **Solana**, and **EVMs** with 100% non-custodial wallet connectivity.
 
 Instead of wrestling with clunky DEX interfaces, approving endless wallet popups, calculating gas and storage fees, or missing new token bonding curves, Racer executes trades in milliseconds: from instant 1-click web swaps and confidential stealth execution to automated first-block pool snipes and trailing stop-losses.
 
@@ -665,7 +665,7 @@ bash scripts/deploy.sh
 
 ## 🤝 Community & Socials
 
-- **Official Web Application**: [racerbot.io](https://racerbot.io)
+- **Official Web Application**: [racertrades.xyz](https://racertrades.xyz)
 - **Community Chat**: [t.me/racerbot_community](https://t.me/racerbot_community)
 - **Announcements**: [t.me/racertrading](https://t.me/racertrading)
 - **Twitter / X**: [@racertradingbot](https://x.com/racertradingbot)
