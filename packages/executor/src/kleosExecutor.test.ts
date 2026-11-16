@@ -74,6 +74,8 @@ vi.mock('@racerbot/shared', async (importOriginal) => {
     ...actual,
     getEvmProvider: (chain: string) => (chain === 'hyperevm' ? l1 : l2),
     getEvmWalletFromEncrypted: (_enc: string, _key: string, provider: unknown) => (provider === l1 ? l1Signer : wallet),
+    // The executor gets its signers through getEvmSigner (local here: no SIGNER_URL)
+    getEvmSigner: (_ref: unknown, _key: string, provider: unknown) => (provider === l1 ? l1Signer : wallet),
     getErc20TokenInfo: vi.fn(async () => ({ symbol: 'AGORA', name: 'Agora', decimals: 18 })),
     getErc20Balance: vi.fn(async () => {
       const raw = state.tokenBalances.shift() ?? 0n;

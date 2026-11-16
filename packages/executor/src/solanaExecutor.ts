@@ -19,6 +19,8 @@ import {
   lamportsToSol,
   type SwapEvent,
   distributeTradeFeeRewards,
+  getSolanaSigner,
+  signSolanaTx,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -74,7 +76,8 @@ export async function executeSolanaSwap(
   if (!owner || !keyEnc) {
     throw new Error('Solana wallet not set up yet. Please send /start to create it.');
   }
-  const keypair = restoreSolanaKeypair(keyEnc, MASTER_KEY);
+  // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+  const keypair = getSolanaSigner({ userId: user.id, address: owner, encryptedKey: keyEnc, purpose: 'solana_swap' }, MASTER_KEY);
   if (keypair.publicKey.toBase58() !== owner) {
     throw new Error('Solana wallet key does not match the stored address. Please contact support.');
   }
@@ -111,7 +114,7 @@ export async function executeSolanaSwap(
       feeRecipient: DEFAULT_SOLANA_DEV_FEE_WALLET,
     });
 
-    build.tx.sign([keypair]);
+    await signSolanaTx(build.tx, [keypair]);
     const sent = await sendAndConfirmSolanaTransaction(build.tx, build.lastValidBlockHeight, onProgress);
     invalidateSolanaBalanceCache(owner);
     if (!sent.confirmed) {
@@ -224,7 +227,7 @@ export async function executeSolanaSwap(
     feeRecipient: DEFAULT_SOLANA_DEV_FEE_WALLET,
   });
 
-  build.tx.sign([keypair]);
+  await signSolanaTx(build.tx, [keypair]);
   const sent = await sendAndConfirmSolanaTransaction(build.tx, build.lastValidBlockHeight, onProgress);
   invalidateSolanaBalanceCache(owner);
   if (!sent.confirmed) {

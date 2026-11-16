@@ -42,6 +42,7 @@ import {
   simulateV4RoundTrip,
   isSaneV4Fee,
   quoteMatchesMarket,
+  getEvmSigner,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -165,8 +166,10 @@ export async function executeKleosSwap(
 
   const l1 = getEvmProvider('hyperevm', false);
   const l2 = getEvmProvider('elysium', false);
-  const l1Signer = getEvmWalletFromEncrypted(userKeyEnc, MASTER_KEY, l1);
-  const l2Signer = getEvmWalletFromEncrypted(userKeyEnc, MASTER_KEY, l2);
+  // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+  const keyRef = { userId: user.id, address: userAddress, encryptedKey: userKeyEnc, purpose: 'elysium_pad_swap' };
+  const l1Signer = getEvmSigner(keyRef, MASTER_KEY, l1);
+  const l2Signer = getEvmSigner(keyRef, MASTER_KEY, l2);
   const inboxIface = new ethers.Interface(ELYSIUM_INBOX_ABI);
   const sendToInbox = async (fn: 'sendL2Message' | 'createRetryableTicket', args: unknown[], value = 0n) => {
     const tx = await l1Signer.sendTransaction({ to: ELYSIUM_BRIDGE.inbox, data: inboxIface.encodeFunctionData(fn, args), value });

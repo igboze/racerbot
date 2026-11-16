@@ -48,6 +48,9 @@ import {
   SOLANA_FEE_BPS,
   SOLANA_BPS_DENOMINATOR,
   solanaFeeTransferIx,
+  getSolanaSigner,
+  signSolanaTx,
+  type SolanaKeyLike,
 } from '@racerbot/shared';
 import {
   getUserByTelegramId,
@@ -81,13 +84,13 @@ export function isSolanaFleetToken(tokenAddress: string): boolean {
 }
 
 /** The user's main Solana keypair (active wallet first, like the executor). */
-async function mainSolanaKeypair(user: UserRecord): Promise<{ address: string; keypair: Keypair }> {
+async function mainSolanaKeypair(user: UserRecord): Promise<{ address: string; keypair: SolanaKeyLike }> {
   const active = await getActiveWallet(user.id, 'solana').catch(() => null);
   const address = active?.address || user.solana_address;
   const enc = active?.encrypted_private_key || user.solana_private_key_enc;
   if (!address || !enc) throw new Error('Your Solana wallet is not ready yet. Send /start and try again.');
-  const keypair = restoreSolanaKeypair(enc, MASTER_KEY);
-  if (keypair.publicKey.toBase58() !== address) throw new Error('Solana wallet key mismatch. Please contact support.');
+  // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+  const keypair = getSolanaSigner({ userId: user.id, address, encryptedKey: enc, purpose: 'solana_fleet' }, MASTER_KEY);
   return { address, keypair };
 }
 
@@ -119,8 +122,8 @@ export async function ensureSolanaFleetWallets(fleet: RaceFleetRecord): Promise<
   return getRaceFleetWallets(fleet.id, 'solana');
 }
 
-function keypairOf(w: RaceFleetWalletRecord): Keypair {
-  return restoreSolanaKeypair(w.encrypted_private_key, MASTER_KEY);
+function keypairOf(w: RaceFleetWalletRecord): SolanaKeyLike {
+  return getSolanaSigner({ userId: w.user_id, address: w.account_id, encryptedKey: w.encrypted_private_key, purpose: 'solana_fleet' }, MASTER_KEY);
 }
 
 // ── Subscription paid in SOL ────────────────────────────────────────────────
@@ -368,11 +371,12 @@ async function fireSolanaFleetWave(legs: FleetLeg[], inputMint: string, outputMi
   }
 
   const ready = prepared.filter((p) => p.ixs && !p.error);
-  const txs = ready.map((p) => {
+  // Signed in parallel (remote signing included), so the fleet still fires together
+  const txs = await Promise.all(ready.map(async (p) => {
     const tx = compileSolanaPlan(p.plan, withFee(p, p.ixs!), p.leg.wallet.account_id, bh.blockhash);
-    tx.sign([keypairOf(p.leg.wallet)]);
+    await signSolanaTx(tx, [keypairOf(p.leg.wallet)]);
     return tx;
-  });
+  }));
   const sent = txs.length > 0 ? await sendAndConfirmManySolana(txs, bh.lastValidBlockHeight) : [];
   const bySig = new Map(ready.map((p, i) => [p, sent[i]]));
 

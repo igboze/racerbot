@@ -18,8 +18,18 @@ process.env.RACERBOT_SIGNER = 'true';
 import 'dotenv/config';
 import crypto from 'crypto';
 import express from 'express';
-import { createLogger, assertValidMasterKey } from '@racerbot/shared';
-import { getUserById } from '@racerbot/db';
+import { ethers } from 'ethers';
+import { VersionedMessage, VersionedTransaction } from '@solana/web3.js';
+import {
+  createLogger,
+  assertValidMasterKey,
+  getEvmWalletFromEncrypted,
+  restoreSolanaKeypair,
+  type RemoteSignChain,
+} from '@racerbot/shared';
+import { getDb, getUserById } from '@racerbot/db';
+import { findSigningKey, ownAddresses } from './keyStore.js';
+import { evaluateEvmTx, evaluateSolanaMessage, blocks, policyMode, type Findings } from './signPolicy.js';
 import { MONEY_OUT_OPS, executeMoneyOut, signBody, toWire, type MoneyOutOp } from '../moneyOut.js';
 import { checkAndRecord, finishAudit, breakerState, POLICY } from './policy.js';
 import { sendAdminAlert } from '../securityAlerts.js';
@@ -67,15 +77,20 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, paused: process.env.SIGNER_PAUSED === 'true', breaker: breakerState() ? 'tripped' : 'ok' });
 });
 
-app.post('/v1/money-out', async (req: any, res) => {
-  // 1. Only the API may ask: HMAC over timestamp + body, fresh, and never reused
+/** Only RacerBot's own services may ask: HMAC over timestamp + body, fresh, and never reused */
+function authenticated(req: any): boolean {
   const timestamp = String(req.headers['x-signer-timestamp'] || '');
   const signature = String(req.headers['x-signer-signature'] || '');
   const expected = signBody(SECRET, timestamp, req.rawBody || '');
   const fresh = Math.abs(Date.now() - Number(timestamp)) <= MAX_CLOCK_SKEW_MS;
   const valid = signature.length === expected.length
     && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  if (!valid || !fresh || !rememberSignature(signature)) {
+  return valid && fresh && rememberSignature(signature);
+}
+
+app.post('/v1/money-out', async (req: any, res) => {
+  // 1. Only the API may ask
+  if (!authenticated(req)) {
     logger.warn('Refused an unauthenticated money-out request');
     res.status(401).json({ ok: false, error: 'Not authorized' });
     return;
@@ -124,6 +139,113 @@ app.post('/v1/money-out', async (req: any, res) => {
     const message = err?.message || 'Withdrawal failed';
     await finishAudit(decision.auditId, 'failed', { reason: message.slice(0, 500) });
     res.status(422).json({ ok: false, error: message });
+  }
+});
+
+/** Records one signing request and what the rules found */
+async function auditSign(userId: string, chain: RemoteSignChain, purpose: string | null, summary: string | null,
+  findings: Findings, refused: boolean): Promise<void> {
+  const notes = [...findings.hard.map(h => `hard: ${h}`), ...findings.soft.map(s => `soft: ${s}`)];
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO signer_audit (user_id, op, destination, decision, status, reason, finished_at)
+     VALUES ($1::uuid, $2::text, $3::text, $4::text, $5::text, $6::text, NOW())`,
+    [userId, `sign_${chain}${purpose ? `:${purpose}` : ''}`, summary, refused ? 'refused' : 'allowed',
+      refused ? 'refused' : 'done', notes.length ? `[${policyMode()}] ${notes.join('; ')}`.slice(0, 1000) : null]
+  ).catch((err: any) => logger.warn(`Sign audit not written: ${err?.message}`));
+}
+
+/**
+ * Signs a trade transaction (signer Phase B): the caller sends the UNSIGNED transaction,
+ * the signer checks it against its rules and signs with the key only it holds.
+ */
+app.post('/v1/sign', async (req: any, res) => {
+  if (!authenticated(req)) {
+    logger.warn('Refused an unauthenticated signing request');
+    res.status(401).json({ ok: false, error: 'Not authorized' });
+    return;
+  }
+  const { chain, kind, userId, address, purpose, payload } = req.body || {};
+  if ((chain !== 'evm' && chain !== 'solana') || typeof userId !== 'string' || typeof address !== 'string' || typeof payload !== 'string') {
+    res.status(400).json({ ok: false, error: 'Malformed signing request' });
+    return;
+  }
+  if (process.env.SIGNER_PAUSED === 'true') {
+    res.status(429).json({ ok: false, error: 'Trading is paused for maintenance. Your funds are safe; try again later.' });
+    return;
+  }
+
+  try {
+    // The key only if this address belongs to this user
+    const encryptedKey = await findSigningKey(userId, chain, address);
+    if (!encryptedKey) {
+      res.status(404).json({ ok: false, error: 'That wallet does not belong to this account.' });
+      return;
+    }
+    const own = await ownAddresses(userId, chain);
+    const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY!;
+
+    if (chain === 'evm') {
+      const wallet = getEvmWalletFromEncrypted(encryptedKey, masterKey);
+      if (kind === 'transaction') {
+        const tx = ethers.Transaction.from(payload);
+        const findings = evaluateEvmTx(tx, own);
+        const refused = blocks(findings);
+        await auditSign(userId, chain, purpose, tx.to, findings, refused);
+        if (refused) {
+          res.status(403).json({ ok: false, error: `The signer refused this transaction: ${[...findings.hard, ...findings.soft][0]}` });
+          return;
+        }
+        tx.signature = wallet.signingKey.sign(tx.unsignedHash);
+        res.json({ ok: true, signed: tx.serialized });
+        return;
+      }
+      // Messages and typed data move no funds by themselves: always recorded, signed as asked
+      if (kind === 'message') {
+        await auditSign(userId, chain, purpose, 'message', { hard: [], soft: [] }, false);
+        res.json({ ok: true, signed: await wallet.signMessage(ethers.getBytes(payload)) });
+        return;
+      }
+      if (kind === 'typed_data') {
+        const { domain, types, value } = JSON.parse(payload);
+        const findings: Findings = { hard: [], soft: [] };
+        // A signed permit hands token spending to its spender
+        if (types?.Permit && value?.spender) findings.soft.push(`typed-data permit for spender ${value.spender}`);
+        const refused = blocks(findings);
+        await auditSign(userId, chain, purpose, domain?.verifyingContract ?? 'typed data', findings, refused);
+        if (refused) {
+          res.status(403).json({ ok: false, error: 'The signer refused this signature request.' });
+          return;
+        }
+        const { EIP712Domain: _drop, ...primaryTypes } = types || {};
+        res.json({ ok: true, signed: await wallet.signTypedData(domain, primaryTypes, value) });
+        return;
+      }
+      res.status(400).json({ ok: false, error: 'Unknown signing kind' });
+      return;
+    }
+
+    // Solana: the caller sends the serialized message; the signature comes back
+    const keypair = restoreSolanaKeypair(encryptedKey, masterKey);
+    const message = VersionedMessage.deserialize(Buffer.from(payload, 'base64'));
+    const findings = evaluateSolanaMessage(message, own);
+    const refused = blocks(findings);
+    await auditSign(userId, chain, purpose, `${message.compiledInstructions.length} instruction(s)`, findings, refused);
+    if (refused) {
+      res.status(403).json({ ok: false, error: `The signer refused this transaction: ${[...findings.hard, ...findings.soft][0]}` });
+      return;
+    }
+    const index = message.staticAccountKeys.findIndex(k => k.equals(keypair.publicKey));
+    if (index < 0 || index >= message.header.numRequiredSignatures) {
+      res.status(400).json({ ok: false, error: 'This wallet is not a signer of that transaction.' });
+      return;
+    }
+    const tx = new VersionedTransaction(message);
+    tx.sign([keypair]);
+    res.json({ ok: true, signed: Buffer.from(tx.signatures[index]).toString('base64') });
+  } catch (err: any) {
+    logger.warn(`Signing failed: ${err?.message}`);
+    res.status(422).json({ ok: false, error: err?.message || 'Signing failed' });
   }
 });
 

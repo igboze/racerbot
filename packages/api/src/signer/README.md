@@ -50,12 +50,55 @@ again. Nothing else changes.
 | `SIGNER_GLOBAL_MAX_WITHDRAWALS` | `60` | Circuit breaker: withdrawals across all users... |
 | `SIGNER_GLOBAL_WINDOW_MINUTES` | `10` | ...within this window. When hit, the signer pauses itself and alerts the admins; restart the service to clear it, after checking `signer_audit` |
 
-### What Phase B changes (next)
+## Phase B: trades signed by the signer
 
-Phase A moves money-out signing to the signer. Trades, snipes, fleet, swarm, Kleos and the
-confidential executors still sign in the API, so the API still needs
-`KEY_ENCRYPTION_MASTER_KEY`. Phase B moves those too; then the master key is removed from the
-API and only the signer holds it. That is when a compromised API stops being able to sign at all.
+Phase B moves trade signing into the signer too, chain by chain, so that in the end only the
+signer holds `KEY_ENCRYPTION_MASTER_KEY`.
+
+| Stage | Chains | Status |
+|---|---|---|
+| B1 | HyperEVM, Elysium, Kleos and the other Elysium pads; Solana (swaps and RaceFleet) | shipped |
+| B2 | NEAR (swaps, fleet, confidential executors, vault) | next |
+| B3 | Sui, Starknet | later |
+| B4 | Key creation, import and export inside the signer; remove the master key from the API | last |
+
+**How it works.** With `SIGNER_URL` set, a trade builds its transaction as before but sends it
+*unsigned* to the signer (`/v1/sign`). The signer checks that the wallet belongs to the user,
+checks the transaction against its rules, signs with the key and sends the signature back.
+The trade code itself does not change.
+
+**Every service that trades needs the two variables**: the API, and the executor and triggers
+services if they run separately (when they run inside the API container they inherit them):
+`SIGNER_URL` and `SIGNER_SHARED_SECRET`.
+
+### The trade rules (`SIGNER_POLICY_MODE`)
+
+- **Hard** findings are what only theft looks like: native funds or tokens sent to an address
+  that is not the user's own (main, imported or fleet wallet) or RacerBot's fee wallet, token
+  approvals to unknown spenders, account authority or owner changes, contract deployment.
+- **Soft** findings are calls to a contract or program not yet on the allowlist (a new
+  launchpad or router).
+
+| Mode | Effect |
+|---|---|
+| `monitor` (default) | Signs everything, records findings in `signer_audit.reason` |
+| `enforce_hard` | Refuses hard findings, records soft ones |
+| `enforce` | Refuses both |
+
+Run `monitor` for a few days of normal trading, then review:
+
+```sql
+SELECT op, destination, reason, COUNT(*) FROM signer_audit
+WHERE op LIKE 'sign_%' AND reason IS NOT NULL AND created_at > NOW() - INTERVAL '7 days'
+GROUP BY 1, 2, 3 ORDER BY 4 DESC;
+```
+
+Add any legitimate contract to `SIGNER_EVM_ALLOWED_CONTRACTS` or program to
+`SIGNER_SOLANA_ALLOWED_PROGRAMS` (comma separated) on the signer, then switch to
+`enforce_hard`, and later `enforce`.
+
+Known limit: a Kleos/Elysium Multicall3 order is checked as a call to Multicall3; the value
+transfers bundled inside it are not unpacked yet.
 
 ## Rotating the master key (optional, owner-run)
 

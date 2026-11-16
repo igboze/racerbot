@@ -22,6 +22,7 @@ import {
   getEvmNativeSymbol,
   getEvmExplorerUrl,
   getDefaultRouter,
+  getEvmSigner,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -91,7 +92,8 @@ export async function executeEvmSwap(
   }
 
   const provider = getEvmProvider(chain, isTestnet);
-  const signer = getEvmWalletFromEncrypted(userKeyEnc, MASTER_KEY, provider);
+  // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+  const signer = getEvmSigner({ userId: user.id, address: userAddress, encryptedKey: userKeyEnc, purpose: `${chain}_swap` }, MASTER_KEY, provider);
 
   const nativeSym = getEvmNativeSymbol(chain);
   const isBuy =

@@ -421,6 +421,17 @@ export {
   getZroUsdPrice,
 } from './evm.js';
 export { isEvmChainName, evmStoredAmount } from './evm.js';
+export {
+  remoteSigningEnabled,
+  requestRemoteSignature,
+  RemoteEvmSigner,
+  RemoteSolanaKey,
+  getEvmSigner,
+  getSolanaSigner,
+  type SigningKeyRef,
+  type RemoteSignChain,
+} from './remoteSigner.js';
+export { signSolanaTx, isLocalKeypair, type SolanaKeyLike, type SolanaRemoteSigner } from './solanaSigning.js';
 export type {
   EvmChain,
   GeneratedEvmWallet,

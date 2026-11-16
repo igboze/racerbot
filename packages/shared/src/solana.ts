@@ -24,6 +24,7 @@
  *    transaction (atomic: if the swap fails, no fee is taken). Same rates as
  *    NEAR: 1.5% on buys, 1.5% on sells (2% when proceeds exceed $200).
  */
+import { signSolanaTx, type SolanaKeyLike } from './solanaSigning.js';
 import {
   AddressLookupTableAccount,
   ComputeBudgetProgram,
@@ -1626,7 +1627,7 @@ export async function checkSolanaWithdrawDestination(destination: string): Promi
 }
 
 /** Sends native SOL. Returns the signature once confirmed. */
-export async function transferSol(keypair: Keypair, to: string, lamports: bigint): Promise<string> {
+export async function transferSol(keypair: SolanaKeyLike, to: string, lamports: bigint): Promise<string> {
   if (!isSolanaAddress(to)) throw new Error('Invalid Solana destination address.');
   if (lamports <= 0n) throw new Error('Amount must be greater than 0.');
   const { blockhash, lastValidBlockHeight } = await latestBlockhash();
@@ -1641,7 +1642,7 @@ export async function transferSol(keypair: Keypair, to: string, lamports: bigint
     ],
   }).compileToV0Message();
   const tx = new VersionedTransaction(msg);
-  tx.sign([keypair]);
+  await signSolanaTx(tx, [keypair]);
   const res = await sendAndConfirmSolanaTransaction(tx, lastValidBlockHeight);
   if (!res.confirmed) throw new Error(res.error || 'SOL transfer failed.');
   invalidateSolanaBalanceCache(keypair.publicKey.toBase58());
@@ -1783,7 +1784,7 @@ function batchFeeLamports(signatures: number, n: number): bigint {
   return 5000n * BigInt(signatures) + BigInt(Math.ceil((BATCH_CU_PRICE * batchCuLimit(n)) / 1_000_000));
 }
 
-async function sendLegacyBatch(payer: Keypair, signers: Keypair[], instructions: TransactionInstruction[]): Promise<SolanaSendResult> {
+async function sendLegacyBatch(payer: SolanaKeyLike, signers: SolanaKeyLike[], instructions: TransactionInstruction[]): Promise<SolanaSendResult> {
   const { blockhash, lastValidBlockHeight } = await latestBlockhash();
   const msg = new TransactionMessage({
     payerKey: payer.publicKey,
@@ -1795,9 +1796,9 @@ async function sendLegacyBatch(payer: Keypair, signers: Keypair[], instructions:
     ],
   }).compileToV0Message();
   const tx = new VersionedTransaction(msg);
-  const uniq = new Map<string, Keypair>();
+  const uniq = new Map<string, SolanaKeyLike>();
   for (const k of [payer, ...signers]) uniq.set(k.publicKey.toBase58(), k);
-  tx.sign([...uniq.values()]);
+  await signSolanaTx(tx, [...uniq.values()]);
   return sendAndConfirmSolanaTransaction(tx, lastValidBlockHeight);
 }
 
@@ -1806,7 +1807,7 @@ async function sendLegacyBatch(payer: Keypair, signers: Keypair[], instructions:
  * under the 1232-byte limit). Returns per-recipient success.
  */
 export async function sendSolToMany(
-  from: Keypair,
+  from: SolanaKeyLike,
   transfers: Array<{ to: string; lamports: bigint }>,
 ): Promise<{ sent: Array<{ to: string; lamports: bigint; signature: string }>; failed: Array<{ to: string; error: string }> }> {
   const sent: Array<{ to: string; lamports: bigint; signature: string }> = [];
@@ -1840,9 +1841,9 @@ export async function sendSolToMany(
  * exact fee in its own transaction.
  */
 export async function sweepSolFromMany(
-  sources: Keypair[],
+  sources: SolanaKeyLike[],
   destination: string,
-  feePayer: Keypair,
+  feePayer: SolanaKeyLike,
 ): Promise<{ sweptLamports: bigint; walletsSwept: number; failed: number }> {
   const payerAddr = feePayer.publicKey.toBase58();
   const balances = await getSolanaLamportsMulti([...sources.map((k) => k.publicKey.toBase58()), payerAddr]);
