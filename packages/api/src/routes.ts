@@ -2255,8 +2255,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet && !isKleos ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet && !isKleos ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -2285,8 +2285,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet && !isKleos ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet && !isKleos ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
@@ -2318,8 +2318,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ...linkRows,
         ...shareButtonRow,
         [
-          ...(!isSui && !isStarknet ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
-          ...(!isSui && !isStarknet ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet && !isKleos ? [cb('🔁 DCA Order', `dca_token:${shortKey}`, 'primary')] : []),
+          ...(!isSui && !isStarknet && !isKleos ? [cb('🎯 Limit Order', `lo_start:${shortKey}`, 'primary')] : []),
         ],
         [
           cb('🔄 Refresh', `token_refresh:${shortKey}`, 'primary'),
