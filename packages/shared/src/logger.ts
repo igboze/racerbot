@@ -60,14 +60,21 @@ function deepScrub(val: any): any {
 
   const scrubbed: Record<string, any> = {};
   for (const [k, v] of Object.entries(val)) {
-    const lowerKey = k.toLowerCase();
+    // Separators removed, so the DB columns (sui_private_key_enc, scoped_key_encrypted,
+    // encrypted_private_key, ...) match as well as camelCase names
+    const lowerKey = k.toLowerCase().replace(/[_\-\s]/g, '');
     if (
       lowerKey.includes('secret') ||
       lowerKey.includes('privatekey') ||
+      lowerKey.includes('scopedkey') ||
+      lowerKey.includes('keyenc') ||
+      lowerKey.includes('encryptedkey') ||
       lowerKey.includes('password') ||
       lowerKey.includes('seedphrase') ||
       lowerKey.includes('mnemonic') ||
-      lowerKey.includes('masterkey')
+      lowerKey.includes('masterkey') ||
+      lowerKey === 'salt' ||
+      lowerKey.endsWith('ownersalt')
     ) {
       scrubbed[k] = '[REDACTED]';
     } else {

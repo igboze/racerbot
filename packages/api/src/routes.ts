@@ -129,6 +129,7 @@ import {
   refuelNearGasIfNeeded,
   type TokenInfoResult,
 } from './wallet.js';
+import { sendSecurityAlert } from './securityAlerts.js';
 import {
   MAX_EVM_WALLETS_PER_USER,
   evmRecipientProblem,
@@ -11758,6 +11759,11 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
 
     lastExportTime.set(telegramId, Date.now());
     console.log(`[AUDIT] Private keys exported for user_id=${user.id}, telegram_id=${telegramId}`);
+    void sendSecurityAlert({ userId: user.id, telegramId }, {
+      kind: 'key_export',
+      chains: ['NEAR', user.sui_address && 'Sui', user.starknet_address && 'Starknet', user.solana_address && 'Solana',
+        user.evm_address && 'EVM (HyperEVM · Elysium · Kleos)'].filter(Boolean) as string[],
+    });
 
     try {
       const [nearWallets, suiWallets] = await Promise.all([

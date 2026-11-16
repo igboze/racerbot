@@ -1097,7 +1097,7 @@ export async function quoteCrossChainDeposit(user: UserRecord, originAsset: stri
  * Send `amount` of the private balance to a NEAR account, or, with `destinationAsset` (a 1Click asset
  * on another chain), to `destination` on that chain as that asset.
  */
-export async function withdrawPrivate(user: UserRecord, amount: bigint, destination?: string, destinationAsset?: string): Promise<{ depositAddress: string; intentHash: string; amountOut?: string }> {
+export async function withdrawPrivateImpl(user: UserRecord, amount: bigint, destination?: string, destinationAsset?: string): Promise<{ depositAddress: string; intentHash: string; amountOut?: string }> {
   const acct = await getConfidentialAccount(user.id);
   if (!acct) throw new Error('No private balance');
   if (destinationAsset && !destination) throw new Error('Enter the address to send to');
@@ -1235,3 +1235,10 @@ export function startConfidentialWorker(intervalMs = 15_000): NodeJS.Timeout | n
 }
 
 export { chooseSizes as _chooseSizesForTest, intearHopsFromMessage as _intearHopsForTest, workerTick as _workerTickForTest };
+
+/** Withdraws from the private balance (through the signer when configured) and alerts the owner */
+export async function withdrawPrivate(...args: Parameters<typeof withdrawPrivateImpl>): ReturnType<typeof withdrawPrivateImpl> {
+  const [user, amount, destination, destinationAsset] = args;
+  const { runMoneyOut } = await import('./moneyOut.js');
+  return runMoneyOut('private', user, [amount.toString(), destination ?? null, destinationAsset ?? null]);
+}

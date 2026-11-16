@@ -109,6 +109,8 @@ import {
 } from '@racerbot/shared';
 import { ethers } from 'ethers';
 import { executeEvmSwap, type EvmSwapExecutionResult } from '@racerbot/executor';
+import { sendSecurityAlert } from './securityAlerts.js';
+import { runMoneyOut } from './moneyOut.js';
 import { evmRecipientProblem } from './evmWallet.js';
 export { getSuiUsdPrice };
 import { Transaction } from '@mysten/sui/transactions';
@@ -3200,7 +3202,8 @@ const ELYSIUM_TRANSFER_GAS = 100_000n;
  * Sends HYPE from the user's EVM wallet. Both chains are direct transfers now that Elysium's public
  * sequencer is open (ELYSIUM_SEND_MODE=inbox posts the Elysium one through the HyperEVM inbox instead).
  */
-export async function withdrawEvmHype(
+/** Signs and sends with this process's keys: call withdrawEvmHype (it goes through the signer when configured) */
+export async function withdrawEvmHypeImpl(
   user: UserRecord,
   chain: EvmChain,
   toAddress: string,
@@ -4425,7 +4428,8 @@ export async function recoverIntentRefund(
   }
 }
 
-export async function withdrawFunds(
+/** Signs and sends with this process's keys: call withdrawFunds (it goes through the signer when configured) */
+export async function withdrawFundsImpl(
   userOrTelegramId: number | string | UserRecord,
   destination: string,
   amountNear?: number | 'all'
@@ -4589,7 +4593,8 @@ function solanaKeypairFor(address: string, encryptedKey: string): ReturnType<typ
 /**
  * Withdraw native SOL. "all" empties the wallet exactly (minus the network fee).
  */
-export async function withdrawSolanaFunds(
+/** Signs and sends with this process's keys: call withdrawSolanaFunds (it goes through the signer when configured) */
+export async function withdrawSolanaFundsImpl(
   telegramId: number,
   destination: string,
   amountSol?: number | 'all',
@@ -4652,7 +4657,8 @@ export async function withdrawSolanaFunds(
 /**
  * Withdraw an SPL / Token-2022 token held in the user's Solana wallet.
  */
-export async function withdrawSolanaTokenFunds(
+/** Signs and sends with this process's keys: call withdrawSolanaTokenFunds (it goes through the signer when configured) */
+export async function withdrawSolanaTokenFundsImpl(
   telegramId: number,
   mint: string,
   destination: string,
@@ -4717,7 +4723,8 @@ export async function withdrawSolanaTokenFunds(
   };
 }
 
-export async function withdrawSuiFunds(
+/** Signs and sends with this process's keys: call withdrawSuiFunds (it goes through the signer when configured) */
+export async function withdrawSuiFundsImpl(
   telegramId: number,
   destination: string,
   amountSui?: number | 'all'
@@ -4794,7 +4801,8 @@ export async function withdrawSuiFunds(
  * validates destination felt252 address, deducts gas reserve for native STRK/ETH,
  * signs and executes the ERC-20 transfer, and invalidates balance caches.
  */
-export async function withdrawStarknetFunds(
+/** Signs and sends with this process's keys: call withdrawStarknetFunds (it goes through the signer when configured) */
+export async function withdrawStarknetFundsImpl(
   telegramId: number,
   destination: string,
   amount?: number | 'all',
@@ -4947,7 +4955,8 @@ export async function withdrawStarknetFunds(
  * Automatically checks recipient storage registration (for NEAR NEP-141) and registers them if needed,
  * validates user balance, converts human amounts according to token decimals, and updates position quantities.
  */
-export async function withdrawTokenFunds(
+/** Signs and sends with this process's keys: call withdrawTokenFunds (it goes through the signer when configured) */
+export async function withdrawTokenFundsImpl(
   telegramId: number,
   tokenInput: string,
   destination: string,
@@ -5985,7 +5994,7 @@ export async function verifyNearAccountAccess(accountId: string, publicKey: stri
 /**
  * Imports an external NEAR wallet into RacerBot for a user.
  */
-export async function importNearWallet(
+async function importNearWalletImpl(
   telegramId: number,
   privateKeyInput: string,
   walletName: string,
@@ -6112,7 +6121,7 @@ export const MAX_SUI_WALLETS_PER_USER = 5;
  * Imports an external SUI wallet into RacerBot for a user.
  * Supports Bech32 (suiprivkey1...), hex, base64, or base58 keys.
  */
-export async function importSuiWallet(
+async function importSuiWalletImpl(
   telegramId: number,
   privateKeyInput: string,
   walletName: string,
@@ -6227,4 +6236,59 @@ export async function renameUserStarknetWallet(telegramId: number, walletId: str
     throw new Error('Wallet name must be between 1 and 30 characters.');
   }
   return renameUserWallet(user.id, walletId, trimmed);
+}
+
+// ── Money out ─────────────────────────────────────────────────────────────────
+// Each withdraw function above runs as <name>Impl. The exported name hands the work to
+// runMoneyOut, which uses the signer service when SIGNER_URL is set (else runs here) and
+// alerts the owner in Telegram, so every caller (bot, web app, automations) is covered.
+
+async function moneyOutUser(who: number | string | UserRecord): Promise<UserRecord> {
+  const user = typeof who === 'number' ? await getUserByTelegramId(who) : await resolveWalletUser(who);
+  if (!user) throw new Error('User not found. Run /start first.');
+  return user;
+}
+
+export async function withdrawFunds(...args: Parameters<typeof withdrawFundsImpl>): ReturnType<typeof withdrawFundsImpl> {
+  return runMoneyOut('near', await moneyOutUser(args[0]), [args[1], args[2]]);
+}
+
+export async function withdrawTokenFunds(...args: Parameters<typeof withdrawTokenFundsImpl>): ReturnType<typeof withdrawTokenFundsImpl> {
+  return runMoneyOut('near_token', await moneyOutUser(args[0]), [args[1], args[2], args[3]]);
+}
+
+export async function withdrawSolanaFunds(...args: Parameters<typeof withdrawSolanaFundsImpl>): ReturnType<typeof withdrawSolanaFundsImpl> {
+  return runMoneyOut('solana', await moneyOutUser(args[0]), [args[1], args[2]]);
+}
+
+export async function withdrawSolanaTokenFunds(...args: Parameters<typeof withdrawSolanaTokenFundsImpl>): ReturnType<typeof withdrawSolanaTokenFundsImpl> {
+  return runMoneyOut('solana_token', await moneyOutUser(args[0]), [args[1], args[2], args[3]]);
+}
+
+export async function withdrawSuiFunds(...args: Parameters<typeof withdrawSuiFundsImpl>): ReturnType<typeof withdrawSuiFundsImpl> {
+  return runMoneyOut('sui', await moneyOutUser(args[0]), [args[1], args[2]]);
+}
+
+export async function withdrawStarknetFunds(...args: Parameters<typeof withdrawStarknetFundsImpl>): ReturnType<typeof withdrawStarknetFundsImpl> {
+  return runMoneyOut('starknet', await moneyOutUser(args[0]), [args[1], args[2], args[3]]);
+}
+
+export async function withdrawEvmHype(...args: Parameters<typeof withdrawEvmHypeImpl>): ReturnType<typeof withdrawEvmHypeImpl> {
+  return runMoneyOut('evm_hype', args[0], [args[1], args[2], args[3]]);
+}
+
+export async function importNearWallet(...args: Parameters<typeof importNearWalletImpl>): ReturnType<typeof importNearWalletImpl> {
+  const res = await importNearWalletImpl(...args);
+  void sendSecurityAlert({ telegramId: args[0] }, {
+    kind: 'wallet_import', chain: 'NEAR', address: res.accountId, active: args[4] ?? true,
+  });
+  return res;
+}
+
+export async function importSuiWallet(...args: Parameters<typeof importSuiWalletImpl>): ReturnType<typeof importSuiWalletImpl> {
+  const res = await importSuiWalletImpl(...args);
+  void sendSecurityAlert({ telegramId: args[0] }, {
+    kind: 'wallet_import', chain: 'Sui', address: res.address, active: args[3] ?? true,
+  });
+  return res;
 }

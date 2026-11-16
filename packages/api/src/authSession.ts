@@ -666,6 +666,14 @@ export async function authenticateWalletUser(params: {
       inMemoryTokens.set(authToken, tokenPayload);
     }
 
+    {
+      const { sendSecurityAlert } = await import('./securityAlerts.js');
+      const short = accountId.length > 16 ? `${accountId.slice(0, 8)}…${accountId.slice(-6)}` : accountId;
+      void sendSecurityAlert({ userId: user.id, telegramId: user.telegram_id }, {
+        kind: 'web_login', method: `${chain.toUpperCase()} wallet ${short}`,
+      });
+    }
+
     return {
       success: true,
       authToken,

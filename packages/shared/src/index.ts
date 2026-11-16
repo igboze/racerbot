@@ -45,6 +45,7 @@ export {
   generateScopedAccessKey,
   assertValidMasterKey,
 } from './crypto.js';
+export { getKeyVault, resetKeyVaultForTests, type KeyVault } from './keyVault.js';
 
 // Venue / launchpad registry & public links (DexScreener, explorer, launchpads)
 export {

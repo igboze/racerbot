@@ -28,6 +28,7 @@ import {
   type UserRecord,
   type UserWalletRecord,
 } from '@racerbot/db';
+import { sendSecurityAlert } from './securityAlerts.js';
 
 function getMasterKey(): string {
   return process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '';
@@ -103,7 +104,7 @@ export async function listUserEvmWallets(userId: string): Promise<UserWalletReco
   return getUserWallets(userId, 'hyperevm');
 }
 
-export async function importEvmWallet(
+async function importEvmWalletImpl(
   telegramId: number,
   secretInput: string,
   walletName: string,
@@ -204,7 +205,7 @@ export async function planEvmTokenSend(user: UserRecord, tokenInput: string, to:
 }
 
 /** Sends a planned ERC-20 transfer directly on the target EVM chain (or HyperEVM inbox when targeting Elysium with ELYSIUM_SEND_MODE=inbox) */
-export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Promise<{ txHash: string; elysiumTxHash?: string; viaInbox?: boolean }> {
+export async function sendEvmTokenImpl(user: UserRecord, plan: EvmTokenSendPlan): Promise<{ txHash: string; elysiumTxHash?: string; viaInbox?: boolean }> {
   if (!user.evm_address || !user.evm_private_key_enc) throw new Error('EVM wallet not configured.');
   // Re-check right before signing: the plan may have waited on a confirm button
   const problem = evmRecipientProblem(plan.to, user.evm_address);
@@ -241,4 +242,19 @@ export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): Pr
     elysium, l2Signer, l1Signer, hyperevm, tx: { to: plan.token, data }, inboxGasLimit: ELYSIUM_TOKEN_TRANSFER_GAS,
   });
   return { txHash: sent.inboxTxHash ?? sent.elysiumTxHash, elysiumTxHash: sent.elysiumTxHash, viaInbox: Boolean(sent.inboxTxHash) };
+}
+
+/** Sends a planned ERC-20 transfer (through the signer when configured) and alerts the owner */
+export async function sendEvmToken(user: UserRecord, plan: EvmTokenSendPlan): ReturnType<typeof sendEvmTokenImpl> {
+  const { runMoneyOut } = await import('./moneyOut.js');
+  return runMoneyOut('evm_token', user, [plan]);
+}
+
+/** Imports an EVM wallet and alerts the owner in Telegram */
+export async function importEvmWallet(...args: Parameters<typeof importEvmWalletImpl>): ReturnType<typeof importEvmWalletImpl> {
+  const res = await importEvmWalletImpl(...args);
+  void sendSecurityAlert({ telegramId: args[0] }, {
+    kind: 'wallet_import', chain: 'EVM (HyperEVM · Elysium · Kleos)', address: res.address, active: args[3] ?? true,
+  });
+  return res;
 }
