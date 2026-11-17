@@ -332,6 +332,15 @@ export function createRedis(url: string): RedisClient {
   if (process.env.VITEST && process.env.TEST_REAL_REDIS !== 'true') {
     return createInMemoryRedis();
   }
+  // The signer service needs no Redis. Without REDIS_URL it keeps state in memory instead of
+  // retrying a server that does not exist forever. Recognised by its entry file too, because
+  // modules create their clients while being imported, before server.ts sets RACERBOT_SIGNER.
+  const isSigner = process.env.RACERBOT_SIGNER === 'true' || /signer[\\/]server\.js$/.test(process.argv[1] || '');
+  // Callers fall back to localhost when REDIS_URL is unset, so check the variable itself
+  if (isSigner && !process.env.REDIS_URL) {
+    console.log('[REDIS] Signer service without REDIS_URL: using an in-memory store');
+    return createInMemoryRedis();
+  }
   const maskedUrl = maskRedisUrl(url);
   console.log(`[REDIS] Initializing Redis client for: ${maskedUrl}`);
 
