@@ -36,6 +36,8 @@ import {
   intearRegisteredCache,
   distributeTradeFeeRewards,
   runAsTrade,
+  nearKeyFor,
+  type NearKeyLike,
 } from '@racerbot/shared';
 
 export { calculateMinOutAdj };
@@ -94,7 +96,7 @@ const RPC_URLS = (process.env.RPC_PROVIDERS ?? '')
 // ── Warm key store ────────────────────────────────────────────────────────────
 // Pre-loaded on startup from encrypted DB records — no DB query in hot path
 
-const warmKeys = new Map<string, { keyPair: KeyPair; subaccountId: string }>();
+const warmKeys = new Map<string, { keyPair: NearKeyLike; subaccountId: string }>();
 
 
 // ── Services ─────────────────────────────────────────────────────────────────
@@ -112,8 +114,8 @@ export async function warmAllKeys(): Promise<void> {
 
   for (const row of result.rows) {
     try {
-      const keyStr = decrypt(row.scoped_key_encrypted, MASTER_KEY);
-      const keyPair = KeyPair.fromString(keyStr as any);
+      // With the signer service, no key is decrypted here: only which account belongs to whom
+      const keyPair = nearKeyFor({ userId: row.id, address: row.subaccount_id, encryptedKey: row.scoped_key_encrypted, purpose: 'near_swap' }, MASTER_KEY);
       warmKeys.set(row.id, { keyPair, subaccountId: row.subaccount_id });
       await near.addKey(row.subaccount_id, keyPair);
       loaded++;
@@ -161,13 +163,12 @@ export async function preWarmActiveSnipeStorage(): Promise<void> {
 
 /** Add a newly onboarded user's key to the warm store without restart. */
 export async function addUserKey(userId: string, subaccountId: string, encryptedKey: string): Promise<void> {
-  let keyStr: string;
+  let keyPair: NearKeyLike;
   try {
-    keyStr = decrypt(encryptedKey, MASTER_KEY);
+    keyPair = nearKeyFor({ userId, address: subaccountId, encryptedKey, purpose: 'near_swap' }, MASTER_KEY);
   } catch (err: any) {
     throw new Error('Wallet trading key authentication failed. Please run /rotatekey to refresh your trading key.');
   }
-  const keyPair = KeyPair.fromString(keyStr as any);
   warmKeys.set(userId, { keyPair, subaccountId });
   await near.addKey(subaccountId, keyPair);
 }

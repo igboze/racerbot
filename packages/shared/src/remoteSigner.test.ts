@@ -88,3 +88,39 @@ describe('remote signing', () => {
       .rejects.toThrow(/refused this transaction/);
   });
 });
+
+describe('remote NEAR signing', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+    vi.unstubAllGlobals();
+  });
+
+  it('signs a NEAR transaction through the signer service into one that verifies', async () => {
+    const { KeyPair, transactions } = await import('near-api-js');
+    const { createHash } = await import('crypto');
+    const { HybridNearSigner } = await import('./nearRemoteSigner.js');
+    const { keyStores } = await import('near-api-js');
+    process.env.SIGNER_URL = 'http://signer.test';
+    process.env.SIGNER_SHARED_SECRET = 's'.repeat(40);
+    delete process.env.RACERBOT_SIGNER;
+
+    const key = KeyPair.fromRandom('ed25519');
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      const signed = body.kind === 'public_key'
+        ? key.getPublicKey().toString()
+        : Buffer.from(key.sign(new Uint8Array(createHash('sha256').update(Buffer.from(body.payload, 'base64')).digest())).signature).toString('base64');
+      return { ok: true, status: 200, json: async () => ({ ok: true, signed }) } as any;
+    }));
+
+    const signer = new HybridNearSigner(new keyStores.InMemoryKeyStore());
+    signer.registerRemote('alice.near', { userId: 'u1', address: 'alice.near', purpose: 'test' });
+    expect((await signer.getPublicKey('alice.near', 'mainnet')).toString()).toBe(key.getPublicKey().toString());
+
+    const [hash, signedTx] = await transactions.signTransaction(
+      'wrap.near', 1n, [transactions.functionCall('near_deposit', {}, 30_000_000_000_000n, 1n)], new Uint8Array(32), signer, 'alice.near', 'mainnet'
+    );
+    expect(key.verify(hash, (signedTx.signature as any).ed25519Signature.data)).toBe(true);
+  });
+});

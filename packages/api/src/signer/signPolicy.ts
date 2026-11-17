@@ -223,3 +223,96 @@ export function evaluateSolanaMessage(message: VersionedMessage, own: Set<string
   }
   return f;
 }
+
+// ── NEAR ──────────────────────────────────────────────────────────────────────
+
+/** NEAR contracts RacerBot trades through: exact accounts, and launchpads by their parent account */
+const NEAR_CONTRACTS = [
+  'wrap.near', 'v2.ref-finance.near', 'dclv2.ref-labs.near', 'intents.near',
+  'dex.intear.near', 'dex-aggregator.intear.near', 'launch.intear.near',
+  'meme-cooking.near', 'nearlytrade.near', 'nearpumpfun.near', 'gaypad.j1-racing.near',
+  'exchange.kelytradevs.near', 'racerbotrouter.near',
+];
+const NEAR_CONTRACT_SUFFIXES = [
+  '.meme-cooking.near', '.nearlytrade.near', '.justhoot.near', '.shoremarkets.near',
+  '.intear.near', '.ref-labs.near', '.ref-finance.near', '.j1-racing.near', '.kelytradevs.near',
+];
+
+export function nearContractAllowed(accountId: string): boolean {
+  const a = accountId.toLowerCase();
+  const extra = envList('SIGNER_NEAR_ALLOWED_CONTRACTS').map(s => s.toLowerCase());
+  return NEAR_CONTRACTS.includes(a) || extra.includes(a) || NEAR_CONTRACT_SUFFIXES.some(s => a.endsWith(s));
+}
+
+function nearFeeAccounts(): Set<string> {
+  return new Set([process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near', process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near']
+    .map(a => a.toLowerCase()));
+}
+
+/** Token-call methods that are routine on any token contract (the token is the receiver) */
+const NEAR_TOKEN_SAFE_METHODS = new Set([
+  'storage_deposit', 'storage_unregister', 'near_deposit', 'near_withdraw', 'ft_transfer_call',
+]);
+
+interface DecodedNearTx {
+  signerId: string;
+  receiverId: string;
+  actions: any[];
+}
+
+const parseArgs = (bytes: Uint8Array | undefined): any => {
+  try {
+    return JSON.parse(Buffer.from(bytes ?? []).toString('utf8'));
+  } catch {
+    return null;
+  }
+};
+
+const yoctoToNear = (y: bigint) => (Number(y / 10n ** 18n) / 1e6).toString();
+
+/** Checks one NEAR transaction the signer is asked to sign for a trade */
+export function evaluateNearTx(tx: DecodedNearTx, own: Set<string>): Findings {
+  const f: Findings = { hard: [], soft: [] };
+  const fees = nearFeeAccounts();
+  const receiver = tx.receiverId.toLowerCase();
+  const isOwnOrFee = (a: unknown) => typeof a === 'string' && (own.has(a.toLowerCase()) || fees.has(a.toLowerCase()));
+
+  for (const action of tx.actions) {
+    if (action.transfer) {
+      const amount = BigInt(action.transfer.deposit ?? 0);
+      if (amount > 0n && !isOwnOrFee(receiver) && !nearContractAllowed(receiver)) {
+        f.hard.push(`sends ${yoctoToNear(amount)} NEAR to ${receiver}`);
+      }
+    } else if (action.functionCall) {
+      const method = String(action.functionCall.methodName);
+      const args = parseArgs(action.functionCall.args);
+      if (method === 'ft_transfer' || method === 'mt_transfer' || method === 'ft_withdraw' || method === 'mt_withdraw') {
+        // Tokens leaving: only to the user's own accounts or RacerBot
+        const dest = args?.receiver_id;
+        if (!isOwnOrFee(dest)) f.hard.push(`${method} of tokens to ${dest ?? 'an unknown account'} via ${receiver}`);
+      } else if (method === 'ft_transfer_call' || method === 'mt_transfer_call') {
+        // Tokens into a contract (a swap): the contract must be a known exchange
+        const dest = String(args?.receiver_id ?? '');
+        if (!nearContractAllowed(dest) && !isOwnOrFee(dest)) f.soft.push(`${method} into ${dest || 'an unknown account'} (not on the allowlist)`);
+      } else if (!nearContractAllowed(receiver) && !NEAR_TOKEN_SAFE_METHODS.has(method) && !isOwnOrFee(receiver)) {
+        f.soft.push(`calls ${method} on ${receiver} (not on the allowlist)`);
+      }
+    } else if (action.addKey) {
+      f.hard.push('adds an access key to the account');
+    } else if (action.deleteKey) {
+      f.hard.push('deletes an access key from the account');
+    } else if (action.deployContract) {
+      f.hard.push('deploys a contract');
+    } else if (action.deleteAccount) {
+      const beneficiary = action.deleteAccount.beneficiaryId;
+      if (!isOwnOrFee(beneficiary)) f.hard.push(`deletes the account into ${beneficiary}`);
+    } else if (action.stake) {
+      f.soft.push('stakes from the account');
+    } else if (action.createAccount) {
+      f.soft.push(`creates account ${receiver}`);
+    } else {
+      f.soft.push('an action type the signer does not check yet');
+    }
+  }
+  return f;
+}

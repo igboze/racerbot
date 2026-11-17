@@ -432,6 +432,15 @@ export {
   type RemoteSignChain,
 } from './remoteSigner.js';
 export { signSolanaTx, isLocalKeypair, type SolanaKeyLike, type SolanaRemoteSigner } from './solanaSigning.js';
+export {
+  HybridNearSigner,
+  nearKeyFor,
+  nearSignerFor,
+  isRemoteNearKey,
+  forgetRemoteNearPublicKey,
+  type NearKeyLike,
+  type NearRemoteKey,
+} from './nearRemoteSigner.js';
 export type {
   EvmChain,
   GeneratedEvmWallet,

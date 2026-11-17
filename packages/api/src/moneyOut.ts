@@ -15,10 +15,10 @@ import { sendSecurityAlert, type SecurityEvent } from './securityAlerts.js';
 
 export type MoneyOutOp =
   | 'near' | 'near_token' | 'solana' | 'solana_token' | 'sui' | 'starknet'
-  | 'evm_hype' | 'evm_token' | 'private';
+  | 'evm_hype' | 'evm_token' | 'private' | 'near_payment';
 
 export const MONEY_OUT_OPS: readonly MoneyOutOp[] = [
-  'near', 'near_token', 'solana', 'solana_token', 'sui', 'starknet', 'evm_hype', 'evm_token', 'private',
+  'near', 'near_token', 'solana', 'solana_token', 'sui', 'starknet', 'evm_hype', 'evm_token', 'private', 'near_payment',
 ];
 
 /** JSON with bigints as strings: plans and amounts cross the wire */
@@ -146,11 +146,39 @@ export async function executeMoneyOut(op: MoneyOutOp, user: UserRecord, args: an
       };
       break;
     }
+    case 'near_payment': {
+      // Fees, Viewing Keys and profit shares: only to RacerBot or a registered Alpha creator
+      if (!(await isAllowedPaymentDestination(String(args[0])))) {
+        throw new Error('Payments can only go to RacerBot or a registered Racer Alpha creator.');
+      }
+      const r = await wallet.transferNearFromUserImpl(user.id, args[0], args[1]);
+      // A purchase the user made on purpose: the purchase message is enough, no security alert
+      outcome = { result: r, event: null };
+      break;
+    }
     default:
       throw new Error(`Unknown withdrawal type: ${op}`);
   }
   if (outcome.event) void sendSecurityAlert({ userId: user.id, telegramId: user.telegram_id }, outcome.event);
   return outcome.result;
+}
+
+/** RacerBot's own accounts and the payout accounts of registered Racer Alpha creators */
+export async function isAllowedPaymentDestination(destination: string): Promise<boolean> {
+  const dest = destination.trim().toLowerCase();
+  const platform = [process.env.TREASURY_ACCOUNT_ID || 'racerbottreasury.near', process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near']
+    .map(a => a.toLowerCase());
+  if (platform.includes(dest)) return true;
+  const { getDb } = await import('@racerbot/db');
+  const db = await getDb();
+  const res = await db.query(
+    `SELECT 1 FROM racer_alpha_traders t
+     LEFT JOIN users u ON u.id::text = t.user_id OR u.subaccount_id = t.user_id
+     WHERE LOWER(t.payout_wallet_address) = $1::text OR LOWER(u.subaccount_id) = $1::text
+     LIMIT 1`,
+    [dest]
+  );
+  return res.rows.length > 0;
 }
 
 /** Where the exported withdraw functions send their work: the signer when configured, else here */

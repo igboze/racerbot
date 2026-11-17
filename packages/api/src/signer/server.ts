@@ -16,7 +16,7 @@
 process.env.RACERBOT_SIGNER = 'true';
 
 import 'dotenv/config';
-import crypto from 'crypto';
+import crypto, { createHash } from 'crypto';
 import express from 'express';
 import { ethers } from 'ethers';
 import { VersionedMessage, VersionedTransaction } from '@solana/web3.js';
@@ -25,11 +25,14 @@ import {
   assertValidMasterKey,
   getEvmWalletFromEncrypted,
   restoreSolanaKeypair,
+  decrypt,
   type RemoteSignChain,
 } from '@racerbot/shared';
 import { getDb, getUserById } from '@racerbot/db';
 import { findSigningKey, ownAddresses } from './keyStore.js';
-import { evaluateEvmTx, evaluateSolanaMessage, blocks, policyMode, type Findings } from './signPolicy.js';
+import { evaluateEvmTx, evaluateSolanaMessage, evaluateNearTx, blocks, policyMode, type Findings } from './signPolicy.js';
+import { KeyPair as NearKeyPair } from 'near-api-js';
+import { decodeTransaction as decodeNearTransaction } from '@near-js/transactions';
 import { MONEY_OUT_OPS, executeMoneyOut, signBody, toWire, type MoneyOutOp } from '../moneyOut.js';
 import { checkAndRecord, finishAudit, breakerState, POLICY } from './policy.js';
 import { sendAdminAlert } from '../securityAlerts.js';
@@ -60,6 +63,7 @@ function destinationOf(op: MoneyOutOp, args: any[]): string | null {
     case 'near_token': case 'solana_token': case 'evm_hype': return args[1] ?? null;
     case 'evm_token': return args[0]?.to ?? null;
     case 'private': return args[1] ?? 'payout address';
+    case 'near_payment': return args[0] ?? null;
   }
 }
 
@@ -166,7 +170,7 @@ app.post('/v1/sign', async (req: any, res) => {
     return;
   }
   const { chain, kind, userId, address, purpose, payload } = req.body || {};
-  if ((chain !== 'evm' && chain !== 'solana') || typeof userId !== 'string' || typeof address !== 'string' || typeof payload !== 'string') {
+  if ((chain !== 'evm' && chain !== 'solana' && chain !== 'near') || typeof userId !== 'string' || typeof address !== 'string' || typeof payload !== 'string') {
     res.status(400).json({ ok: false, error: 'Malformed signing request' });
     return;
   }
@@ -222,6 +226,36 @@ app.post('/v1/sign', async (req: any, res) => {
         return;
       }
       res.status(400).json({ ok: false, error: 'Unknown signing kind' });
+      return;
+    }
+
+    if (chain === 'near') {
+      const keyPair = NearKeyPair.fromString(decrypt(encryptedKey, masterKey) as any);
+      // near-api-js asks for the public key first (to read the nonce): no funds move
+      if (kind === 'public_key') {
+        res.json({ ok: true, signed: keyPair.getPublicKey().toString() });
+        return;
+      }
+      if (kind !== 'transaction') {
+        res.status(400).json({ ok: false, error: 'Unknown signing kind' });
+        return;
+      }
+      const bytes = Uint8Array.from(Buffer.from(payload, 'base64'));
+      const tx: any = decodeNearTransaction(bytes);
+      if (String(tx.signerId).toLowerCase() !== address.toLowerCase()) {
+        res.status(400).json({ ok: false, error: 'The transaction is not from this wallet.' });
+        return;
+      }
+      const findings = evaluateNearTx(tx, own);
+      const refused = blocks(findings);
+      await auditSign(userId, chain, purpose, tx.receiverId, findings, refused);
+      if (refused) {
+        res.status(403).json({ ok: false, error: `The signer refused this transaction: ${[...findings.hard, ...findings.soft][0]}` });
+        return;
+      }
+      // What InMemorySigner signs: the sha256 of the encoded transaction
+      const signature = keyPair.sign(new Uint8Array(createHash('sha256').update(bytes).digest())).signature;
+      res.json({ ok: true, signed: Buffer.from(signature).toString('base64') });
       return;
     }
 

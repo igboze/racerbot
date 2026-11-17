@@ -12,7 +12,7 @@
  * leg as a 1Click app fee, so it is only paid when the swap settles.
  */
 import { KeyPair, transactions } from 'near-api-js';
-import { createLogger, decrypt, getNear } from '@racerbot/shared';
+import { createLogger, decrypt, getNear, nearKeyFor } from '@racerbot/shared';
 import { createFill, createPosition, getOpenPositions, recordFee, type UserRecord } from '@racerbot/db';
 import { quotePublicSwap, notifyDeposit, waitForMove, getIntentsNearAsset } from './intentsPrivate.js';
 import { TREASURY_ACCOUNT_ID } from './config.js';
@@ -63,7 +63,7 @@ function failureOf(outcome: any): string | null {
 async function signer(user: UserRecord) {
   if (!user.subaccount_id || !user.scoped_key_encrypted) throw new Error('A RacerBot-managed NEAR wallet is needed for this trade.');
   const near = getNear();
-  await near.addKey(user.subaccount_id, KeyPair.fromString(decrypt(user.scoped_key_encrypted, MASTER_KEY) as any));
+  await near.addKey(user.subaccount_id, nearKeyFor({ userId: user.id, address: user.subaccount_id, encryptedKey: user.scoped_key_encrypted, purpose: 'near_intents_trade' }, MASTER_KEY));
   return near;
 }
 

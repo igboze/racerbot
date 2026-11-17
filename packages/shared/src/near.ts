@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { HybridNearSigner, isRemoteNearKey, type NearKeyLike } from './nearRemoteSigner.js';
 import { connect, keyStores, Near, Account, KeyPair, utils, transactions } from 'near-api-js';
 import { markProviderError, markProviderSuccess, createProvider, isProviderAvailable, RPCProvider } from './rpc.js';
 import { calculateExpectedOutput, calculateMinAmountOut, parseMemeCookingId } from './utils.js';
@@ -368,6 +369,8 @@ export class MultiRpcNear {
   private readProviders: RPCProvider[];
   private tradeProviders: RPCProvider[];
   private keyStore: keyStores.InMemoryKeyStore;
+  /** Signs with keys loaded here, or through the signer service for accounts registered as remote */
+  private signer: HybridNearSigner;
   private networkId: string;
   private connections: Map<string, Near> = new Map();
   private accountCache: Map<string, Account> = new Map();
@@ -504,6 +507,7 @@ export class MultiRpcNear {
 
     this.keyStore = new keyStores.InMemoryKeyStore();
     this.networkId = networkId;
+    this.signer = new HybridNearSigner(this.keyStore, networkId);
 
     // Start periodic nonce cache refresh to prevent stale nonce issues
     this.startNonceCacheRefresh();
@@ -550,6 +554,7 @@ export class MultiRpcNear {
       networkId: this.networkId,
       nodeUrl,
       keyStore: this.keyStore,
+      signer: this.signer,
       headers: isMainnetFastnear && hasValidKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
     });
 
@@ -571,8 +576,12 @@ export class MultiRpcNear {
     return conn;
   }
 
-  /** Add a signing key for an account into the in-memory key store */
-  async addKey(accountId: string, keyPair: KeyPair): Promise<void> {
+  /** Add a signing key for an account: a local key, or a signer-service key (remote) */
+  async addKey(accountId: string, keyPair: NearKeyLike): Promise<void> {
+    if (isRemoteNearKey(keyPair)) {
+      this.signer.registerRemote(accountId, keyPair.ref);
+      return;
+    }
     await this.keyStore.setKey(this.networkId, accountId, keyPair);
   }
 
@@ -583,6 +592,7 @@ export class MultiRpcNear {
 
   /** Check if a signing key exists for an account */
   async hasKey(accountId: string): Promise<boolean> {
+    if (this.signer.isRemote(accountId)) return true;
     try {
       const key = await this.keyStore.getKey(this.networkId, accountId);
       return key !== null && key !== undefined;

@@ -9,6 +9,7 @@ import {
   generateRandomAccountPrefix,
   getFastnearAccountTokens,
   type SwapEvent,
+  nearKeyFor,
 } from '@racerbot/shared';
 import {
   getUserByTelegramId,
@@ -492,8 +493,8 @@ export async function sweepFleetFunds(userOrTelegramId: number | string | UserRe
   await Promise.all(
     wallets.map(async (w) => {
       try {
-        const rawPrivateKey = decrypt(w.encrypted_private_key, MASTER_KEY);
-        const keyPair = KeyPair.fromString(rawPrivateKey as any);
+        // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+        const keyPair = nearKeyFor({ userId: w.user_id, address: w.account_id, encryptedKey: w.encrypted_private_key, purpose: 'near_fleet_sweep' }, MASTER_KEY);
 
         await connectWithNearRpcFailover(w.account_id, keyPair, async (account) => {
           // 1. Unwrap any leftover wrap.near back into native NEAR
@@ -613,7 +614,7 @@ export async function executeFleetBundleBuy(
     if (needs.length === 0) return;
     const res = await fireNearTxsTogether(needs.map((s) => ({
       accountId: s.w.account_id,
-      keyPair: KeyPair.fromString(decrypt(s.w.encrypted_private_key, MASTER_KEY) as any),
+      keyPair: nearKeyFor({ userId: s.w.user_id, address: s.w.account_id, encryptedKey: s.w.encrypted_private_key, purpose: 'near_fleet' }, MASTER_KEY),
       receiverId,
       actions: [nearActions.call('storage_deposit', { account_id: s.w.account_id, registration_only: true }, 30, deposit)],
     })));
@@ -641,7 +642,7 @@ export async function executeFleetBundleBuy(
     actions.push(nearActions.call('ft_transfer_call', { receiver_id: receiver, amount: amount.toString(), msg: swapMsg(s.w.account_id) }, 180, 1n));
     return {
       accountId: s.w.account_id,
-      keyPair: KeyPair.fromString(decrypt(s.w.encrypted_private_key, MASTER_KEY) as any),
+      keyPair: nearKeyFor({ userId: s.w.user_id, address: s.w.account_id, encryptedKey: s.w.encrypted_private_key, purpose: 'near_fleet' }, MASTER_KEY),
       receiverId: 'wrap.near',
       actions,
     };
@@ -659,7 +660,7 @@ export async function executeFleetBundleBuy(
   if (feeYocto > 0n && filledLegs.length > 0) {
     const feeResults = await fireNearTxsTogether(filledLegs.map((s) => ({
       accountId: s.w.account_id,
-      keyPair: KeyPair.fromString(decrypt(s.w.encrypted_private_key, MASTER_KEY) as any),
+      keyPair: nearKeyFor({ userId: s.w.user_id, address: s.w.account_id, encryptedKey: s.w.encrypted_private_key, purpose: 'near_fleet' }, MASTER_KEY),
       receiverId: TREASURY_ACCOUNT_ID,
       actions: [nearActions.transfer(feeYocto)],
     }))).catch((err: any) => {
@@ -777,7 +778,7 @@ export async function executeFleetBundleSell(
       : JSON.stringify({ actions: [{ pool_id: rheaPoolId, token_in: tokenAddress, token_out: 'wrap.near', amount_in: s.amount.toString(), min_amount_out: minOut, min_output_amount: minOut }] });
     return {
       accountId: s.w.account_id,
-      keyPair: KeyPair.fromString(decrypt(s.w.encrypted_private_key, MASTER_KEY) as any),
+      keyPair: nearKeyFor({ userId: s.w.user_id, address: s.w.account_id, encryptedKey: s.w.encrypted_private_key, purpose: 'near_fleet' }, MASTER_KEY),
       receiverId: tokenAddress,
       actions: [nearActions.call('ft_transfer_call', { receiver_id: dclPoolId ? 'dclv2.ref-labs.near' : 'v2.ref-finance.near', amount: s.amount.toString(), msg }, 180, 1n)],
     };
@@ -797,7 +798,7 @@ export async function executeFleetBundleSell(
     const unwrap = sold.map((s, i) => ({ s, amt: wnear[i] })).filter((x) => x.amt > 0n);
     await fireNearTxsTogether(unwrap.map((x) => ({
       accountId: x.s.w.account_id,
-      keyPair: KeyPair.fromString(decrypt(x.s.w.encrypted_private_key, MASTER_KEY) as any),
+      keyPair: nearKeyFor({ userId: x.s.w.user_id, address: x.s.w.account_id, encryptedKey: x.s.w.encrypted_private_key, purpose: 'near_fleet' }, MASTER_KEY),
       receiverId: 'wrap.near',
       actions: [nearActions.call('near_withdraw', { amount: x.amt.toString() }, 30, 1n)],
     })), 30_000).catch(() => { });

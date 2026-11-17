@@ -12,7 +12,7 @@
 import crypto from 'crypto';
 import { KeyPair, transactions } from 'near-api-js';
 import { Account, JsonRpcProvider, actions } from 'near-api-js-v7';
-import { createLogger, decrypt, encrypt, getNear, getNearUsdPrice } from '@racerbot/shared';
+import { createLogger, decrypt, encrypt, getNear, getNearUsdPrice, nearKeyFor } from '@racerbot/shared';
 import {
   claimReadyExecutors,
   createConfidentialAccount,
@@ -1004,7 +1004,7 @@ export async function depositFromWallet(user: UserRecord, amount: bigint): Promi
  */
 export async function payDepositAddressFromWallet(user: UserRecord, amount: bigint, depositAddress: string, what: string): Promise<string> {
   const near = getNear();
-  await near.addKey(user.subaccount_id, KeyPair.fromString(decrypt(user.scoped_key_encrypted, MASTER_KEY) as any));
+  await near.addKey(user.subaccount_id, nearKeyFor({ userId: user.id, address: user.subaccount_id, encryptedKey: user.scoped_key_encrypted, purpose: 'near_intents_deposit' }, MASTER_KEY));
   const outcome = await near.signAndSendTransactionAll(user.subaccount_id, 'wrap.near', [
     transactions.functionCall('near_deposit', {}, 10n * TGAS, amount),
     transactions.functionCall('storage_deposit', { account_id: depositAddress, registration_only: true }, 10n * TGAS, 1_250_000_000_000_000_000_000n),

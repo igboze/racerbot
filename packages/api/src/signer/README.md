@@ -58,8 +58,8 @@ signer holds `KEY_ENCRYPTION_MASTER_KEY`.
 | Stage | Chains | Status |
 |---|---|---|
 | B1 | HyperEVM, Elysium, Kleos and the other Elysium pads; Solana (swaps and RaceFleet) | shipped |
-| B2 | NEAR (swaps, fleet, confidential executors, vault) | next |
-| B3 | Sui, Starknet | later |
+| B2 | NEAR: swaps (executor), RaceFleet, wNEAR unwrap, storage, intents refunds and deposits; payments to RacerBot and Alpha creators | shipped |
+| B3 | Sui, Starknet | next |
 | B4 | Key creation, import and export inside the signer; remove the master key from the API | last |
 
 **How it works.** With `SIGNER_URL` set, a trade builds its transaction as before but sends it
@@ -97,8 +97,23 @@ Add any legitimate contract to `SIGNER_EVM_ALLOWED_CONTRACTS` or program to
 `SIGNER_SOLANA_ALLOWED_PROGRAMS` (comma separated) on the signer, then switch to
 `enforce_hard`, and later `enforce`.
 
-Known limit: a Kleos/Elysium Multicall3 order is checked as a call to Multicall3; the value
-transfers bundled inside it are not unpacked yet.
+Extra NEAR allowlist entries go in `SIGNER_NEAR_ALLOWED_CONTRACTS` (exact account ids).
+
+**Payments from user wallets** (platform fees, Racer Alpha Viewing Keys, copy profit shares)
+now go through the signer as a money-out operation, and are only paid to RacerBot's own
+accounts or a registered Racer Alpha creator's payout account.
+
+**With the signer on, the executor no longer decrypts every user's NEAR key at startup**: it
+only records which account belongs to which user, and asks the signer per transaction.
+
+Known limits, to close before `enforce_hard`:
+- A Kleos/Elysium Multicall3 order is checked as a call to Multicall3; the value transfers
+  bundled inside it are not unpacked yet.
+- Deposits from a RacerBot wallet into the private balance and 1Click intent trades send wNEAR
+  (`ft_transfer`) to a one-time 1Click deposit address. They show as hard findings because the
+  signer cannot yet confirm with 1Click that the address pays the user's own private account.
+- The old router vault (racerbotrouter.near), key rotation, wallet import and `/export` still
+  use the master key in the API; they move with B4.
 
 ## Rotating the master key (optional, owner-run)
 

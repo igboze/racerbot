@@ -78,3 +78,40 @@ describe('Solana trade rules', () => {
     expect(evaluateSolanaMessage(message([unknown]), ownSol).soft[0]).toMatch(/not on the allowlist/);
   });
 });
+
+describe('NEAR trade rules', () => {
+  const own = new Set(['alice.near', 'alice-fleet-1.racerbot.near']);
+  const fc = (methodName: string, args: object, deposit = 1n) => ({ functionCall: { methodName, args: Buffer.from(JSON.stringify(args)), gas: 30n, deposit } });
+  const tx = (receiverId: string, actions: any[]) => ({ signerId: 'alice.near', receiverId, actions });
+
+  it('lets swaps through known exchanges and routine token calls pass', async () => {
+    const { evaluateNearTx } = await import('./signPolicy.js');
+    expect(evaluateNearTx(tx('wrap.near', [fc('near_deposit', {}), fc('ft_transfer_call', { receiver_id: 'v2.ref-finance.near', amount: '1', msg: '' })]), own)).toEqual({ hard: [], soft: [] });
+    expect(evaluateNearTx(tx('token.v2.ref-finance.near', [fc('storage_deposit', { account_id: 'alice.near' })]), own)).toEqual({ hard: [], soft: [] });
+    expect(evaluateNearTx(tx('jambo-1679.meme-cooking.near', [fc('buy', {})]), own)).toEqual({ hard: [], soft: [] });
+  });
+
+  it('allows funding the user\'s own fleet wallets and paying RacerBot', async () => {
+    const { evaluateNearTx } = await import('./signPolicy.js');
+    expect(evaluateNearTx(tx('alice-fleet-1.racerbot.near', [{ transfer: { deposit: 10n ** 24n } }]), own).hard).toEqual([]);
+    expect(evaluateNearTx(tx('racerbottreasury.near', [{ transfer: { deposit: 10n ** 22n } }]), own).hard).toEqual([]);
+  });
+
+  it('flags NEAR and tokens sent to strangers, keys and contract changes', async () => {
+    const { evaluateNearTx } = await import('./signPolicy.js');
+    expect(evaluateNearTx(tx('thief.near', [{ transfer: { deposit: 5n * 10n ** 24n } }]), own).hard[0]).toMatch(/sends 5 NEAR to thief.near/);
+    expect(evaluateNearTx(tx('wrap.near', [fc('ft_transfer', { receiver_id: 'thief.near', amount: '1' })]), own).hard).toHaveLength(1);
+    expect(evaluateNearTx(tx('intents.near', [fc('ft_withdraw', { receiver_id: 'thief.near', token: 'wrap.near', amount: '1' })]), own).hard).toHaveLength(1);
+    expect(evaluateNearTx(tx('alice.near', [{ addKey: {} }]), own).hard).toEqual(['adds an access key to the account']);
+    expect(evaluateNearTx(tx('alice.near', [{ deployContract: {} }]), own).hard).toEqual(['deploys a contract']);
+    expect(evaluateNearTx(tx('alice.near', [{ deleteAccount: { beneficiaryId: 'thief.near' } }]), own).hard).toHaveLength(1);
+    expect(evaluateNearTx(tx('alice.near', [{ deleteAccount: { beneficiaryId: 'alice-fleet-1.racerbot.near' } }]), own).hard).toEqual([]);
+  });
+
+  it('marks calls into unknown contracts soft', async () => {
+    const { evaluateNearTx } = await import('./signPolicy.js');
+    const f = evaluateNearTx(tx('wrap.near', [fc('ft_transfer_call', { receiver_id: 'unknown-dex.near', amount: '1', msg: '' })]), own);
+    expect(f.hard).toEqual([]);
+    expect(f.soft).toHaveLength(1);
+  });
+});

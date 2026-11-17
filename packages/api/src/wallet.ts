@@ -106,6 +106,9 @@ import {
   getEvmProvider,
   type EvmChain,
   HYPE_SYMBOL,
+  nearKeyFor,
+  nearSignerFor,
+  type NearKeyLike,
 } from '@racerbot/shared';
 import { ethers } from 'ethers';
 import { executeEvmSwap, type EvmSwapExecutionResult } from '@racerbot/executor';
@@ -3544,11 +3547,11 @@ export async function pollNearTxStatus(
  */
 export async function connectWithNearRpcFailover<T>(
   accountId: string,
-  keyPair: KeyPair,
+  keyPair: NearKeyLike,
   fn: (account: any) => Promise<T>
 ): Promise<T> {
-  const keyStore = new keyStores.InMemoryKeyStore();
-  await keyStore.setKey('mainnet', accountId, keyPair);
+  // A local key, or the signer service's key for this account (signer Phase B2)
+  const signer = await nearSignerFor(accountId, keyPair);
 
   const urls = RPC_URLS.length > 0 ? RPC_URLS : [
     formatNearRpcUrl('https://rpc.mainnet.fastnear.com'),
@@ -3563,7 +3566,7 @@ export async function connectWithNearRpcFailover<T>(
       const isFastnear = formattedUrl.includes('fastnear.com');
       const nearConn = await connect({
         networkId: 'mainnet',
-        keyStore,
+        signer,
         nodeUrl: formattedUrl,
         headers: hasFastnearKey && isFastnear
           ? { Authorization: `Bearer ${fastnearApiKey}` }
@@ -4284,8 +4287,8 @@ export async function unwrapUserWrapNear(userOrTelegramId: number | string | Use
     return { success: true, unwrappedAmount: '0' };
   }
 
-  const privateKey = decrypt(encryptedKey, MASTER_KEY);
-  const keyPair = KeyPair.fromString(privateKey as any);
+  // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+  const keyPair = nearKeyFor({ userId: user.id, address: subaccountId, encryptedKey: encryptedKey, purpose: 'near_unwrap' }, MASTER_KEY);
 
   return await connectWithNearRpcFailover(subaccountId, keyPair, async (account) => {
     await account.functionCall({
@@ -4327,8 +4330,8 @@ export async function recoverIntentRefund(
     const masterKey = (process.env.KEY_ENCRYPTION_MASTER_KEY || '');
     if (!masterKey) return { success: false, error: 'Master key not configured' };
 
-    const privateKey = decrypt(user.scoped_key_encrypted, masterKey);
-    const keyPair = KeyPair.fromString(privateKey as any);
+    // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+    const keyPair = nearKeyFor({ userId: user.id, address: user.subaccount_id, encryptedKey: user.scoped_key_encrypted, purpose: 'near_intent_refund' }, masterKey);
 
     // 1. Check user mt_balance_of in intents.near
     const nearConnection = await connect({
@@ -4538,7 +4541,8 @@ export async function withdrawFundsImpl(
   });
 }
 
-export async function transferNearFromUser(
+/** Signs with this process's key: call transferNearFromUser (it goes through the signer when configured) */
+export async function transferNearFromUserImpl(
   userId: string,
   destination: string,
   amountYocto: string
@@ -5839,9 +5843,8 @@ export async function prewarmStorageDeposit(user: UserRecord, tokenAddress: stri
     const isReg = await near.checkStorageRegistered(user.subaccount_id, tokenAddress).catch(() => false);
     if (isReg) return;
 
-    const privateKey = decrypt(user.scoped_key_encrypted, MASTER_KEY);
-    const keyPair = KeyPair.fromString(privateKey as any);
-    await near.addKey(user.subaccount_id, keyPair);
+    // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+    await near.addKey(user.subaccount_id, nearKeyFor({ userId: user.id, address: user.subaccount_id, encryptedKey: user.scoped_key_encrypted, purpose: 'near_storage' }, MASTER_KEY));
     await near.ensureStorageDeposit(user.subaccount_id, tokenAddress);
     console.log(`[SNIPE] Storage pre-warmed for ${tokenAddress} on ${user.subaccount_id}`);
   } catch (err: any) {
@@ -6291,4 +6294,15 @@ export async function importSuiWallet(...args: Parameters<typeof importSuiWallet
     kind: 'wallet_import', chain: 'Sui', address: res.address, active: args[3] ?? true,
   });
   return res;
+}
+
+/**
+ * Pays NEAR from a user's wallet to RacerBot or an Alpha creator (fees, Viewing Keys, profit
+ * shares). Goes through the signer when configured, which only pays the treasury or a
+ * registered creator's payout account.
+ */
+export async function transferNearFromUser(userId: string, destination: string, amountYocto: string): Promise<{ txHash: string }> {
+  const user = await getUserById(userId);
+  if (!user) throw new Error('User not found. Run /start first.');
+  return runMoneyOut('near_payment', user, [destination, amountYocto]);
 }

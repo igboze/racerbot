@@ -9,12 +9,14 @@
  * Nothing here retries a whole step on another RPC after a broadcast, so a
  * slow RPC can never cause a wallet to swap twice.
  */
-import { KeyPair, keyStores, InMemorySigner, transactions, utils } from 'near-api-js';
+import { transactions, utils } from 'near-api-js';
+import { nearSignerFor, type NearKeyLike } from '@racerbot/shared';
 import { getNearWriteRpcUrls } from './wallet.js';
 
 export interface NearFleetTx {
   accountId: string;
-  keyPair: KeyPair;
+  /** A local key, or the signer service's key for this wallet */
+  keyPair: NearKeyLike;
   receiverId: string;
   actions: transactions.Action[];
 }
@@ -94,10 +96,9 @@ export async function fireNearTxsTogether(txs: NearFleetTx[], waitMs = 60_000): 
   // 1. Sign everything first.
   const signed = await Promise.all(txs.map(async (t) => {
     try {
-      const keyStore = new keyStores.InMemoryKeyStore();
-      await keyStore.setKey('mainnet', t.accountId, t.keyPair);
-      const signer = new InMemorySigner(keyStore);
-      const nonce = await nextNonce(t.accountId, t.keyPair.getPublicKey().toString());
+      // A local key, or the signer service's key for this fleet wallet (signer Phase B2)
+      const signer = await nearSignerFor(t.accountId, t.keyPair);
+      const nonce = await nextNonce(t.accountId, (await signer.getPublicKey(t.accountId, 'mainnet')).toString());
       const [hashBytes, signedTx] = await transactions.signTransaction(
         t.receiverId, nonce, t.actions, blockHash, signer, t.accountId, 'mainnet',
       );
