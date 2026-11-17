@@ -7,6 +7,7 @@
  * Sui addresses (also 0x, but longer), NEAR accounts, Solana addresses, bad checksums,
  * the zero address, the user's own wallet and token contracts are all refused.
  */
+import { sealCustodyKey } from './keyCustody.js';
 import { ethers } from 'ethers';
 import {
   encrypt,
@@ -126,7 +127,8 @@ async function importEvmWalletImpl(
     userId: user.id,
     address,
     name: walletName.trim().slice(0, 30) || `EVM Wallet ${existing.length + 1}`,
-    encryptedPrivateKey: encrypt(restored.privateKey, getMasterKey()),
+    // Encrypted by the signer when it holds the keys
+    encryptedPrivateKey: await sealCustodyKey('evm', restored.privateKey),
     isImported: true,
     isActive: setAsActive,
   });

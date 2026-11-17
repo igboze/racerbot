@@ -60,7 +60,8 @@ signer holds `KEY_ENCRYPTION_MASTER_KEY`.
 | B1 | HyperEVM, Elysium, Kleos and the other Elysium pads; Solana (swaps and RaceFleet) | shipped |
 | B2 | NEAR: swaps (executor), RaceFleet, wNEAR unwrap, storage, intents refunds and deposits; payments to RacerBot and Alpha creators | shipped |
 | B3 | Sui (SuiPump and the Aftermath router), Starknet (Launchy, Unruggable and other pools, account deployment) | shipped |
-| B4 | Key creation, import and export inside the signer; remove the master key from the API | next |
+| B4a | Key creation (onboarding, every chain, fleet, web wallets, private balance), import, `/export`, fleet export and NEAR key rotation in the signer | shipped |
+| B4b | Confidential private-balance signatures, LayerZero bridge, old router vault, then run the API without the master key | next |
 
 **How it works.** With `SIGNER_URL` set, a trade builds its transaction as before but sends it
 *unsigned* to the signer (`/v1/sign`). The signer checks that the wallet belongs to the user,
@@ -156,3 +157,25 @@ provider today is `local` (the master key in the environment), and the signing c
 decrypts with the master key directly. In Phase B, decryption moves inside the signer and goes
 through the key vault; adding AWS KMS, Google Cloud KMS or HashiCorp Vault is then one new
 provider class, selected by `KEY_VAULT_PROVIDER`. Tell me which provider you pick.
+
+## Key custody (B4a)
+
+With `SIGNER_URL` set:
+- **New wallets** are generated in the signer (`/v1/keys/generate`). The API receives only the
+  address, the public key and the encrypted key to store.
+- **Imported keys** (sent by the user through the bot) are validated and encrypted by the signer
+  (`/v1/keys/seal`).
+- **`/export` and the fleet key export** are sent by the signer straight to the user's Telegram
+  chat (`/v1/keys/export`) as protected messages (no forwarding or saving, even by a bot holding
+  the token), deleted after 2 minutes, with a 5-minute cooldown, an audit row and a security alert.
+  The API never sees a decrypted key.
+- **NEAR key rotation** runs in the signer (`/v1/keys/rotate-near`), which sends the new key the
+  same way.
+
+Also fixed: `POST /onboard` used to return every new wallet's private key (and an existing user's
+NEAR and Sui keys) in its JSON response. It now returns addresses only, and onboarding never
+returns plaintext keys.
+
+Known limit: if a RaceFleet subscription payment fails right after its wallets were created, the
+signer will not sign the cleanup for wallets not yet stored, so those accounts stay on-chain
+(about 0.00182 NEAR each, logged).

@@ -1,4 +1,5 @@
 import { Markup, Context } from 'telegraf';
+import { generateCustodyKey } from './keyCustody.js';
 import { KeyPair, utils as nearUtils } from 'near-api-js';
 import {
   getNear,
@@ -174,13 +175,14 @@ export async function deployRaceFleet(
   // 2. Generate the fleet's accounts and keys
   const fleetTag = generateRandomFleetTag();
   const parentAccountName = RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
-  const walletKeys: { accountId: string; keyPair: KeyPair; encryptedKey: string }[] = [];
+  // Generated in the signer when it holds the keys: only public and encrypted keys come back
+  const walletKeys: { accountId: string; publicKey: string; encryptedKey: string }[] = [];
   for (let i = 1; i <= clampedCount; i++) {
-    const keyPair = generateFleetKeyPair();
+    const key = await generateCustodyKey('near');
     walletKeys.push({
       accountId: `${generateRandomAccountPrefix()}.${parentAccountName}`,
-      keyPair,
-      encryptedKey: encrypt(keyPair.toString(), MASTER_KEY),
+      publicKey: key.publicKey,
+      encryptedKey: key.encryptedPrivateKey,
     });
   }
 
@@ -198,7 +200,7 @@ export async function deployRaceFleet(
       for (const w of walletKeys) {
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            await parentAccount.createAccount(w.accountId, w.keyPair.getPublicKey().toString(), initialStorageDeposit);
+            await parentAccount.createAccount(w.accountId, w.publicKey, initialStorageDeposit);
             created.push(w);
             break;
           } catch (err: any) {
@@ -228,7 +230,7 @@ export async function deployRaceFleet(
     const feeWithdrawal = await withdrawFunds(user, TREASURY_ACCOUNT_ID, RACEFLEET_MONTHLY_FEE_NEAR);
     logger.info(`Paid RaceFleet subscription fee for user ${user.id}: tx ${feeWithdrawal.txHash}`);
   } catch (payErr: any) {
-    await removeFleetAccounts(created, parentAccountName);
+    await removeFleetAccounts(created.map(w => ({ accountId: w.accountId, encryptedKey: w.encryptedKey })), parentAccountName, user.id);
     return { success: false, reason: `Subscription payment failed, so no fleet was created: ${payErr?.message || payErr}` };
   }
 
@@ -276,10 +278,12 @@ export async function deployRaceFleet(
 }
 
 /** Delete fleet accounts that will not be used, returning their storage deposit to the parent */
-async function removeFleetAccounts(accounts: { accountId: string; keyPair: KeyPair }[], beneficiary: string): Promise<void> {
+async function removeFleetAccounts(accounts: { accountId: string; encryptedKey: string }[], beneficiary: string, userId: string): Promise<void> {
   for (const w of accounts) {
     try {
-      await connectWithNearRpcFailover(w.accountId, w.keyPair, (account) => account.deleteAccount(beneficiary));
+      // With the signer, these wallets are not stored yet, so it will not sign for them: they stay on-chain (logged)
+      const key = nearKeyFor({ userId, address: w.accountId, encryptedKey: w.encryptedKey, purpose: 'near_fleet_cleanup' }, MASTER_KEY);
+      await connectWithNearRpcFailover(w.accountId, key, (account) => account.deleteAccount(beneficiary));
     } catch (err: any) {
       logger.warn(`Could not remove unused fleet wallet ${w.accountId}: ${err?.message || err}`);
     }

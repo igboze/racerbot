@@ -426,6 +426,7 @@ export { isEvmChainName, evmStoredAmount } from './evm.js';
 export {
   remoteSigningEnabled,
   requestRemoteSignature,
+  callSignerService,
   RemoteEvmSigner,
   RemoteSolanaKey,
   getEvmSigner,

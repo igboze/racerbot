@@ -3326,7 +3326,17 @@ router.post('/onboard', ensureTelegramInitData, async (req, res) => {
     const { onboardUser } = await import('../wallet.js');
     const result = await onboardUser(userId, undefined, username);
 
-    res.json({ success: true, ...result });
+    // Addresses only: private keys never leave through this route (users export them in Telegram)
+    res.json({
+      success: true,
+      userId: result.userId,
+      subaccountId: result.subaccountId,
+      suiAddress: result.suiAddress,
+      starknetAddress: result.starknetAddress,
+      solanaAddress: result.solanaAddress,
+      evmAddress: result.evmAddress,
+      isExisting: result.isExisting,
+    });
   } catch (err: any) {
     logger.error('Onboarding failed', err);
     res.status(500).json({ error: err.message });

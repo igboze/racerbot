@@ -10,6 +10,7 @@
  * `createWebManagedWallet` is a legacy / Telegram-paired helper retained only for cross-client
  * parity or when a non-NEAR account requires a deterministic implicit NEAR settlement address.
  */
+import { generateCustodyKey, nearImplicitAccountOf } from './keyCustody.js';
 import { createLogger, encrypt, generateScopedAccessKey } from '@racerbot/shared';
 import { createUserWallet, getUserById, getUserWallets, type UserRecord } from '@racerbot/db';
 
@@ -56,11 +57,12 @@ export async function createWebManagedWallet(userId: string): Promise<{ address:
       });
     }
 
-    const keyPair = generateScopedAccessKey();
-    const address = implicitAccountId(keyPair.getPublicKey().data);
+    // Generated in the signer when it holds the keys
+    const key = await generateCustodyKey('near');
+    const address = nearImplicitAccountOf(key.publicKey);
     await createUserWallet({
       userId, chain: 'near', address, name: 'RacerBot wallet',
-      encryptedPrivateKey: encrypt(keyPair.toString(), MASTER_KEY), isImported: false, isActive: true,
+      encryptedPrivateKey: key.encryptedPrivateKey, isImported: false, isActive: true,
     });
     logger.info(`Created managed web wallet ${address} for user ${userId}`);
     return { address, created: true };

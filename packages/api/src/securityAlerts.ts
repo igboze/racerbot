@@ -26,6 +26,25 @@ function telegramClient(): Telegram | null {
   return directTelegram;
 }
 
+/** Sends an HTML message to a chat; returns its message id (0 when it could not be sent) */
+export async function sendTelegramHtml(chatId: number, html: string, opts: { protectContent?: boolean } = {}): Promise<number> {
+  const client = telegramClient();
+  if (!client) return 0;
+  const msg: any = await client.sendMessage(chatId, html, {
+    parse_mode: 'HTML',
+    protect_content: opts.protectContent ?? false,
+    link_preview_options: { is_disabled: true },
+  } as any).catch((err: any) => {
+    logger.warn(`Telegram message not sent: ${err?.message}`);
+    return null;
+  });
+  return Number(msg?.message_id) || 0;
+}
+
+export async function deleteTelegramMessage(chatId: number, messageId: number): Promise<void> {
+  await telegramClient()?.deleteMessage(chatId, messageId).catch(() => undefined);
+}
+
 /** A message to the admins (ADMIN_TELEGRAM_ID, comma separated), e.g. when the signer pauses itself */
 export async function sendAdminAlert(html: string): Promise<void> {
   const ids = (process.env.ADMIN_TELEGRAM_ID || '').split(',').map(s => Number(s.trim())).filter(n => n > 0);

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { generateCustodyKey, sealCustodyKey, starknetPublicKeyOf, keysHandledBySigner, rotateNearKeyViaSigner, type CustodyKey } from './keyCustody.js';
 import {
   getNear,
   encrypt,
@@ -3155,7 +3156,7 @@ export interface OnboardResult {
  */
 export async function ensureUserEvmWallet(user: UserRecord): Promise<UserRecord> {
   if (user.evm_address && user.evm_private_key_enc) return user;
-  const wallet = generateEvmWallet(MASTER_KEY);
+  const wallet = await generateCustodyKey('evm');
   const stored = await setUserEvmWalletIfMissing(user.id, wallet.address, wallet.encryptedPrivateKey);
   user.evm_address = stored.address;
   user.evm_private_key_enc = stored.encryptedPrivateKey;
@@ -3291,7 +3292,7 @@ export async function executeEvmTrade(
 
 export async function ensureUserSolanaWallet(user: UserRecord): Promise<UserRecord> {
   if (user.solana_address && user.solana_private_key_enc) return user;
-  const wallet = generateSolanaWallet(MASTER_KEY);
+  const wallet = await generateCustodyKey('solana');
   const stored = await setUserSolanaWalletIfMissing(user.id, wallet.address, wallet.encryptedPrivateKey);
   user.solana_address = stored.address;
   user.solana_private_key_enc = stored.encryptedPrivateKey;
@@ -3307,7 +3308,7 @@ export async function ensureUserSuiWallet(user: UserRecord): Promise<UserRecord>
   if (user.sui_address && user.sui_private_key_enc) {
     return user;
   }
-  const suiWallet = generateSuiWallet(MASTER_KEY);
+  const suiWallet = await generateCustodyKey('sui');
   await updateUserSuiWallet(user.id, suiWallet.address, suiWallet.encryptedPrivateKey);
   user.sui_address = suiWallet.address;
   user.sui_private_key_enc = suiWallet.encryptedPrivateKey;
@@ -3321,8 +3322,8 @@ export async function ensureUserSuiWallet(user: UserRecord): Promise<UserRecord>
 export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRecord> {
   if (user.starknet_address && user.starknet_private_key_enc) {
     try {
-      const priv = decrypt(user.starknet_private_key_enc, MASTER_KEY);
-      const pub = ec.starkCurve.getStarkKey(priv);
+      // The public key comes from the signer when it holds the keys
+      const pub = await starknetPublicKeyOf(user.id, user.starknet_address, user.starknet_private_key_enc);
       const canonicalAddr = computeStarknetAccountAddress(pub, OZ_ACCOUNT_CLASS_HASH);
       if (!isSameStarknetAddress(user.starknet_address, canonicalAddr)) {
         console.log(`[STARKNET] Auto-migrating user ${user.id} address to canonical OZ Account v0.8.1 hash: ${canonicalAddr}`);
@@ -3334,7 +3335,7 @@ export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRe
     }
     return user;
   }
-  const starknetWallet = generateStarknetWallet(MASTER_KEY);
+  const starknetWallet = await generateCustodyKey('starknet');
   await updateUserStarknetWallet(user.id, starknetWallet.address, starknetWallet.encryptedPrivateKey);
   user.starknet_address = starknetWallet.address;
   user.starknet_private_key_enc = starknetWallet.encryptedPrivateKey;
@@ -3344,8 +3345,8 @@ export async function ensureUserStarknetWallet(user: UserRecord): Promise<UserRe
 /**
  * Resets/re-generates a user's Starknet wallet with fresh OpenZeppelin v0.8.1 credentials.
  */
-export async function resetUserStarknetWallet(userId: string): Promise<GeneratedStarknetWallet> {
-  const newWallet = generateStarknetWallet(MASTER_KEY);
+export async function resetUserStarknetWallet(userId: string): Promise<CustodyKey> {
+  const newWallet = await generateCustodyKey('starknet');
   await updateUserStarknetWallet(userId, newWallet.address, newWallet.encryptedPrivateKey);
   return newWallet;
 }
@@ -3419,24 +3420,15 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     }
   }
 
-  // Step 1: Generate exactly one NEAR ed25519 keypair
-  const keyPair = generateScopedAccessKey();
-  const publicKey = keyPair.getPublicKey();
-  const privateKey = keyPair.toString();
+  // Step 1: Generate every wallet key (in the signer when it holds the keys). Only addresses,
+  // public keys and encrypted keys come back: no plaintext key is kept or returned here.
+  const [nearKey, suiWallet, starknetWallet, solanaWallet, evmWallet] = await Promise.all([
+    generateCustodyKey('near'), generateCustodyKey('sui'), generateCustodyKey('starknet'),
+    generateCustodyKey('solana'), generateCustodyKey('evm'),
+  ]);
+  const publicKey = nearKey.publicKey;
   const prefix = generateRandomAccountPrefix();
   const subaccountId = `${prefix}.${RACERBOT_PARENT_ACCOUNT}`;
-
-  // Step 2: Generate Sui Ed25519 wallet
-  const suiWallet = generateSuiWallet(MASTER_KEY);
-
-  // Step 2b: Generate Starknet OpenZeppelin wallet
-  const starknetWallet = generateStarknetWallet(MASTER_KEY);
-
-  // Step 2c: Generate Solana ed25519 wallet
-  const solanaWallet = generateSolanaWallet(MASTER_KEY);
-
-  // Step 2d: Generate unified EVM wallet (HyperEVM & Elysium)
-  const evmWallet = generateEvmWallet(MASTER_KEY);
 
   // Step 4: Actually create subaccount on-chain before returning success
   if (!MAIN_WALLET_PRIVATE_KEY) {
@@ -3454,8 +3446,8 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
     );
   });
 
-  // Step 3: Encrypt real secret key and store in DB
-  const encryptedKey = encrypt(privateKey, MASTER_KEY);
+  // Step 3: Store the encrypted key
+  const encryptedKey = nearKey.encryptedPrivateKey;
 
   const user = await createUser({
     telegram_id: telegramId,
@@ -3484,15 +3476,16 @@ export async function onboardUser(telegramId: number, referralCode?: string, use
   return {
     userId: user.id,
     subaccountId,
-    privateKey, // Raw exported NEAR private key string (ed25519:<base58>)
+    // Keys are never returned: users see them only through /export
+    privateKey: '',
     suiAddress: suiWallet.address,
-    suiPrivateKey: suiWallet.privateKeySecret,
+    suiPrivateKey: '',
     starknetAddress: starknetWallet.address,
-    starknetPrivateKey: starknetWallet.privateKeySecret,
+    starknetPrivateKey: '',
     solanaAddress: user.solana_address || solanaWallet.address,
-    solanaPrivateKey: user.solana_address && user.solana_address !== solanaWallet.address ? undefined : solanaWallet.privateKeySecret,
+    solanaPrivateKey: undefined,
     evmAddress: user.evm_address || evmWallet.address,
-    evmPrivateKey: evmWallet.privateKey,
+    evmPrivateKey: '',
     isExisting: false,
   };
 }
@@ -3633,40 +3626,22 @@ export async function createSubaccount(
   // Step 1: Check if user already has an active subaccount
   const existingUser = await getUserByTelegramId(telegramId);
   if (existingUser && existingUser.subaccount_id) {
-    let privateKey = '';
-    try {
-      privateKey = decrypt(existingUser.scoped_key_encrypted, MASTER_KEY);
-    } catch {
-      privateKey = 'Decryption error — please contact support';
-    }
-
-    let suiPrivateKey = '';
-    if (existingUser.sui_private_key_enc) {
-      try {
-        suiPrivateKey = decrypt(existingUser.sui_private_key_enc, MASTER_KEY);
-      } catch {
-        suiPrivateKey = '';
-      }
-    }
-
+    // Keys are never returned here: users see them only through /export
     return {
       userId: existingUser.id,
       subaccountId: existingUser.subaccount_id,
-      privateKey,
+      privateKey: '',
       suiAddress: existingUser.sui_address || '',
-      suiPrivateKey,
+      suiPrivateKey: '',
       isExisting: true,
     };
   }
 
   const prefix = generateRandomAccountPrefix();
   const subaccountId = `${prefix}.${RACERBOT_PARENT_ACCOUNT}`;
-  const keyPair = generateScopedAccessKey();
-  const publicKey = keyPair.getPublicKey();
-  const privateKey = keyPair.toString(); // "ed25519:<base58>"
-
-  // Step 2: Generate Sui Ed25519 wallet
-  const suiWallet = generateSuiWallet(MASTER_KEY);
+  // Generated in the signer when it holds the keys
+  const [nearKey, suiWallet] = await Promise.all([generateCustodyKey('near'), generateCustodyKey('sui')]);
+  const publicKey = nearKey.publicKey;
 
   // Step 4: Actually create subaccount on-chain before returning success
   if (!MAIN_WALLET_PRIVATE_KEY) {
@@ -3684,8 +3659,8 @@ export async function createSubaccount(
     );
   });
 
-  // Step 3: Encrypt real secret key and store in DB
-  const encryptedKey = encrypt(privateKey, MASTER_KEY);
+  // Step 3: Store the encrypted key
+  const encryptedKey = nearKey.encryptedPrivateKey;
 
   const user = await createUser({
     telegram_id: telegramId,
@@ -3708,9 +3683,10 @@ export async function createSubaccount(
   return {
     userId: user.id,
     subaccountId,
-    privateKey, // Raw exported NEAR private key string (ed25519:<base58>)
+    // Keys are never returned: users see them only through /export
+    privateKey: '',
     suiAddress: suiWallet.address,
-    suiPrivateKey: suiWallet.privateKeySecret,
+    suiPrivateKey: '',
     isExisting: false,
   };
 }
@@ -3727,7 +3703,22 @@ export interface RotateKeyResult {
  * Rotates user's keypair on-chain and updates encrypted storage in DB.
  * Idempotent against double invocation using activeRotations set.
  */
+/**
+ * Rotates the user's NEAR key: in the signer when it holds the keys (it sends the new key to
+ * the user itself, so newPrivateKey comes back empty), else here.
+ */
 export async function rotateUserKey(telegramId: number): Promise<RotateKeyResult> {
+  if (keysHandledBySigner()) {
+    const user = await getUserByTelegramId(telegramId);
+    if (!user) throw new Error('User not found. Run /start first.');
+    const res = await rotateNearKeyViaSigner(user.id);
+    return { success: true, subaccountId: res.subaccountId, newPrivateKey: '' };
+  }
+  return rotateUserKeyImpl(telegramId);
+}
+
+/** Rotation with this process's keys (the API without a signer, or the signer itself) */
+export async function rotateUserKeyImpl(telegramId: number): Promise<RotateKeyResult> {
   if (activeRotations.has(telegramId)) {
     throw new Error('A key rotation is already in progress for this account. Please wait.');
   }
@@ -6052,8 +6043,8 @@ async function importNearWalletImpl(
     cleanName = `Wallet ${existingWallets.length + 1}`;
   }
 
-  // 6. Encrypt key and insert
-  const encryptedKey = encrypt(normalizedPrivateKey, MASTER_KEY);
+  // 6. Encrypt key (in the signer when it holds the keys) and insert
+  const encryptedKey = await sealCustodyKey('near', normalizedPrivateKey);
 
   const wallet = await createUserWallet({
     userId: user.id,
@@ -6153,7 +6144,7 @@ async function importSuiWalletImpl(
 
   // 3. Name the wallet
   const cleanName = walletName.trim() || `Wallet ${existingWallets.length + 1}`;
-  const encryptedKey = encrypt(secretKey, MASTER_KEY);
+  const encryptedKey = await sealCustodyKey('sui', secretKey);
 
   // 4. Create in DB
   const wallet = await createUserWallet({

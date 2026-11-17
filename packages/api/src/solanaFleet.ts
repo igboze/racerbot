@@ -13,6 +13,7 @@
  * RPC use: balances come from one getMultipleAccounts call; swaps are built by
  * Jupiter (no RPC) and broadcast to the free endpoints first.
  */
+import { generateCustodyKey } from './keyCustody.js';
 import type { Keypair } from '@solana/web3.js';
 import { Markup } from 'telegraf';
 import {
@@ -102,7 +103,8 @@ export async function ensureSolanaFleetWallets(fleet: RaceFleetRecord): Promise<
   const toCreate = [];
   for (let i = 1; i <= fleet.wallet_count; i++) {
     if (have.has(i)) continue;
-    const w = generateSolanaWallet(MASTER_KEY);
+    // Generated in the signer when it holds the keys
+    const w = await generateCustodyKey('solana');
     toCreate.push({
       fleet_id: fleet.id,
       user_id: fleet.user_id,

@@ -32,6 +32,7 @@ import {
 } from '@racerbot/shared';
 import { getDb, getUserById } from '@racerbot/db';
 import { findSigningKey, ownAddresses } from './keyStore.js';
+import { registerKeyRoutes } from './keyRoutes.js';
 import {
   evaluateEvmTx, evaluateSolanaMessage, evaluateNearTx, evaluateSuiTxData, evaluateStarknetCalls, evaluateStarknetDeploy,
   blocks, policyMode, type Findings,
@@ -355,6 +356,9 @@ app.post('/v1/sign', async (req: any, res) => {
     res.status(422).json({ ok: false, error: err?.message || 'Signing failed' });
   }
 });
+
+// Key custody: generate, seal, export and rotate keys (signer Phase B4)
+registerKeyRoutes(app, authenticated);
 
 const port = Number(process.env.SIGNER_PORT || process.env.PORT || 8790);
 // '::' listens on IPv6 too, which Railway's private network uses

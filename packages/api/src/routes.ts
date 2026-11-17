@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { keysHandledBySigner, exportKeysViaSigner } from './keyCustody.js';
 import { Telegraf, Markup, Context } from 'telegraf';
 import {
   getUserByTelegramId,
@@ -6633,6 +6634,14 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery('Decrypting fleet private keys...').catch(() => { });
 
     try {
+      if (keysHandledBySigner()) {
+        const fleetUser = await getUserByTelegramId(telegramId);
+        if (!fleetUser) throw new Error('User not found. Run /start first.');
+        await exportKeysViaSigner(fleetUser.id, 'fleet');
+        await ctx.reply('🔐 Your fleet keys were sent in separate protected messages. They cannot be forwarded and delete themselves in 2 minutes.',
+          Markup.inlineKeyboard([[Markup.button.callback('🔙 Back to Fleet Menu', 'racefleet_menu')]]));
+        return;
+      }
       const res = await exportFleetKeys(telegramId);
       if (res.success && res.wallets) {
         let exportText = `🔑 <b>RaceFleet Private Keys Export</b>\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
@@ -11759,6 +11768,17 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
 
     lastExportTime.set(telegramId, Date.now());
     console.log(`[AUDIT] Private keys exported for user_id=${user.id}, telegram_id=${telegramId}`);
+    // With the signer, keys go from the signer straight to this chat: this process never sees them
+    if (keysHandledBySigner()) {
+      try {
+        await exportKeysViaSigner(user.id, 'wallets');
+        await ctx.answerCbQuery('Keys sent.').catch(() => { });
+        await ctx.reply('🔐 Your private keys were sent in a separate protected message. It cannot be forwarded and deletes itself in 2 minutes.');
+      } catch (err: any) {
+        await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+      }
+      return;
+    }
     void sendSecurityAlert({ userId: user.id, telegramId }, {
       kind: 'key_export',
       chains: ['NEAR', user.sui_address && 'Sui', user.starknet_address && 'Starknet', user.solana_address && 'Solana',
@@ -11892,6 +11912,19 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
     await ctx.reply('🔄 Rotating your trading key on-chain. Please wait...');
     try {
       const res = await rotateUserKey(telegramId);
+      if (!res.newPrivateKey) {
+        // Rotated by the signer, which sent the new key in its own protected message
+        await ctx.reply(
+          `✅ <b>Trading Key Rotated Successfully!</b>
+
+Account: <code>${res.subaccountId}</code>
+
+` +
+          `Your new private key was sent in a separate protected message (deleted after 2 minutes). The old key was removed on-chain.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
       const keyMessage = await ctx.reply(
         `✅ <b>Trading Key Rotated Successfully!</b>\n\n` +
         `Account: <code>${res.subaccountId}</code>\n\n` +

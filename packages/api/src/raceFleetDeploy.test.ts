@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { KeyPair } from 'near-api-js';
 
+// Key custody reads the master key from the environment, like config.js in production
+process.env.KEY_ENCRYPTION_MASTER_KEY = 'k'.repeat(64);
+
 const events: string[] = [];
 const createAccount = vi.fn();
 const deleteAccount = vi.fn();

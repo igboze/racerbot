@@ -9,6 +9,7 @@
  * The controller (racerbot.near) signs every executor transaction, so the user's wallet never appears in a trade.
  * Off until CONFIDENTIAL_EXECUTORS_ENABLED=true (the contracts must be deployed first).
  */
+import { generateCustodyKey } from './keyCustody.js';
 import crypto from 'crypto';
 import { KeyPair, transactions } from 'near-api-js';
 import { Account, JsonRpcProvider, actions } from 'near-api-js-v7';
@@ -274,12 +275,13 @@ export async function ensureConfidentialAccount(user: UserRecord): Promise<Confi
     } catch {}
   }
   if (!payout) throw new Error('Private trading needs a NEAR account to pay out to');
-  const keys = generatePrivateAccount();
+  // Generated in the signer when it holds the keys
+  const keys = await generateCustodyKey('intents');
   return createConfidentialAccount({
     user_id: user.id,
-    private_account_id: keys.accountId,
+    private_account_id: keys.address,
     public_key: keys.publicKey,
-    secret_key_encrypted: encrypt(keys.secretKey, MASTER_KEY),
+    secret_key_encrypted: keys.encryptedPrivateKey,
     payout_address: payout,
     owner_salt: crypto.randomBytes(16).toString('hex'),
   });

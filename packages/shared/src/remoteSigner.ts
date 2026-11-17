@@ -35,6 +35,31 @@ export function remoteSigningEnabled(): boolean {
 const hmac = (secret: string, timestamp: string, body: string) =>
   crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
 
+/**
+ * One authenticated request to the signer service (HMAC over timestamp + body). Returns the
+ * response's `result`, or its `signed` value for signing routes; throws the signer's error.
+ */
+export async function callSignerService(path: string, payload: unknown, timeoutMs = 30_000): Promise<any> {
+  const url = (process.env.SIGNER_URL || '').replace(/\/+$/, '');
+  const secret = process.env.SIGNER_SHARED_SECRET || '';
+  if (!url || !secret) throw new Error('This is temporarily unavailable (signer not configured).');
+  const body = JSON.stringify(payload);
+  const timestamp = String(Date.now());
+  const res = await fetch(`${url}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-signer-timestamp': timestamp, 'x-signer-signature': hmac(secret, timestamp, body) },
+    body,
+    signal: AbortSignal.timeout(timeoutMs),
+  }).catch((err: any) => {
+    throw new Error(`This is temporarily unavailable: ${err?.message || 'signer unreachable'}`);
+  });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok !== true) {
+    throw new Error(data?.error || `The signer refused this request (${res.status})`);
+  }
+  return data.result !== undefined ? data.result : data.signed;
+}
+
 /** Asks the signer service to sign one payload; returns its signature or signed transaction */
 export async function requestRemoteSignature(req: {
   chain: RemoteSignChain;
@@ -42,31 +67,18 @@ export async function requestRemoteSignature(req: {
   ref: SigningKeyRef;
   payload: string;
 }): Promise<string> {
-  const url = (process.env.SIGNER_URL || '').replace(/\/+$/, '');
-  const secret = process.env.SIGNER_SHARED_SECRET || '';
-  if (!url || !secret) throw new Error('Trading is temporarily unavailable (signer not configured).');
-  const body = JSON.stringify({
+  const signed = await callSignerService('/v1/sign', {
     chain: req.chain,
     kind: req.kind,
     userId: req.ref.userId,
     address: req.ref.address,
     purpose: req.ref.purpose || null,
     payload: req.payload,
-  });
-  const timestamp = String(Date.now());
-  const res = await fetch(`${url}/v1/sign`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-signer-timestamp': timestamp, 'x-signer-signature': hmac(secret, timestamp, body) },
-    body,
-    signal: AbortSignal.timeout(30_000),
   }).catch((err: any) => {
-    throw new Error(`Trading is temporarily unavailable: ${err?.message || 'signer unreachable'}`);
+    throw new Error(String(err?.message || err).replace(/^This is/, 'Trading is'));
   });
-  const data: any = await res.json().catch(() => ({}));
-  if (!res.ok || data?.ok !== true || typeof data.signed !== 'string') {
-    throw new Error(data?.error || `The signer refused this transaction (${res.status})`);
-  }
-  return data.signed;
+  if (typeof signed !== 'string') throw new Error('The signer returned no signature.');
+  return signed;
 }
 
 /** An ethers signer whose key lives in the signer service */
