@@ -163,3 +163,35 @@ describe('Sui and Starknet trade rules', () => {
     expect(evaluateStarknetDeploy({ contractAddress: '0x0def' }, own).hard).toHaveLength(1);
   });
 });
+
+describe('private-balance intents rules', () => {
+  it('signs session sign-ins, own transfers and verified deposits; flags other recipients', async () => {
+    const { evaluateIntentsMessage } = await import('./signPolicy.js');
+    const me = 'a'.repeat(64);
+    const own = new Set([me, 'exec-1.racerbot.near']);
+    const allowed = async (receiver: string) => receiver === 'deposit-ok'; // e.g. 1Click says it pays an own account
+    const msg = (intents: any[], signer = me) => JSON.stringify({ signer_id: signer, verifying_contract: 'intents.near', deadline: 'x', nonce: 'n', intents });
+    expect(await evaluateIntentsMessage(msg([]), me, own, allowed)).toEqual({ hard: [], soft: [] });
+    expect(await evaluateIntentsMessage(msg([{ intent: 'transfer', receiver_id: 'exec-1.racerbot.near', tokens: {} }]), me, own, allowed)).toEqual({ hard: [], soft: [] });
+    expect(await evaluateIntentsMessage(msg([{ intent: 'transfer', receiver_id: 'deposit-ok', tokens: {} }]), me, own, allowed)).toEqual({ hard: [], soft: [] });
+    expect((await evaluateIntentsMessage(msg([{ intent: 'ft_withdraw', receiver_id: 'thief.near', token: 'wrap.near', amount: '1' }]), me, own, allowed)).hard).toHaveLength(1);
+    expect((await evaluateIntentsMessage(msg([], 'someone-else'), me, own, allowed)).hard[0]).toMatch(/not this account/);
+    expect((await evaluateIntentsMessage('not json', me, own, allowed)).hard).toHaveLength(1);
+  });
+});
+
+describe('LayerZero bridge rule', () => {
+  it('allows bridging to the user\'s own wallet and flags any other recipient or refund address', async () => {
+    const { evaluateEvmTx } = await import('./signPolicy.js');
+    const oft = new ethers.Interface([
+      'function send((uint32 dstEid, bytes32 to, uint256 amountLD, uint256 minAmountLD, bytes extraOptions, bytes composeMsg, bytes oftCmd) sendParam, (uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable',
+    ]);
+    const send = (to: string, refund: string) => evmTx({
+      to: '0x00000000000000000000000000000000000000b1', value: 10n ** 15n,
+      data: oft.encodeFunctionData('send', [[30110, ethers.zeroPadValue(to, 32), 1000n, 990n, '0x', '0x', '0x'], [10n ** 15n, 0n], refund]),
+    });
+    expect(evaluateEvmTx(send(USER, USER), own).hard).toEqual([]);
+    expect(evaluateEvmTx(send(STRANGER, USER), own).hard[0]).toMatch(/bridges tokens to/);
+    expect(evaluateEvmTx(send(USER, STRANGER), own).hard[0]).toMatch(/refunds go to/);
+  });
+});

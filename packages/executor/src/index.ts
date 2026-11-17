@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'url';
-import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, getNear, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, generateCorrelationId, getNear, remoteSigningEnabled, type SwapEvent, type AutoBuySignal } from '@racerbot/shared';
 import { getDb } from '@racerbot/db';
 import { SwapExecutor, warmAllKeys, ensureRefStorage, ensureTreasuryStorage, preWarmActiveSnipeStorage } from './executor.js';
 import { settleCopyFill } from './copyFill.js';
@@ -15,7 +15,8 @@ async function main(): Promise<void> {
   logger.info('Starting warm signing service...', { parentAccount: PARENT_ACCOUNT });
 
   // Fail fast — never decrypt user keys with a missing/placeholder master key
-  assertValidMasterKey(MASTER_KEY);
+  // With the signer service holding the keys (SIGNER_URL), the executor runs without the master key
+  if (!remoteSigningEnabled()) assertValidMasterKey(MASTER_KEY);
 
   // One stray rejected promise must not kill the signing service
   process.on('unhandledRejection', (reason) => {

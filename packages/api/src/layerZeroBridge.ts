@@ -10,6 +10,7 @@
  *    protects against gas starvation via mandatory native gas reserves, and sets Stargate
  *    refund addresses directly to the user's sovereign address.
  */
+import { remoteSigningEnabled, RemoteEvmSigner } from '@racerbot/shared';
 import { ethers } from 'ethers';
 import {
   createLogger,
@@ -108,6 +109,14 @@ export async function getUserEvmSigner(
     throw new Error('No EVM wallet found for this account. Run /wallet to initialize your unified EVM address.');
   }
 
+  if (remoteSigningEnabled()) {
+    // Signed by the signer service, which only signs for this user's own EVM wallet
+    const chainCfg = LZ_CHAINS[chain];
+    if (!chainCfg) throw new Error(`Unsupported chain: ${chain}`);
+    const remoteProvider = customProvider || new ethers.JsonRpcProvider(chainCfg.rpcUrls[0]);
+    const wallet = new RemoteEvmSigner({ userId: user.id, address: user.evm_address, purpose: `layerzero_${chain}` }, remoteProvider);
+    return { wallet: wallet as unknown as ethers.Wallet, user };
+  }
   const masterKey = getMasterKey();
   // Enforce sovereign EOA verification
   const check = verifySovereignEvmWallet(user.evm_address, user.evm_private_key_enc, masterKey);

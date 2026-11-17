@@ -13,7 +13,7 @@ import { generateCustodyKey } from './keyCustody.js';
 import crypto from 'crypto';
 import { KeyPair, transactions } from 'near-api-js';
 import { Account, JsonRpcProvider, actions } from 'near-api-js-v7';
-import { createLogger, decrypt, encrypt, getNear, getNearUsdPrice, nearKeyFor } from '@racerbot/shared';
+import { createLogger, decrypt, encrypt, getNear, getNearUsdPrice, nearKeyFor, remoteSigningEnabled } from '@racerbot/shared';
 import {
   claimReadyExecutors,
   createConfidentialAccount,
@@ -288,7 +288,11 @@ export async function ensureConfidentialAccount(user: UserRecord): Promise<Confi
 }
 
 function keysOf(acct: ConfidentialAccountRecord): PrivateAccountKeys {
-  return { accountId: acct.private_account_id, publicKey: acct.public_key, secretKey: decrypt(acct.secret_key_encrypted, MASTER_KEY) };
+  // With the signer, the secret stays there: signatures are requested per intent
+  if (remoteSigningEnabled()) {
+    return { accountId: acct.private_account_id, publicKey: acct.public_key, secretKey: '', userId: acct.user_id };
+  }
+  return { accountId: acct.private_account_id, publicKey: acct.public_key, secretKey: decrypt(acct.secret_key_encrypted, MASTER_KEY), userId: acct.user_id };
 }
 
 /**

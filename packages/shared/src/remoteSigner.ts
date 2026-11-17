@@ -63,7 +63,7 @@ export async function callSignerService(path: string, payload: unknown, timeoutM
 /** Asks the signer service to sign one payload; returns its signature or signed transaction */
 export async function requestRemoteSignature(req: {
   chain: RemoteSignChain;
-  kind: 'transaction' | 'message' | 'typed_data' | 'public_key' | 'deploy_account';
+  kind: 'transaction' | 'message' | 'typed_data' | 'public_key' | 'deploy_account' | 'intents_message';
   ref: SigningKeyRef;
   payload: string;
 }): Promise<string> {

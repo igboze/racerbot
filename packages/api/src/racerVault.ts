@@ -1,4 +1,5 @@
 import {
+  nearKeyFor,
   createLogger,
   getNear,
   getNearUsdPrice,
@@ -300,10 +301,10 @@ export async function depositNearToVault(
     return { success: false, reason: 'No managed subaccount for user' };
   }
 
-  const { decrypt, getNear } = await import('@racerbot/shared');
-  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
-  const privateKey = decrypt(user.scoped_key_encrypted, masterKey);
-  const keyPair = KeyPair.fromString(privateKey as any);
+  const { getNear, nearKeyFor } = await import('@racerbot/shared');
+  // Signed by the signer service when it holds the keys, else with the local key
+  const keyPair = nearKeyFor({ userId: user.id, address: user.subaccount_id, encryptedKey: user.scoped_key_encrypted, purpose: 'router_vault' },
+    process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '');
 
   try {
     const near = getNear();
@@ -344,10 +345,10 @@ export async function depositFtToVault(
     return { success: false, reason: 'No managed subaccount for user' };
   }
 
-  const { decrypt, getNear } = await import('@racerbot/shared');
-  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
-  const privateKey = decrypt(user.scoped_key_encrypted, masterKey);
-  const keyPair = KeyPair.fromString(privateKey as any);
+  const { getNear, nearKeyFor } = await import('@racerbot/shared');
+  // Signed by the signer service when it holds the keys, else with the local key
+  const keyPair = nearKeyFor({ userId: user.id, address: user.subaccount_id, encryptedKey: user.scoped_key_encrypted, purpose: 'router_vault' },
+    process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '');
 
   try {
     const near = getNear();
@@ -983,9 +984,9 @@ async function executeShieldedVaultIntentOnce(params: Parameters<typeof executeS
       reason: `One-tap trades run from a RacerBot-managed account, and ${userAccountId} is an external wallet without one. Open your wallet menu to create a RacerBot wallet, or sign in with Telegram.`,
     };
   }
-  const masterKey = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_KEY || 'default-master-key';
-  const privateKey = decrypt(params.user.scoped_key_encrypted, masterKey);
-  const keyPair = KeyPair.fromString(privateKey as any);
+  // Signed by the signer service when it holds the keys, else with the local key
+  const keyPair = nearKeyFor({ userId: params.user.id, address: params.user.subaccount_id, encryptedKey: params.user.scoped_key_encrypted, purpose: 'router_vault' },
+    process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '');
   const near = getNear();
 
   // Concurrent Execution: 1. Plan hops, 2. Check vault ledger balances, 3. Ensure signing key ready in NearClient

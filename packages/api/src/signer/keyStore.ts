@@ -50,7 +50,16 @@ async function userKeys(userId: string, chain: RemoteSignChain): Promise<Array<{
      SELECT account_id, encrypted_private_key FROM race_fleet_wallets WHERE user_id = $1::uuid AND chain = ANY($2::text[])`,
     [userId, WALLET_CHAINS[chain]]
   );
-  return res.rows.map((r: any) => ({ address: String(r.address), key: r.key ?? null }));
+  const rows = res.rows.map((r: any) => ({ address: String(r.address), key: r.key ?? null }));
+  if (chain === 'near') {
+    // The private-balance (NEAR Intents) account signs intents with its own key
+    const conf = await db.query(
+      'SELECT private_account_id AS address, secret_key_encrypted AS key FROM confidential_accounts WHERE user_id = $1::uuid',
+      [userId]
+    ).catch(() => ({ rows: [] as any[] }));
+    for (const r of conf.rows) rows.push({ address: String(r.address), key: r.key ?? null });
+  }
+  return rows;
 }
 
 /** The encrypted key for this user's address on this chain, or null when it is not theirs */

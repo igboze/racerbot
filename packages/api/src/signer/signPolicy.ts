@@ -84,6 +84,11 @@ function evmFeeRecipients(): Set<string> {
     .filter((a): a is string => Boolean(a)).map(a => a.toLowerCase()));
 }
 
+/** LayerZero OFT / Stargate v2 send(SendParam, MessagingFee, refundAddress) */
+const LZ_OFT = new ethers.Interface([
+  'function send((uint32 dstEid, bytes32 to, uint256 amountLD, uint256 minAmountLD, bytes extraOptions, bytes composeMsg, bytes oftCmd) sendParam, (uint256 nativeFee, uint256 lzTokenFee) fee, address refundAddress) payable',
+]);
+
 const ERC20 = new ethers.Interface([
   'function transfer(address to, uint256 amount)',
   'function transferFrom(address from, address to, uint256 amount)',
@@ -110,6 +115,22 @@ export function evaluateEvmTx(tx: ethers.Transaction, own: Set<string>): Finding
     // A plain HYPE transfer: only to the fee wallet or the user's own wallets
     if (tx.value > 0n && !fees.has(to) && !own.has(to)) f.hard.push(`sends ${ethers.formatEther(tx.value)} HYPE to ${to}`);
     return f;
+  }
+  // A LayerZero OFT / Stargate bridge is a withdrawal to another chain: its recipient and
+  // refund address must be the user's own wallet, wherever the contract is
+  try {
+    const bridge = LZ_OFT.parseTransaction({ data, value: tx.value });
+    if (bridge?.name === 'send') {
+      const sendParam = bridge.args[0];
+      const recipient = ('0x' + String(sendParam.to).slice(-40)).toLowerCase();
+      const refund = String(bridge.args[2]).toLowerCase();
+      if (!own.has(recipient)) f.hard.push(`bridges tokens to ${recipient} (not the user's wallet)`);
+      if (!own.has(refund)) f.hard.push(`bridge refunds go to ${refund} (not the user's wallet)`);
+      if (!allowed.has(to)) f.soft.push(`bridge contract not on the allowlist: ${to}`);
+      return f;
+    }
+  } catch {
+    // not a bridge send
   }
   if (allowed.has(to)) return f;
 
@@ -438,4 +459,54 @@ export function evaluateStarknetDeploy(details: any, ownRaw: Set<string>): Findi
   const own = new Set([...ownRaw].map(a => felt(a)));
   const target = felt(details?.contractAddress);
   return target && own.has(target) ? { hard: [], soft: [] } : { hard: [`deploys account ${target ?? 'unknown'} that is not the user's`], soft: [] };
+}
+
+// ── NEAR Intents (private balance) ───────────────────────────────────────────
+
+const RECEIVER_KEYS = new Set(['receiver_id', 'recipient', 'receiverId', 'deposit_address', 'depositAddress']);
+
+/** Every receiver an intent names, at any depth */
+function receiversIn(value: unknown, out: string[] = []): string[] {
+  if (Array.isArray(value)) value.forEach(v => receiversIn(v, out));
+  else if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (RECEIVER_KEYS.has(k) && typeof v === 'string') out.push(v);
+      else receiversIn(v, out);
+    }
+  }
+  return out;
+}
+
+/**
+ * Checks an intents message the private-balance account is asked to sign. Session sign-ins carry
+ * no intents. Funds may only go to the user's own accounts or to a receiver `isAllowedReceiver`
+ * vouches for (a RacerBot or Alpha creator payout account, or a 1Click deposit address whose quote
+ * pays one of those): otherwise it is theft-shaped.
+ */
+export async function evaluateIntentsMessage(
+  payload: string,
+  address: string,
+  own: Set<string>,
+  isAllowedReceiver: (receiver: string) => Promise<boolean>
+): Promise<Findings> {
+  const f: Findings = { hard: [], soft: [] };
+  let msg: any;
+  try {
+    msg = JSON.parse(payload);
+  } catch {
+    f.hard.push('intents payload is not readable');
+    return f;
+  }
+  if (String(msg?.signer_id ?? '').toLowerCase() !== address.toLowerCase()) {
+    f.hard.push(`intents signer ${msg?.signer_id} is not this account`);
+    return f;
+  }
+  if (msg?.verifying_contract && msg.verifying_contract !== 'intents.near') {
+    f.hard.push(`intents for an unknown contract ${msg.verifying_contract}`);
+  }
+  for (const receiver of receiversIn(msg?.intents ?? [])) {
+    if (own.has(receiver.toLowerCase())) continue;
+    if (!(await isAllowedReceiver(receiver))) f.hard.push(`intent sends funds to ${receiver}`);
+  }
+  return f;
 }

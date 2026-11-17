@@ -34,13 +34,15 @@ import { getDb, getUserById } from '@racerbot/db';
 import { findSigningKey, ownAddresses } from './keyStore.js';
 import { registerKeyRoutes } from './keyRoutes.js';
 import {
-  evaluateEvmTx, evaluateSolanaMessage, evaluateNearTx, evaluateSuiTxData, evaluateStarknetCalls, evaluateStarknetDeploy,
+  evaluateEvmTx, evaluateSolanaMessage, evaluateNearTx, evaluateSuiTxData, evaluateStarknetCalls, evaluateStarknetDeploy, evaluateIntentsMessage,
   blocks, policyMode, type Findings,
 } from './signPolicy.js';
 import { Transaction as SuiTransaction } from '@mysten/sui/transactions';
 import { fromBase64, normalizeSuiAddress } from '@mysten/sui/utils';
 import { Signer as StarknetSigner, ec as starkEc, stark } from 'starknet';
-import { KeyPair as NearKeyPair } from 'near-api-js';
+import { KeyPair as NearKeyPair, utils as nearUtils } from 'near-api-js';
+import { getDepositQuote } from '../intentsPrivate.js';
+import { isAllowedPaymentDestination } from '../moneyOut.js';
 import { decodeTransaction as decodeNearTransaction } from '@near-js/transactions';
 import { MONEY_OUT_OPS, executeMoneyOut, signBody, toWire, type MoneyOutOp } from '../moneyOut.js';
 import { checkAndRecord, finishAudit, breakerState, POLICY } from './policy.js';
@@ -308,6 +310,26 @@ app.post('/v1/sign', async (req: any, res) => {
       // near-api-js asks for the public key first (to read the nonce): no funds move
       if (kind === 'public_key') {
         res.json({ ok: true, signed: keyPair.getPublicKey().toString() });
+        return;
+      }
+      if (kind === 'intents_message') {
+        // Private-balance intents: funds only to own accounts, RacerBot or Alpha creators, or a
+        // 1Click deposit address whose quote (per 1Click) pays one of those
+        const isAllowedReceiver = async (receiver: string): Promise<boolean> => {
+          if (await isAllowedPaymentDestination(receiver)) return true;
+          const quote = await getDepositQuote(receiver).catch(() => null);
+          const recipient = quote?.recipient ? String(quote.recipient).toLowerCase() : null;
+          return Boolean(recipient && (own.has(recipient) || (await isAllowedPaymentDestination(recipient))));
+        };
+        const findings = await evaluateIntentsMessage(payload, address, own, isAllowedReceiver);
+        const refused = blocks(findings);
+        await auditSign(userId, chain, purpose, 'intents message', findings, refused);
+        if (refused) {
+          refuseWith(findings);
+          return;
+        }
+        const { signature } = keyPair.sign(Buffer.from(payload, 'utf8'));
+        res.json({ ok: true, signed: `ed25519:${nearUtils.serialize.base_encode(signature)}` });
         return;
       }
       if (kind !== 'transaction') {

@@ -20,6 +20,8 @@ export interface PrivateAccountKeys {
   accountId: string;
   publicKey: string;
   secretKey: string;
+  /** Owner, for signing through the signer service when secretKey is not held here */
+  userId?: string;
 }
 
 export interface MoveQuote {
@@ -68,9 +70,28 @@ async function versionedNonce(deadline: Date): Promise<string> {
   return Buffer.concat([Buffer.from('5628f6c6', 'hex'), Buffer.from([0]), Buffer.from(saltHex, 'hex'), deadlineNs, random]).toString('base64');
 }
 
-function signRaw(keys: PrivateAccountKeys, payload: string): string {
+/**
+ * Signs an intents payload (raw_ed25519: the payload string's UTF-8 bytes). Without the secret key
+ * here, the signer service signs it after checking where any funds in it go (signer Phase B4b).
+ */
+async function signRaw(keys: PrivateAccountKeys, payload: string): Promise<string> {
+  if (!keys.secretKey) {
+    if (!keys.userId) throw new Error('This private balance cannot be signed for here.');
+    const { requestRemoteSignature } = await import('@racerbot/shared');
+    return requestRemoteSignature({
+      chain: 'near', kind: 'intents_message', payload,
+      ref: { userId: keys.userId, address: keys.accountId, purpose: 'private_balance' },
+    });
+  }
   const { signature } = KeyPair.fromString(keys.secretKey as any).sign(Buffer.from(payload, 'utf8'));
   return `ed25519:${utils.serialize.base_encode(signature)}`;
+}
+
+/** Who a 1Click deposit address finally pays, from 1Click's own record of its quote */
+export async function getDepositQuote(depositAddress: string): Promise<{ recipient?: string; refundTo?: string; status?: string }> {
+  const s = await api<any>('GET', `/v0/status?depositAddress=${encodeURIComponent(depositAddress)}`);
+  const req = s?.quoteResponse?.quoteRequest || {};
+  return { recipient: req.recipient, refundTo: req.refundTo, status: s?.status };
 }
 
 const sessions = new Map<string, { token: string; expiresAt: number }>();
@@ -88,7 +109,7 @@ async function session(keys: PrivateAccountKeys): Promise<string> {
     intents: [],
   });
   const auth = await api<{ accessToken: string; expiresIn: number }>('POST', '/v0/auth/authenticate', {
-    signedData: { standard: 'raw_ed25519', payload, public_key: keys.publicKey, signature: signRaw(keys, payload) },
+    signedData: { standard: 'raw_ed25519', payload, public_key: keys.publicKey, signature: await signRaw(keys, payload) },
   }, 'none');
   sessions.set(keys.accountId, { token: auth.accessToken, expiresAt: Date.now() + auth.expiresIn * 1000 });
   return auth.accessToken;
@@ -196,7 +217,7 @@ export async function unshield(keys: PrivateAccountKeys, amount: bigint, recipie
   const payload = typeof generated.intent.payload === 'string' ? generated.intent.payload : JSON.stringify(generated.intent.payload);
   const submitted = await api<{ intentHash: string }>('POST', '/v0/submit-intent', {
     type: 'swap_transfer',
-    signedData: { ...generated.intent, public_key: keys.publicKey, signature: signRaw(keys, payload) },
+    signedData: { ...generated.intent, public_key: keys.publicKey, signature: await signRaw(keys, payload) },
   }, token);
   return { ...quote, intentHash: submitted.intentHash };
 }

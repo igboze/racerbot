@@ -7,7 +7,7 @@ import cors from 'cors';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { Telegraf } from 'telegraf';
-import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, type TokenDetectedEvent } from '@racerbot/shared';
+import { createRedis, CHANNELS, assertValidMasterKey, createLogger, getNear, remoteSigningEnabled, type TokenDetectedEvent } from '@racerbot/shared';
 import { getDb, runMigrations } from '@racerbot/db';
 import apiRouter, { serveRacerHtml, serveRacerAlphaHtml, serveBubbleMapHtml, serveCompetitionHtml, serveFleetHtml } from './routes/index.js';
 import { setupRoutes, localTokenNames } from './routes.js';
@@ -39,7 +39,8 @@ async function main(): Promise<void> {
   logger.info('Starting RacerBot API service...');
 
   // ── Fail fast on insecure/missing secrets ──────────────────────────────
-  assertValidMasterKey(process.env.KEY_ENCRYPTION_MASTER_KEY);
+  // With the signer service holding the keys (SIGNER_URL), the API runs without the master key
+  if (!remoteSigningEnabled()) assertValidMasterKey(process.env.KEY_ENCRYPTION_MASTER_KEY);
   if (!TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN === 'your-bot-token-here') {
     throw new Error('TELEGRAM_BOT_TOKEN is missing or a placeholder');
   }

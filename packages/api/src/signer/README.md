@@ -61,7 +61,7 @@ signer holds `KEY_ENCRYPTION_MASTER_KEY`.
 | B2 | NEAR: swaps (executor), RaceFleet, wNEAR unwrap, storage, intents refunds and deposits; payments to RacerBot and Alpha creators | shipped |
 | B3 | Sui (SuiPump and the Aftermath router), Starknet (Launchy, Unruggable and other pools, account deployment) | shipped |
 | B4a | Key creation (onboarding, every chain, fleet, web wallets, private balance), import, `/export`, fleet export and NEAR key rotation in the signer | shipped |
-| B4b | Confidential private-balance signatures, LayerZero bridge, old router vault, then run the API without the master key | next |
+| B4b | Private-balance (NEAR Intents) signatures, LayerZero bridge, old router vault; API and executor start without the master key | shipped |
 
 **How it works.** With `SIGNER_URL` set, a trade builds its transaction as before but sends it
 *unsigned* to the signer (`/v1/sign`). The signer checks that the wallet belongs to the user,
@@ -179,3 +179,40 @@ returns plaintext keys.
 Known limit: if a RaceFleet subscription payment fails right after its wallets were created, the
 signer will not sign the cleanup for wallets not yet stored, so those accounts stay on-chain
 (about 0.00182 NEAR each, logged).
+
+## Removing the master key from the API (B4b)
+
+With B1 to B4b, every place the API, executor and triggers used the master key goes through
+the signer when `SIGNER_URL` is set, and the API and executor no longer refuse to start
+without `KEY_ENCRYPTION_MASTER_KEY`.
+
+- **Private balance (NEAR Intents).** The private account's key stays in the signer. It signs
+  sign-in sessions (no funds) and intents whose recipients are the user's own accounts,
+  RacerBot or an Alpha creator, or a 1Click deposit address whose quote, per 1Click's own
+  records, pays one of those. User-chosen private withdrawals still run inside the signer
+  through the money-out route.
+- **LayerZero bridge.** Bridging is signed only to the user's own EVM wallet: a different
+  recipient or refund address is a hard finding.
+- **Old router vault.** Its NEAR keys come from the signer (its insecure `default-master-key`
+  fallback is gone).
+
+### Cut-over (owner steps), once the signer runs and the audit log looks right
+
+1. Make sure `SIGNER_URL` and `SIGNER_SHARED_SECRET` are set on the API (and on the executor and
+   triggers services if they run separately), and trades, withdrawals, `/export` and wallet
+   creation work through the signer for a while.
+2. Remove `KEY_ENCRYPTION_MASTER_KEY` (and any `ENCRYPTION_MASTER_KEY`) from the API, executor
+   and triggers services, keeping it **only on the signer**, and redeploy them.
+3. Check the logs: nothing should report a decryption failure. If anything does, put the key
+   back on that service (that restores today's behaviour) and send me the log line.
+
+After this, a compromised API can no longer decrypt or sign with any user key: it can only ask
+the signer, which applies its rules, audits and alerts.
+
+Still separate: the platform's own keys (the NEAR parent account `MAIN_WALLET_PRIVATE_KEY`, the
+treasury key, the confidential relayer and router keys) are not encrypted with the master key;
+they remain API secrets and are the next thing to move.
+
+Known limits:
+- Bridging to someone else's address (`recipientAddress` other than the user's own) is refused
+  once the rules are enforced; it would need its own money-out operation.
