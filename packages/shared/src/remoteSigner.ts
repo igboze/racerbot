@@ -51,7 +51,9 @@ export async function callSignerService(path: string, payload: unknown, timeoutM
     body,
     signal: AbortSignal.timeout(timeoutMs),
   }).catch((err: any) => {
-    throw new Error(`This is temporarily unavailable: ${err?.message || 'signer unreachable'}`);
+    // Node's fetch hides the reason (DNS, refused, timeout) in err.cause: name it, and where we tried
+    const cause = err?.cause?.code || err?.cause?.message || '';
+    throw new Error(`This is temporarily unavailable: ${err?.message || 'signer unreachable'}${cause ? ` (${cause})` : ''} reaching ${url}`);
   });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok || data?.ok !== true) {

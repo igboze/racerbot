@@ -51,7 +51,8 @@ export async function forwardToSigner(op: MoneyOutOp, userId: string, args: unkn
     // Withdrawals can wait on chain confirmation (Elysium inbox, Starknet)
     signal: AbortSignal.timeout(180_000),
   }).catch((err: any) => {
-    throw new Error(`Withdrawals are temporarily unavailable: ${err?.message || 'signer unreachable'}`);
+    const cause = err?.cause?.code || err?.cause?.message || '';
+    throw new Error(`Withdrawals are temporarily unavailable: ${err?.message || 'signer unreachable'}${cause ? ` (${cause})` : ''} reaching ${url}`);
   });
   const data: any = await res.json().catch(() => ({}));
   if (!res.ok || data?.ok === false) throw new Error(data?.error || `Withdrawal refused (${res.status})`);
