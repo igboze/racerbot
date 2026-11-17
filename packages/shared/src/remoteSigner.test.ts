@@ -124,3 +124,63 @@ describe('remote NEAR signing', () => {
     expect(key.verify(hash, (signedTx.signature as any).ed25519Signature.data)).toBe(true);
   });
 });
+
+describe('remote Sui and Starknet signing', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+    vi.unstubAllGlobals();
+  });
+  const enableRemote = () => {
+    process.env.SIGNER_URL = 'http://signer.test';
+    process.env.SIGNER_SHARED_SECRET = 's'.repeat(40);
+    delete process.env.RACERBOT_SIGNER;
+  };
+
+  it('Sui: the remote signature equals the local one', async () => {
+    const { Ed25519Keypair } = await import('@mysten/sui/keypairs/ed25519');
+    const { fromBase64 } = await import('@mysten/sui/utils');
+    const { getSuiSigner } = await import('./suiStarknetRemoteSigner.js');
+    enableRemote();
+    const key = new Ed25519Keypair();
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      const signed = body.kind === 'public_key'
+        ? key.getPublicKey().toBase64()
+        : (await key.signTransaction(fromBase64(body.payload))).signature;
+      return { ok: true, status: 200, json: async () => ({ ok: true, signed }) } as any;
+    }));
+    const signer = await getSuiSigner({ userId: 'u1', address: key.toSuiAddress() }, 'm'.repeat(40));
+    const bytes = Uint8Array.from([1, 2, 3, 4, 5]);
+    expect((await signer.signTransaction(bytes)).signature).toBe((await key.signTransaction(bytes)).signature);
+  });
+
+  it('Starknet: the remote signature equals the local one', async () => {
+    const { Signer, ec, stark, constants } = await import('starknet');
+    const { RemoteStarknetSigner, fromTaggedJson } = await import('./suiStarknetRemoteSigner.js');
+    enableRemote();
+    const privateKey = '0x' + '1'.repeat(62);
+    const local = new Signer(privateKey);
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      let signed: string;
+      if (body.kind === 'public_key') signed = ec.starkCurve.getStarkKey(privateKey);
+      else {
+        const { calls, details } = fromTaggedJson(body.payload);
+        signed = JSON.stringify(stark.formatSignature(await local.signTransaction(calls, details)));
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, signed }) } as any;
+    }));
+    const calls = [{ contractAddress: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d', entrypoint: 'transfer', calldata: ['0x1', '5', '0'] }];
+    const details: any = {
+      walletAddress: '0x0abc', chainId: constants.StarknetChainId.SN_MAIN, cairoVersion: '1', nonce: 7n, version: '0x3',
+      resourceBounds: { l1_gas: { max_amount: 10n, max_price_per_unit: 10n }, l2_gas: { max_amount: 10n, max_price_per_unit: 10n }, l1_data_gas: { max_amount: 10n, max_price_per_unit: 10n } },
+      tip: 0n, paymasterData: [], accountDeploymentData: [], nonceDataAvailabilityMode: 'L1', feeDataAvailabilityMode: 'L1',
+    };
+    const remote = new RemoteStarknetSigner({ userId: 'u1', address: '0x0abc' });
+    expect(await remote.getPubKey()).toBe(ec.starkCurve.getStarkKey(privateKey));
+    const remoteSig = await remote.signTransaction(calls, details);
+    const localSig = stark.formatSignature(await local.signTransaction(calls, details));
+    expect(remoteSig).toEqual(localSig);
+  });
+});

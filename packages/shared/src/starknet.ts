@@ -1,4 +1,5 @@
 import { isValidEvmAddress } from './evm.js';
+import type { SignerInterface } from 'starknet';
 import {
   RpcProvider,
   Account,
@@ -212,7 +213,8 @@ export function generateStarknetWallet(masterKey: string): GeneratedStarknetWall
  * Creates an Account instance for signing and executing Starknet transactions.
  */
 export function getStarknetAccount(
-  privateKeySecret: string,
+  /** The private key, or a signer (the signer service's remote signer) */
+  privateKeySecret: string | SignerInterface,
   address: string,
   provider?: RpcProvider
 ): Account {

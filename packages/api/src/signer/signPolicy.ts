@@ -26,7 +26,18 @@ import {
   KLEOS_V5_DEPLOYMENTS,
   ELYSIUM_BRIDGE,
   RONSPAD,
+  DEFAULT_SUI_TREASURY_ADDRESS,
+  SUIPUMP_PACKAGE_ID,
+  SUIPUMP_IDENTITY_PACKAGE_ID,
+  SUIPUMP_LATEST_PACKAGE_ID,
+  DEFAULT_STARKNET_TREASURY_ADDRESS,
+  LAUNCHY_FACTORY_V6,
+  LAUNCHY_FACTORY_V2,
+  LAUNCHY_SWAPPER_V3,
+  UNRUGGABLE_FACTORY_ADDRESS,
 } from '@racerbot/shared';
+import { bcs } from '@mysten/sui/bcs';
+import { normalizeSuiAddress, fromBase64 } from '@mysten/sui/utils';
 
 export type PolicyMode = 'monitor' | 'enforce_hard' | 'enforce';
 
@@ -315,4 +326,116 @@ export function evaluateNearTx(tx: DecodedNearTx, own: Set<string>): Findings {
     }
   }
   return f;
+}
+
+// ── Sui ───────────────────────────────────────────────────────────────────────
+
+const SUI_SYSTEM_PACKAGES = new Set([normalizeSuiAddress('0x1'), normalizeSuiAddress('0x2'), normalizeSuiAddress('0x3')]);
+
+export function suiPackageAllowed(pkg: string): boolean {
+  const p = normalizeSuiAddress(pkg);
+  return [SUIPUMP_PACKAGE_ID, SUIPUMP_IDENTITY_PACKAGE_ID, SUIPUMP_LATEST_PACKAGE_ID, ...envList('SIGNER_SUI_ALLOWED_PACKAGES')]
+    .some(a => normalizeSuiAddress(a) === p);
+}
+
+/** Checks one Sui transaction (its decoded data) the signer is asked to sign for a trade */
+export function evaluateSuiTxData(data: { commands: any[]; inputs: any[] }, ownRaw: Set<string>): Findings {
+  const f: Findings = { hard: [], soft: [] };
+  const own = new Set([...ownRaw].map(a => normalizeSuiAddress(a)));
+  const fee = normalizeSuiAddress(process.env.SUI_TREASURY_ADDRESS || DEFAULT_SUI_TREASURY_ADDRESS);
+  const isOwnOrFee = (a: string) => own.has(a) || a === fee;
+  // An address argument that is a plain input can be read exactly; anything computed cannot
+  const addressOf = (arg: any): string | null => {
+    const input = arg?.$kind === 'Input' ? data.inputs[arg.Input] : null;
+    const bytes = input?.Pure?.bytes;
+    if (!bytes) return null;
+    try {
+      return normalizeSuiAddress(bcs.Address.parse(fromBase64(bytes)));
+    } catch {
+      return null;
+    }
+  };
+
+  for (const cmd of data.commands) {
+    if (cmd.TransferObjects) {
+      const dest = addressOf(cmd.TransferObjects.address);
+      if (!dest) f.soft.push('transfers objects to an address computed in the transaction');
+      else if (!isOwnOrFee(dest)) f.hard.push(`transfers objects to ${dest}`);
+    } else if (cmd.MoveCall) {
+      const { package: pkg, module, function: fn, arguments: args } = cmd.MoveCall;
+      const p = normalizeSuiAddress(pkg);
+      if (SUI_SYSTEM_PACKAGES.has(p)) {
+        if (module === 'transfer' && /transfer/.test(fn)) {
+          const dest = addressOf(args?.[1]);
+          if (!dest || !isOwnOrFee(dest)) f.hard.push(`${module}::${fn} to ${dest ?? 'a computed address'}`);
+        } else if (module === 'pay') {
+          f.soft.push(`0x2::pay::${fn}`);
+        }
+      } else if (!suiPackageAllowed(p)) {
+        f.soft.push(`calls ${p}::${module}::${fn} (package not on the allowlist)`);
+      }
+    } else if (cmd.Publish || cmd.Upgrade) {
+      f.hard.push(cmd.Publish ? 'publishes a package' : 'upgrades a package');
+    }
+  }
+  return f;
+}
+
+// ── Starknet ─────────────────────────────────────────────────────────────────
+
+const felt = (v: unknown): string | null => {
+  try {
+    return '0x' + BigInt(v as any).toString(16);
+  } catch {
+    return null;
+  }
+};
+
+export function starknetContractAllowed(address: string): boolean {
+  const a = felt(address);
+  return [LAUNCHY_FACTORY_V6, LAUNCHY_FACTORY_V2, LAUNCHY_SWAPPER_V3, UNRUGGABLE_FACTORY_ADDRESS, ...envList('SIGNER_STARKNET_ALLOWED_CONTRACTS')]
+    .some(c => felt(c) === a);
+}
+
+const U128_MAX = (1n << 128n) - 1n;
+
+/** Checks the calls of one Starknet transaction the signer is asked to sign for a trade */
+export function evaluateStarknetCalls(calls: any[], ownRaw: Set<string>): Findings {
+  const f: Findings = { hard: [], soft: [] };
+  const own = new Set([...ownRaw].map(a => felt(a)).filter(Boolean) as string[]);
+  const fee = felt(process.env.STARKNET_TREASURY_ADDRESS || DEFAULT_STARKNET_TREASURY_ADDRESS);
+  const isOwnOrFee = (a: string | null) => Boolean(a) && (own.has(a!) || a === fee);
+  const targets = new Set(calls.map(c => felt(c.contractAddress)));
+
+  for (const call of calls) {
+    const to = felt(call.contractAddress);
+    const entry = String(call.entrypoint);
+    const data: unknown[] = Array.isArray(call.calldata) ? call.calldata : [];
+    if (entry === 'transfer') {
+      const dest = felt(data[0]);
+      if (!isOwnOrFee(dest)) f.hard.push(`token transfer to ${dest ?? 'an unreadable address'} on ${to}`);
+    } else if (entry === 'transfer_from' || entry === 'transferFrom') {
+      const dest = felt(data[1]);
+      if (!isOwnOrFee(dest)) f.hard.push(`token transfer_from to ${dest ?? 'an unreadable address'} on ${to}`);
+    } else if (entry === 'approve') {
+      const spender = felt(data[0]);
+      const low = BigInt((data[1] as any) ?? 0);
+      const high = BigInt((data[2] as any) ?? 0);
+      const unlimited = high > 0n || low >= U128_MAX;
+      const knownSpender = spender !== null && (starknetContractAllowed(spender) || isOwnOrFee(spender));
+      // A swap approves the exact amount and calls that spender in the same transaction
+      const usedNow = spender !== null && targets.has(spender) && spender !== to;
+      if (!knownSpender && (unlimited || !usedNow)) f.hard.push(`approves ${spender ?? 'an unreadable spender'} to spend tokens of ${to}`);
+    } else if (to && !starknetContractAllowed(to) && !isOwnOrFee(to)) {
+      f.soft.push(`calls ${entry} on ${to} (not on the allowlist)`);
+    }
+  }
+  return f;
+}
+
+/** A Starknet account deployment is only for the user's own account */
+export function evaluateStarknetDeploy(details: any, ownRaw: Set<string>): Findings {
+  const own = new Set([...ownRaw].map(a => felt(a)));
+  const target = felt(details?.contractAddress);
+  return target && own.has(target) ? { hard: [], soft: [] } : { hard: [`deploys account ${target ?? 'unknown'} that is not the user's`], soft: [] };
 }

@@ -22,6 +22,7 @@ import {
   LAUNCHY_SWAPPER_V3,
   type SwapEvent,
   distributeTradeFeeRewards,
+  getStarknetSigner,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -95,8 +96,9 @@ export async function executeStarknetSwap(
     throw new Error('Starknet wallet not initialized. Please tap /wallets or /start to view your Starknet address.');
   }
 
-  const privateKeySecret = decrypt(userKeyEnc, MASTER_KEY);
-  const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
+  // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+  const starknetSigner = getStarknetSigner({ userId: user.id, address: userAddress, encryptedKey: userKeyEnc, purpose: 'starknet_swap' }, MASTER_KEY);
+  const publicKey = typeof starknetSigner === 'string' ? ec.starkCurve.getStarkKey(starknetSigner) : await starknetSigner.getPubKey();
   const canonicalAddress = computeStarknetAccountAddress(publicKey);
 
   // Guarantee that on-chain actions always execute with the canonical OZ account address
@@ -109,7 +111,7 @@ export async function executeStarknetSwap(
   }
 
   const provider = getStarknetProvider();
-  const account = getStarknetAccount(privateKeySecret, userAddress, provider);
+  const account = getStarknetAccount(starknetSigner, userAddress, provider);
 
   const tokenInCanonical = resolveCanonicalToken(token_in);
   const tokenOutCanonical = resolveCanonicalToken(token_out);
@@ -362,7 +364,6 @@ export async function executeStarknetSwap(
 
   if (!isDeployed) {
     onProgress?.('deploying_account');
-    const publicKey = ec.starkCurve.getStarkKey(privateKeySecret);
     const expectedAddress = computeStarknetAccountAddress(publicKey);
 
     if (!isSameStarknetAddress(userAddress, expectedAddress)) {

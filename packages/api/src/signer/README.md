@@ -59,8 +59,8 @@ signer holds `KEY_ENCRYPTION_MASTER_KEY`.
 |---|---|---|
 | B1 | HyperEVM, Elysium, Kleos and the other Elysium pads; Solana (swaps and RaceFleet) | shipped |
 | B2 | NEAR: swaps (executor), RaceFleet, wNEAR unwrap, storage, intents refunds and deposits; payments to RacerBot and Alpha creators | shipped |
-| B3 | Sui, Starknet | next |
-| B4 | Key creation, import and export inside the signer; remove the master key from the API | last |
+| B3 | Sui (SuiPump and the Aftermath router), Starknet (Launchy, Unruggable and other pools, account deployment) | shipped |
+| B4 | Key creation, import and export inside the signer; remove the master key from the API | next |
 
 **How it works.** With `SIGNER_URL` set, a trade builds its transaction as before but sends it
 *unsigned* to the signer (`/v1/sign`). The signer checks that the wallet belongs to the user,
@@ -97,7 +97,20 @@ Add any legitimate contract to `SIGNER_EVM_ALLOWED_CONTRACTS` or program to
 `SIGNER_SOLANA_ALLOWED_PROGRAMS` (comma separated) on the signer, then switch to
 `enforce_hard`, and later `enforce`.
 
-Extra NEAR allowlist entries go in `SIGNER_NEAR_ALLOWED_CONTRACTS` (exact account ids).
+Extra NEAR allowlist entries go in `SIGNER_NEAR_ALLOWED_CONTRACTS` (exact account ids),
+Sui packages in `SIGNER_SUI_ALLOWED_PACKAGES` and Starknet contracts in
+`SIGNER_STARKNET_ALLOWED_CONTRACTS`.
+
+**Sui rules.** Hard: objects transferred to an address that is not the user's or RacerBot's
+treasury (by a `TransferObjects` command or `0x2::transfer`), publishing or upgrading packages.
+Soft: Move calls into packages not on the allowlist (the Aftermath router reaches many DEX
+packages; they appear here first). Raw-digest and personal-message signing are refused.
+
+**Starknet rules.** Hard: token `transfer` / `transfer_from` to a stranger, unlimited approvals
+to unknown spenders, approvals to a spender the same transaction does not call (a swap approves
+the exact amount and calls that router right away), deploying an account that is not the
+user's. Soft: calls into contracts not on the allowlist. Declaring contracts and message
+signing are refused.
 
 **Payments from user wallets** (platform fees, Racer Alpha Viewing Keys, copy profit shares)
 now go through the signer as a money-out operation, and are only paid to RacerBot's own

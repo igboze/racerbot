@@ -17,6 +17,7 @@ import {
   SUI_BPS_DENOMINATOR,
   type SwapEvent,
   distributeTradeFeeRewards,
+  getSuiSigner,
 } from '@racerbot/shared';
 import {
   getUserById,
@@ -76,8 +77,8 @@ export async function executeSuiSwap(
     throw new Error('Sui wallet not configured. Please initialize your wallet via /start.');
   }
 
-  // Decrypt and restore user's Ed25519 keypair
-  const keypair = restoreSuiKeypair(suiKeyEnc, MASTER_KEY);
+  // Signed by the signer service when SIGNER_URL is set, else with the local key as before
+  const keypair = await getSuiSigner({ userId: user.id, address: suiAddress, encryptedKey: suiKeyEnc, purpose: 'sui_swap' }, MASTER_KEY);
   const userAddress = suiAddress;
 
   const isBuy = token_in === 'sui' || token_in === '0x2::sui::SUI' || token_in === 'SUI' || token_in === '0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI';

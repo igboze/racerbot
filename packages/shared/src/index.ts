@@ -146,6 +146,8 @@ export {
   MIST_PER_SUI,
   SUI_CLOCK_OBJECT_ID,
   SUIPUMP_PACKAGE_ID,
+  SUIPUMP_IDENTITY_PACKAGE_ID,
+  SUIPUMP_LATEST_PACKAGE_ID,
   SUIPUMP_PRICE_CONFIG_OBJECT_ID,
   SUI_FEE_BPS,
   SUI_BPS_DENOMINATOR,
@@ -441,6 +443,14 @@ export {
   type NearKeyLike,
   type NearRemoteKey,
 } from './nearRemoteSigner.js';
+export {
+  RemoteSuiSigner,
+  RemoteStarknetSigner,
+  getSuiSigner,
+  getStarknetSigner,
+  toTaggedJson,
+  fromTaggedJson,
+} from './suiStarknetRemoteSigner.js';
 export type {
   EvmChain,
   GeneratedEvmWallet,

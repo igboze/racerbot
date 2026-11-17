@@ -1,4 +1,5 @@
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
+import type { Signer as SuiSignerLike } from '@mysten/sui/cryptography';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { Transaction } from '@mysten/sui/transactions';
@@ -752,7 +753,7 @@ export interface ExecuteSuiTxResult {
  */
 export async function executeSuiTransaction(
   tx: Transaction,
-  keypair: Ed25519Keypair
+  keypair: Ed25519Keypair | SuiSignerLike
 ): Promise<ExecuteSuiTxResult> {
   const submitTx = async (client: SuiJsonRpcClient) => {
     const result = await client.signAndExecuteTransaction({

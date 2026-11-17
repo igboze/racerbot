@@ -15,7 +15,7 @@ import { getEvmWalletFromEncrypted } from './evm.js';
 import { restoreSolanaKeypair } from './solana.js';
 import type { SolanaKeyLike, SolanaRemoteSigner } from './solanaSigning.js';
 
-export type RemoteSignChain = 'evm' | 'solana' | 'near';
+export type RemoteSignChain = 'evm' | 'solana' | 'near' | 'sui' | 'starknet';
 
 /** Which key: the signer looks it up by owner and address, never from the caller */
 export interface SigningKeyRef {
@@ -38,7 +38,7 @@ const hmac = (secret: string, timestamp: string, body: string) =>
 /** Asks the signer service to sign one payload; returns its signature or signed transaction */
 export async function requestRemoteSignature(req: {
   chain: RemoteSignChain;
-  kind: 'transaction' | 'message' | 'typed_data' | 'public_key';
+  kind: 'transaction' | 'message' | 'typed_data' | 'public_key' | 'deploy_account';
   ref: SigningKeyRef;
   payload: string;
 }): Promise<string> {

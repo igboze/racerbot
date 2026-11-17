@@ -115,3 +115,51 @@ describe('NEAR trade rules', () => {
     expect(f.soft).toHaveLength(1);
   });
 });
+
+describe('Sui and Starknet trade rules', () => {
+  it('Sui: allows fees to the treasury and own transfers, flags strangers and publishing', async () => {
+    const { Transaction } = await import('@mysten/sui/transactions');
+    const { DEFAULT_SUI_TREASURY_ADDRESS, SUIPUMP_LATEST_PACKAGE_ID } = await import('@racerbot/shared');
+    const { evaluateSuiTxData } = await import('./signPolicy.js');
+    const me = '0x' + '11'.repeat(32);
+    const build = (to: string) => {
+      const tx = new Transaction();
+      const [coin] = tx.splitCoins(tx.gas, [tx.pure.u64(5)]);
+      tx.transferObjects([coin], tx.pure.address(to));
+      tx.moveCall({ target: `${SUIPUMP_LATEST_PACKAGE_ID}::curve::buy`, arguments: [coin] });
+      return tx.getData() as any;
+    };
+    expect(evaluateSuiTxData(build(DEFAULT_SUI_TREASURY_ADDRESS), new Set([me]))).toEqual({ hard: [], soft: [] });
+    expect(evaluateSuiTxData(build(me), new Set([me]))).toEqual({ hard: [], soft: [] });
+    expect(evaluateSuiTxData(build('0x' + 'ee'.repeat(32)), new Set([me])).hard).toHaveLength(1);
+    expect(evaluateSuiTxData({ commands: [{ Publish: {} }], inputs: [] }, new Set([me])).hard).toEqual(['publishes a package']);
+  });
+
+  it('Starknet: fee transfers and exact swap approvals pass; strangers and loose approvals are flagged', async () => {
+    const { DEFAULT_STARKNET_TREASURY_ADDRESS, LAUNCHY_SWAPPER_V3 } = await import('@racerbot/shared');
+    const { evaluateStarknetCalls, evaluateStarknetDeploy } = await import('./signPolicy.js');
+    const me = '0x0abc';
+    const token = '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d';
+    const router = '0x0' + '7'.repeat(63);
+    const own = new Set([me]);
+    const swap = [
+      { contractAddress: token, entrypoint: 'transfer', calldata: [DEFAULT_STARKNET_TREASURY_ADDRESS, '100', '0'] },
+      { contractAddress: token, entrypoint: 'approve', calldata: [router, '1000', '0'] },
+      { contractAddress: router, entrypoint: 'swap_exact_input', calldata: [] },
+    ];
+    const f = evaluateStarknetCalls(swap, own);
+    expect(f.hard).toEqual([]);
+    expect(f.soft).toHaveLength(1); // the router itself is not on the allowlist yet
+    expect(evaluateStarknetCalls([{ contractAddress: token, entrypoint: 'approve', calldata: [LAUNCHY_SWAPPER_V3, '1', '0'] }], own).hard).toEqual([]);
+    expect(evaluateStarknetCalls([{ contractAddress: token, entrypoint: 'transfer', calldata: ['0x0dead', '5', '0'] }], own).hard).toHaveLength(1);
+    // Unlimited approval to an unknown spender, even one called in the same transaction
+    expect(evaluateStarknetCalls([
+      { contractAddress: token, entrypoint: 'approve', calldata: [router, '0', '1'] },
+      { contractAddress: router, entrypoint: 'swap_exact_input', calldata: [] },
+    ], own).hard).toHaveLength(1);
+    // Approval to a spender the transaction never uses
+    expect(evaluateStarknetCalls([{ contractAddress: token, entrypoint: 'approve', calldata: [router, '5', '0'] }], own).hard).toHaveLength(1);
+    expect(evaluateStarknetDeploy({ contractAddress: '0x00abc' }, own).hard).toEqual([]);
+    expect(evaluateStarknetDeploy({ contractAddress: '0x0def' }, own).hard).toHaveLength(1);
+  });
+});

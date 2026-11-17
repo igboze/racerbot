@@ -25,12 +25,20 @@ import {
   assertValidMasterKey,
   getEvmWalletFromEncrypted,
   restoreSolanaKeypair,
+  restoreSuiKeypair,
+  fromTaggedJson,
   decrypt,
   type RemoteSignChain,
 } from '@racerbot/shared';
 import { getDb, getUserById } from '@racerbot/db';
 import { findSigningKey, ownAddresses } from './keyStore.js';
-import { evaluateEvmTx, evaluateSolanaMessage, evaluateNearTx, blocks, policyMode, type Findings } from './signPolicy.js';
+import {
+  evaluateEvmTx, evaluateSolanaMessage, evaluateNearTx, evaluateSuiTxData, evaluateStarknetCalls, evaluateStarknetDeploy,
+  blocks, policyMode, type Findings,
+} from './signPolicy.js';
+import { Transaction as SuiTransaction } from '@mysten/sui/transactions';
+import { fromBase64, normalizeSuiAddress } from '@mysten/sui/utils';
+import { Signer as StarknetSigner, ec as starkEc, stark } from 'starknet';
 import { KeyPair as NearKeyPair } from 'near-api-js';
 import { decodeTransaction as decodeNearTransaction } from '@near-js/transactions';
 import { MONEY_OUT_OPS, executeMoneyOut, signBody, toWire, type MoneyOutOp } from '../moneyOut.js';
@@ -170,7 +178,7 @@ app.post('/v1/sign', async (req: any, res) => {
     return;
   }
   const { chain, kind, userId, address, purpose, payload } = req.body || {};
-  if ((chain !== 'evm' && chain !== 'solana' && chain !== 'near') || typeof userId !== 'string' || typeof address !== 'string' || typeof payload !== 'string') {
+  if (!['evm', 'solana', 'near', 'sui', 'starknet'].includes(chain) || typeof userId !== 'string' || typeof address !== 'string' || typeof payload !== 'string') {
     res.status(400).json({ ok: false, error: 'Malformed signing request' });
     return;
   }
@@ -226,6 +234,71 @@ app.post('/v1/sign', async (req: any, res) => {
         return;
       }
       res.status(400).json({ ok: false, error: 'Unknown signing kind' });
+      return;
+    }
+
+    const refuseWith = (findings: Findings) =>
+      res.status(403).json({ ok: false, error: `The signer refused this transaction: ${[...findings.hard, ...findings.soft][0]}` });
+
+    if (chain === 'sui') {
+      const keypair = restoreSuiKeypair(encryptedKey, masterKey);
+      if (kind === 'public_key') {
+        res.json({ ok: true, signed: keypair.getPublicKey().toBase64() });
+        return;
+      }
+      if (kind !== 'transaction') {
+        res.status(400).json({ ok: false, error: 'Unknown signing kind' });
+        return;
+      }
+      const bytes = fromBase64(payload);
+      const data: any = SuiTransaction.from(bytes).getData();
+      if (!data.sender || normalizeSuiAddress(data.sender) !== normalizeSuiAddress(address)) {
+        res.status(400).json({ ok: false, error: 'The transaction is not from this wallet.' });
+        return;
+      }
+      const findings = evaluateSuiTxData(data, own);
+      const refused = blocks(findings);
+      await auditSign(userId, chain, purpose, `${data.commands.length} command(s)`, findings, refused);
+      if (refused) {
+        refuseWith(findings);
+        return;
+      }
+      const { signature } = await keypair.signTransaction(bytes);
+      res.json({ ok: true, signed: signature });
+      return;
+    }
+
+    if (chain === 'starknet') {
+      const privateKey = decrypt(encryptedKey, masterKey);
+      if (kind === 'public_key') {
+        res.json({ ok: true, signed: starkEc.starkCurve.getStarkKey(privateKey) });
+        return;
+      }
+      const signer = new StarknetSigner(privateKey);
+      const { calls, details } = fromTaggedJson(payload);
+      let findings: Findings;
+      if (kind === 'transaction') {
+        if (BigInt(details?.walletAddress ?? 0) !== BigInt(address)) {
+          res.status(400).json({ ok: false, error: 'The transaction is not from this wallet.' });
+          return;
+        }
+        findings = evaluateStarknetCalls(calls || [], own);
+      } else if (kind === 'deploy_account') {
+        findings = evaluateStarknetDeploy(details, own);
+      } else {
+        res.status(400).json({ ok: false, error: 'Unknown signing kind' });
+        return;
+      }
+      const refused = blocks(findings);
+      await auditSign(userId, chain, purpose, kind === 'deploy_account' ? 'deploy account' : `${(calls || []).length} call(s)`, findings, refused);
+      if (refused) {
+        refuseWith(findings);
+        return;
+      }
+      const signature = kind === 'transaction'
+        ? await signer.signTransaction(calls, details)
+        : await signer.signDeployAccountTransaction(details);
+      res.json({ ok: true, signed: JSON.stringify(stark.formatSignature(signature)) });
       return;
     }
 
