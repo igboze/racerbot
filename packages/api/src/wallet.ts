@@ -4142,7 +4142,13 @@ const TRADE_BALANCE_TTL_MS = 5_000;
  * Automatically tops up micro-gas (0.04 NEAR) to a user's subaccount from the bot's parent account
  * if the user holds USDC but lacks native NEAR for network gas (< 0.025 NEAR).
  */
+/** Accounts refuelled recently: at most one 0.04 NEAR refuel per account per day, so it cannot be farmed */
+const lastRefuel = new Map<string, number>();
+const REFUEL_COOLDOWN_MS = 24 * 3600_000;
+
 export async function refuelNearGasIfNeeded(subaccountId: string, currentNativeBalYocto: bigint): Promise<boolean> {
+  const last = lastRefuel.get(subaccountId);
+  if (last && Date.now() - last < REFUEL_COOLDOWN_MS) return false;
   const minRequiredYocto = BigInt(Math.ceil(0.025 * 1e24)); // 0.025 NEAR
   if (currentNativeBalYocto >= minRequiredYocto) return false;
   if (!MAIN_WALLET_PRIVATE_KEY || !RACERBOT_PARENT_ACCOUNT) return false;
@@ -4153,6 +4159,7 @@ export async function refuelNearGasIfNeeded(subaccountId: string, currentNativeB
       const refuelAmountYocto = nearUtils.format.parseNearAmount('0.04')!;
       await parentAccount.sendMoney(subaccountId, BigInt(refuelAmountYocto));
     });
+    lastRefuel.set(subaccountId, Date.now());
     console.log(`[REFUEL] Successfully sent 0.04 NEAR gas refuel from ${RACERBOT_PARENT_ACCOUNT} to ${subaccountId}`);
     return true;
   } catch (err: any) {
@@ -4188,10 +4195,8 @@ export async function getTradeSpendableNear(telegramId: number): Promise<number>
     ? usdcSpendableNear
     : (spendableNative + wNear + usdcSpendableNear);
 
-  // If user has USDC but low native NEAR gas, trigger background gas refuel so trade is ready
-  if (nativeNear < 0.025 && BigInt(usdcRaw || '0') > 0n && nearAccountForTrade) {
-    refuelNearGasIfNeeded(nearAccountForTrade, BigInt(nativeNearYocto)).catch(() => { });
-  }
+  // No gas refuel here: reading a balance must never spend racerbot.near (the buy path refuels when a
+  // trade actually needs it)
 
   tradeBalanceCache.set(telegramId, { data: spendable, expiresAt: Date.now() + TRADE_BALANCE_TTL_MS });
   return spendable;

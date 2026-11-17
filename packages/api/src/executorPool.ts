@@ -792,12 +792,7 @@ export async function confidentialOverview(user: UserRecord) {
     }
   }
 
-  if (EXECUTORS_ENABLED && acct.enabled && acct.auto_refill && balance > 0n) {
-    const readyOrCreating = executors.filter(e => ['creating', 'funding', 'ready'].includes(e.status));
-    if (readyOrCreating.length < acct.pool_sizes.length) {
-      void refillPool(acct).catch(err => logger.warn(`Overview pool refill for ${acct.user_id}: ${err?.message}`));
-    }
-  }
+  // Viewing the screen never refills the pool: that spends racerbot.near without any trade
   const near = getNear();
   const positions = await Promise.all(executors.filter(e => e.status === 'open' && e.token).map(async e => ({
     executor: e.account_id,
@@ -1171,8 +1166,9 @@ async function workerTick(): Promise<void> {
       // The NEAR came back to the executor: exit again
       await updateExecutor(m.executor_account_id, { status: 'exiting', last_error: `return ${s.status}` });
     }
-    // New money in the private balance (a deposit, or a closed position) can fund the ready pool
-    if (s.status === 'SUCCESS' && (m.kind === 'deposit' || m.kind === 'return')) {
+    // A new deposit is the user getting ready to trade: fund the ready pool. A closed position's
+    // returning NEAR does not refill on its own (the next buy does), so idle accounts cost nothing
+    if (s.status === 'SUCCESS' && m.kind === 'deposit') {
       const acct = await getConfidentialAccount(m.user_id).catch(() => null);
       if (acct) void refillPool(acct, { manual: true }).catch(err => logger.warn(`Refill after ${m.kind}: ${err?.message}`));
     }
@@ -1203,8 +1199,11 @@ async function workerTick(): Promise<void> {
   for (const e of await listExecutorsByStatus(['exiting'], 120, 10)) {
     await closeExecutor(e.account_id).catch(err => logger.warn(`exit retry ${e.account_id}: ${err?.message}`));
   }
-  for (const e of await listExecutorsByStatus(['ready'], STALE_READY_MS / 1000, 10)) {
-    await closeExecutor(e.account_id).catch(err => logger.warn(`stale exit ${e.account_id}: ${err?.message}`));
+  // Retiring idle ready executors costs racerbot.near gas with nobody trading: only when asked to
+  if (process.env.CONFIDENTIAL_RETIRE_IDLE_EXECUTORS === 'true') {
+    for (const e of await listExecutorsByStatus(['ready'], STALE_READY_MS / 1000, 10)) {
+      await closeExecutor(e.account_id).catch(err => logger.warn(`stale exit ${e.account_id}: ${err?.message}`));
+    }
   }
   // 4. Executors whose setup failed: return anything they hold and delete them, so RacerBot's deposit comes back
   for (const e of await listExecutorsByStatus(['failed'], 600, 10)) {
@@ -1213,13 +1212,8 @@ async function workerTick(): Promise<void> {
   // 5. Fully sold positions whose close was lost to a restart
   await closeEmptyOpenExecutors();
 
-  // 6. Automatically refill pools for enabled accounts
-  if (EXECUTORS_ENABLED) {
-    const activeAccts = await listActiveConfidentialAccounts(10).catch(() => []);
-    for (const a of activeAccts) {
-      void refillPool(a).catch(err => logger.warn(`Worker pool refill for ${a.user_id}: ${err?.message}`));
-    }
-  }
+  // No background refills: creating executors spends racerbot.near, so pools refill only when a user
+  // acts (a buy, a manual refill, a new private-balance deposit), never on a timer
 }
 
 export function startConfidentialWorker(intervalMs = 15_000): NodeJS.Timeout | null {
