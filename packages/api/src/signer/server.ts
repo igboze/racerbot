@@ -88,8 +88,55 @@ app.use(express.json({
   verify: (req: any, _res, buf) => { req.rawBody = buf.toString('utf8'); },
 }));
 
+/**
+ * Whether this signer's master key opens the keys stored in the database. A different key (for
+ * example a freshly generated one instead of the API's) makes every decrypt fail with
+ * "Unsupported state or unable to authenticate data", so it is checked at startup.
+ */
+let masterKeyCheck: 'ok' | 'mismatch' | 'unknown' = 'unknown';
+async function checkMasterKey(): Promise<void> {
+  try {
+    const db = await getDb();
+    const res = await db.query(
+      `SELECT scoped_key_encrypted AS key FROM users
+       WHERE scoped_key_encrypted IS NOT NULL AND scoped_key_encrypted <> 'EXTERNAL_CONNECTED_WALLET'
+       ORDER BY created_at DESC LIMIT 5`
+    );
+    if (res.rows.length === 0) return;
+    const opened = res.rows.filter((r: any) => {
+      try {
+        decrypt(r.key, process.env.KEY_ENCRYPTION_MASTER_KEY!);
+        return true;
+      } catch {
+        return false;
+      }
+    }).length;
+    masterKeyCheck = opened > 0 ? 'ok' : 'mismatch';
+    if (masterKeyCheck === 'mismatch') {
+      logger.error(
+        `KEY_ENCRYPTION_MASTER_KEY does not match the database: 0 of ${res.rows.length} stored keys open with it. ` +
+        'Set it to the SAME value the API uses (e.g. a Railway reference to the API service variable). ' +
+        'Every signature will fail until it does.'
+      );
+      void sendAdminAlert(
+        '🚨 <b>Signer master key mismatch</b>\n\nThe signer cannot decrypt stored keys: its KEY_ENCRYPTION_MASTER_KEY ' +
+        'is not the one the keys were encrypted with. Remove SIGNER_URL from the API to keep trading, then fix the signer variable.'
+      );
+    } else {
+      logger.info(`Master key check passed (${opened} of ${res.rows.length} sample keys open)`);
+    }
+  } catch (err: any) {
+    logger.warn(`Master key check could not run: ${err?.message}`);
+  }
+}
+
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, paused: process.env.SIGNER_PAUSED === 'true', breaker: breakerState() ? 'tripped' : 'ok' });
+  res.json({
+    ok: masterKeyCheck !== 'mismatch',
+    paused: process.env.SIGNER_PAUSED === 'true',
+    breaker: breakerState() ? 'tripped' : 'ok',
+    masterKey: masterKeyCheck,
+  });
 });
 
 /** Only RacerBot's own services may ask: HMAC over timestamp + body, fresh, and never reused */
@@ -384,4 +431,7 @@ registerKeyRoutes(app, authenticated);
 
 const port = Number(process.env.SIGNER_PORT || process.env.PORT || 8790);
 // '::' listens on IPv6 too, which Railway's private network uses
-app.listen(port, '::', () => logger.info(`Signer listening on port ${port}`));
+app.listen(port, '::', () => {
+  logger.info(`Signer listening on port ${port}`);
+  void checkMasterKey();
+});
