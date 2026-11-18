@@ -822,7 +822,7 @@ export async function planVaultHops(params: {
     // output, and the swap then failed on-chain (pool does not exist) after the user had committed.
     if (!dclPoolId) {
       throw new Error(routeError
-        ? `This token cannot be ${isBuy ? 'bought with' : 'sold for'} NEAR yet: it only trades against ${routeError.match(/paired with (.+?)\. No /)?.[1] || 'another token'}, which has no route from NEAR.`
+        ? `No NEAR route could be priced for this token right now (it trades against ${routeError.match(/paired with (.+?)\. No /)?.[1] || 'another token'}). Try again shortly.`
         : 'No trading pool was found for this token.');
     }
 

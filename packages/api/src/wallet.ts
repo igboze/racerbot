@@ -112,6 +112,7 @@ import {
   type NearKeyLike,
 } from '@racerbot/shared';
 import { ethers } from 'ethers';
+import { isStockQuote } from './intentsRoute.js';
 import { executeEvmSwap, type EvmSwapExecutionResult } from '@racerbot/executor';
 import { sendSecurityAlert } from './securityAlerts.js';
 import { runMoneyOut } from './moneyOut.js';
@@ -1444,6 +1445,8 @@ export interface TokenInfoResult {
   address: string;
   /** NEAR tokens Rhea cannot route: bought and sold through NEAR Intents (1Click), plus a DCL pool when set */
   intents_route?: { quote: string; dclPoolId?: string };
+  /** Buy through NEAR Intents first (stock pairs); the on-chain pool is only the fallback */
+  prefer_intents?: boolean;
   /** Launchpad coins quoted in another token: the Rhea DCL pools from wNEAR to the coin, one atomic swap */
   dcl_path?: string[];
   /** Why a listed token cannot be traded here (shown on its card) */
@@ -2683,13 +2686,15 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
           if (ntState && !ntState.quoteIsNear && ntState.dclPoolId) {
             // The launchpad's pool first, reached from NEAR through Rhea's DCL pools (as nearly.trade does)
             const best = await near.bestNearHop(ntState.quote).catch(() => null);
+            const { isIntentsToken } = await import('./intentsPrivate.js');
+            const onIntents = await isIntentsToken(ntState.quote).catch(() => false);
+            // The quote token on NEAR Intents (1Click) is the fallback when the on-chain route cannot be priced
+            // or filled (nearly.trade buys this way): nothing is spent unless the buy goes through
+            if (onIntents) intentsRoute = { quote: ntState.quote, dclPoolId: ntState.dclPoolId };
             if (best?.kind === 'dcl') {
               dclPath = [...best.path, ntState.dclPoolId];
             } else if (!best) {
-              const { isIntentsToken } = await import('./intentsPrivate.js');
-              if (await isIntentsToken(ntState.quote).catch(() => false)) {
-                intentsRoute = { quote: ntState.quote, dclPoolId: ntState.dclPoolId };
-              } else {
+              if (!onIntents) {
                 const sym = ntState.quoteSymbol || ntState.quote;
                 tradeBlockReason = `This coin trades only against $${sym}, which has no NEAR pool on Rhea and is not on NEAR Intents, ` +
                   `so it cannot be bought with NEAR (nearly.trade buyers pay in $${sym} itself).`;
@@ -3086,6 +3091,7 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
       icon: meta.icon || dbCache?.icon || (dexData as any)?.imageUrl || undefined,
       trade_block_reason: tradeBlockReason,
       intents_route: intentsRoute,
+      prefer_intents: Boolean(intentsRoute && isStockQuote(intentsRoute.quote)),
       dcl_path: dclPath,
     };
 

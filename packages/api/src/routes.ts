@@ -3786,8 +3786,85 @@ async function executeBuyHelperAsTrade(
   // No Rhea route: NEAR Intents (1Click), plus the coin's DCL pool when it trades against a bridged token
   // Launchpad coins quoted in another token (PRL...): their launchpad pool first, reached through Rhea's DCL
   // pools in one transaction (NEAR -> USDC -> PRL -> coin), the way the launchpads' own sites buy
+  // Stock pairs buy the stock leg through NEAR Intents (1Click) directly; the on-chain pool is the fallback
+  // when 1Click has no liquidity. Other launches keep the on-chain route first, with 1Click as the fallback.
+  const viaIntentsFirst = Boolean(info.prefer_intents && info.intents_route && info.tradeable);
+  const buyViaIntentsRoute = async () => {
+    const { buyViaIntents } = await import('./intentsRoute.js');
+    onProgress?.('submitting');
+    return buyViaIntents(user, tokenAddress, info.intents_route!, amountNear, slippagePct);
+  };
+  if (viaIntentsFirst) {
+    const res = await buyViaIntentsRoute();
+    if (res.success) {
+      const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
+      const sym = info.symbol || 'TOKEN';
+      return {
+        success: true,
+        amountNear,
+        tokenAddress,
+        positionId: res.positionId,
+        tokenName: info.name,
+        tokenSymbol: sym,
+        tokenQty: qty.toString(),
+        priceNear: res.priceNear,
+        nearSpent: res.nearSpent,
+        txHash: res.txHash,
+        message:
+          `✅ *Buy Confirmed!* (NEAR Intents${info.dcl_path?.length ? ' + pool' : ''})
+
+` +
+          `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})
+` +
+          `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`
+` +
+          `💸 Spent: \`${amountNear} NEAR\`
+` +
+          `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
+      };
+    }
+    // Nothing was spent by a 1Click buy that did not fill; without an on-chain pool there is no fallback
+    if (!info.dcl_path?.length) throw new Error(res.reason || 'NEAR Intents buy failed.');
+    console.warn(`NEAR Intents buy of ${tokenAddress} did not fill (${res.reason}); trying its pool`);
+  }
+
   if (info.dcl_path?.length && info.tradeable) {
-    return buyLaunchpadDclPath(user, tokenAddress, info, amountNear, slippagePct, onProgress);
+    try {
+      return await buyLaunchpadDclPath(user, tokenAddress, info, amountNear, slippagePct, onProgress);
+    } catch (dclErr: any) {
+      // The on-chain route could not be priced or filled (a thin quote-token pool, or RPC too slow to finish
+      // the quote). Nothing was spent: a failed or unfilled route sends no NEAR. When the quote token is on
+      // NEAR Intents, buy it there instead, the way nearly.trade does.
+      if (!info.intents_route || viaIntentsFirst) throw dclErr;
+      console.warn(`DCL route for ${tokenAddress} failed (${dclErr?.message}); trying NEAR Intents`);
+      const res = await buyViaIntentsRoute();
+      if (!res.success) throw new Error(res.reason || dclErr?.message || 'Buy failed. Nothing was spent.');
+      const qty = Number(res.tokensRaw || '0') / Math.pow(10, info.decimals || 18);
+      const sym = info.symbol || 'TOKEN';
+      return {
+        success: true,
+        amountNear,
+        tokenAddress,
+        positionId: res.positionId,
+        tokenName: info.name,
+        tokenSymbol: sym,
+        tokenQty: qty.toString(),
+        priceNear: res.priceNear,
+        nearSpent: res.nearSpent,
+        txHash: res.txHash,
+        message:
+          `✅ *Buy Confirmed!* (${res.paidIn ? `paid in ${sanitizeMd(res.paidIn)} via Rhea` : 'NEAR Intents'})
+
+` +
+          `🪙 *${sanitizeMd(info.name || sym)}* (${sanitizeMd(sym)})
+` +
+          `📦 Received: \`${qty.toLocaleString('en-US', { maximumFractionDigits: 4 })} ${sanitizeMd(sym)}\`
+` +
+          `💸 Spent: \`${amountNear} NEAR\`
+` +
+          `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
+      };
+    }
   }
 
   if (info.intents_route && info.tradeable) {

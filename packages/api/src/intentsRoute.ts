@@ -25,6 +25,14 @@ const STORAGE_DEPOSIT = 1_250_000_000_000_000_000_000n; // 0.00125 NEAR
 const FEE_BPS = 150; // the platform fee on every NEAR trade (1.5%)
 const SETTLE_TIMEOUT_MS = 180_000;
 
+/**
+ * A tokenized stock (a bridged BNB Chain stock such as AAPLon, or a tokenized asset such as nTTWO). Pools
+ * paired with one of these trade only through NEAR Intents, so the stock leg is always bought on 1Click.
+ */
+export function isStockQuote(contract: string): boolean {
+  return /\.omdep\.near$|\.rwa\.assetize\.near$/i.test(contract);
+}
+
 export interface IntentsRoute {
   /** The asset 1Click swaps: the token itself (direct), or the DCL pool's quote token */
   quote: string;
