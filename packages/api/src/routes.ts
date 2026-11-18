@@ -142,6 +142,14 @@ import {
   switchActiveEvmWallet,
   type EvmTokenSendPlan,
 } from './evmWallet.js';
+import {
+  WITHDRAW_CHAIN_META,
+  isWithdrawChainId,
+  validateWithdrawAddress,
+  parseWithdrawAmount,
+  resolvePositionWithdrawChain,
+  type WithdrawChainId,
+} from './withdrawFlow.js';
 import { sellAtTarget } from './sellHelper.js';
 import {
   handlePrivatePrompt,
@@ -386,7 +394,7 @@ const EXPORT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // ── User pending interactive input state ──────────────────────────────────────
 interface PendingAction {
-  action: PrivatePromptAction | 'buy_custom_near' | 'custom_slippage' | 'custom_buy_amounts' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'withdraw' | 'import_token'
+  action: PrivatePromptAction | 'buy_custom_near' | 'custom_slippage' | 'custom_buy_amounts' | 'custom_auto_buy' | 'custom_min_liq' | 'custom_max_mcap' | 'import_token'
   | 'snipe_token_ca' | 'snipe_token_amount' | 'snipe_custom_time' | 'snipe_dev_addr' | 'snipe_dev_amount'
   | 'sell_custom_tokens'
   // Stop Loss & Take Profit custom input
@@ -402,6 +410,8 @@ interface PendingAction {
   | 'import_evm_key' | 'import_evm_name' | 'import_evm_confirm'
   // Strict EVM send: shown on a confirm card first
   | 'evm_send_confirm'
+  // 4-step guided withdrawal wizard: Select Chain -> Enter Address -> Enter Amount -> Confirm
+  | 'withdraw_address' | 'withdraw_amount' | 'withdraw_confirm'
   // Buy Alert group setup
   | 'set_group_token'
   // Limit Order wizard
@@ -432,6 +442,12 @@ interface PendingAction {
   evmSend?:
     | { kind: 'hype'; chain: EvmChain; to: string; amount: number | 'all' }
     | { kind: 'token'; plan: EvmTokenSendPlan };
+  // Step-by-step withdrawal wizard state
+  withdrawChain?: WithdrawChainId;
+  withdrawAssetSymbol?: string;
+  withdrawBalanceDisplay?: string;
+  withdrawDestination?: string;
+  withdrawAmount?: number | 'all';
   // Copy trading wizard state
   copyWallet?: string;
   copyBuyAmount?: number;
@@ -9922,8 +9938,10 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
   bot.action('evm_send_confirm', async (ctx) => {
     const telegramId = ctx.from!.id;
     const pending = userPendingActions.get(telegramId);
-    if (!pending || pending.action !== 'evm_send_confirm' || !pending.evmSend) {
+    if (!pending || Date.now() >= pending.expiresAt || pending.action !== 'evm_send_confirm' || !pending.evmSend) {
+      userPendingActions.delete(telegramId);
       await ctx.answerCbQuery('❌ This send expired. Start it again from Withdraw.').catch(() => { });
+      await ctx.editMessageReplyMarkup(undefined).catch(() => { });
       return;
     }
     // One tap, one send
@@ -10241,122 +10259,513 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
     }
   });
 
-  // Helper: parse withdrawal/send command or prompt arguments
-  const parseTransferArgs = (parts: string[]): {
-    destination?: string;
-    amount?: number | 'all';
-    token?: string;
-  } => {
-    if (parts.length === 0) return {};
-    let destination: string | undefined;
-    let amount: number | 'all' | undefined;
-    let token: string | undefined;
-    const remaining: string[] = [];
-
-    for (const part of parts) {
-      const lower = part.toLowerCase();
-      if (amount === undefined && (lower === 'all' || (/^\d+(\.\d+)?$/.test(lower) && !isNaN(parseFloat(lower))))) {
-        amount = lower === 'all' ? 'all' : parseFloat(lower);
-      } else {
-        remaining.push(part);
+  // ── 4-Step Guided Withdrawal Flow: Select Chain -> Enter Address -> Enter Amount -> Confirm ──
+  const getChainBalanceDisplay = (chain: WithdrawChainId, b: Awaited<ReturnType<typeof getUserBalances>> | null): string => {
+    if (!b) return `0 ${WITHDRAW_CHAIN_META[chain].nativeSymbol}`;
+    switch (chain) {
+      case 'near': {
+        const extra = Number(b.wrapNearFormatted || '0') > 0.0001 ? ` (+ ${b.wrapNearFormatted} wNEAR)` : '';
+        return `${b.spendableNearFormatted || b.nativeNearFormatted || '0'} NEAR${extra}`;
       }
+      case 'solana':
+        return `${b.solBalanceFormatted || '0'} SOL`;
+      case 'sui':
+        return `${b.suiBalanceFormatted || '0'} SUI`;
+      case 'starknet':
+        return `${b.strkBalanceFormatted || '0'} STRK`;
+      case 'starknet_eth':
+        return `${b.ethBalanceFormatted || '0'} ETH`;
+      case 'base':
+        return `${b.baseBalanceFormatted || '0'} ETH`;
+      case 'arbitrum':
+        return `${b.arbitrumBalanceFormatted || '0'} ETH`;
+      case 'ethereum':
+        return `${b.ethereumBalanceFormatted || '0'} ETH`;
+      case 'zero':
+        return `${b.zeroBalanceFormatted || '0'} ZRO`;
+      case 'hyperevm':
+        return `${b.hyperevmBalanceFormatted || '0'} HYPE`;
+      case 'elysium':
+        return `${b.elysiumBalanceFormatted || '0'} HYPE`;
     }
-
-    if (remaining.length === 1) {
-      destination = remaining[0];
-    } else if (remaining.length >= 2) {
-      const first = remaining[0];
-      const second = remaining[1];
-      if (isSolanaAddress(first) && (second.toLowerCase() === 'sol' || isSolanaToken(second))) {
-        destination = first;
-        token = second;
-      } else if (isSolanaAddress(second) && (first.toLowerCase() === 'sol' || isSolanaToken(first))) {
-        token = first;
-        destination = second;
-      } else if (second.includes('.tkn.near') || (!second.includes('.') && !isValidSuiAddress(second))) {
-        destination = first;
-        token = second;
-      } else if (first.includes('.tkn.near') || (!first.includes('.') && !isValidSuiAddress(first))) {
-        token = first;
-        destination = second;
-      } else {
-        destination = first;
-        token = second;
-      }
-    }
-
-    return { destination, amount, token };
   };
 
-  bot.action('wallet_withdraw_prompt', async (ctx) => {
+  const openWithdrawChainPicker = async (ctx: Context) => {
     const telegramId = ctx.from!.id;
-    userPendingActions.set(telegramId, {
-      action: 'withdraw',
-      expiresAt: Date.now() + 180000,
-    });
-    await ctx.answerCbQuery().catch(() => { });
+    userPendingActions.delete(telegramId);
 
     const b = await getUserBalances(telegramId).catch(() => null);
     let balSummary = '';
     if (b) {
-      balSummary = '💳 *Available to Withdraw:*\n' +
-        '• ⬛ NEAR: `' + b.nativeNearFormatted + ' Ⓝ` (Total: ' + (b.onChainNearFormatted || b.nativeNearFormatted) + ' Ⓝ, 0.05 Ⓝ reserved for storage)\n';
+      balSummary =
+        '💳 *Available Balances:*\n' +
+        `• ⬛ NEAR: \`${b.spendableNearFormatted || b.nativeNearFormatted} Ⓝ\` (On-chain: ${b.onChainNearFormatted || b.nativeNearFormatted} Ⓝ)\n`;
       if (Number(b.wrapNearFormatted || '0') > 0.0001) {
-        balSummary += '  _(+ ' + b.wrapNearFormatted + ' wNEAR will auto-unwrap on withdrawal)_\n';
+        balSummary += `  _(+ ${b.wrapNearFormatted} wNEAR auto-unwraps on withdrawal)_\n`;
       }
       if (b.solBalanceFormatted && Number(b.solBalanceFormatted) > 0) {
-        balSummary += '• 🟣 SOL: `' + b.solBalanceFormatted + ' SOL`\n';
+        balSummary += `• 🟣 Solana: \`${b.solBalanceFormatted} SOL\`\n`;
       }
       if (b.suiBalanceFormatted && Number(b.suiBalanceFormatted) > 0) {
-        balSummary += '• 🔷 SUI: `' + b.suiBalanceFormatted + ' SUI`\n';
+        balSummary += `• 🔷 SUI: \`${b.suiBalanceFormatted} SUI\`\n`;
       }
       if (b.strkBalanceFormatted && Number(b.strkBalanceFormatted) > 0) {
-        balSummary += '• ✨ STRK: `' + b.strkBalanceFormatted + ' STRK`\n';
+        balSummary += `• ✨ Starknet: \`${b.strkBalanceFormatted} STRK\`\n`;
+      }
+      if (b.ethBalanceFormatted && Number(b.ethBalanceFormatted) > 0) {
+        balSummary += `• ✨ Starknet ETH: \`${b.ethBalanceFormatted} ETH\`\n`;
       }
       if (b.baseBalanceFormatted && Number(b.baseBalanceFormatted) > 0) {
-        balSummary += '• 🔵 Base: `' + b.baseBalanceFormatted + ' ETH`\n';
+        balSummary += `• 🔵 Base: \`${b.baseBalanceFormatted} ETH\`\n`;
       }
       if (b.arbitrumBalanceFormatted && Number(b.arbitrumBalanceFormatted) > 0) {
-        balSummary += '• 💙 Arbitrum: `' + b.arbitrumBalanceFormatted + ' ETH`\n';
-      }
-      if (b.zeroBalanceFormatted && Number(b.zeroBalanceFormatted) > 0) {
-        balSummary += '• 🅾️ Zero: `' + b.zeroBalanceFormatted + ' ZRO`\n';
-      }
-      if (b.hyperevmBalanceFormatted && Number(b.hyperevmBalanceFormatted) > 0) {
-        balSummary += '• ⚡ HyperEVM: `' + b.hyperevmBalanceFormatted + ' HYPE`\n';
-      }
-      if (b.elysiumBalanceFormatted && Number(b.elysiumBalanceFormatted) > 0) {
-        balSummary += '• 🏛️ Elysium: `' + b.elysiumBalanceFormatted + ' HYPE`\n';
+        balSummary += `• 💙 Arbitrum: \`${b.arbitrumBalanceFormatted} ETH\`\n`;
       }
       if (b.ethereumBalanceFormatted && Number(b.ethereumBalanceFormatted) > 0) {
-        balSummary += '• 💎 Ethereum: `' + b.ethereumBalanceFormatted + ' ETH`\n';
+        balSummary += `• 💎 Ethereum: \`${b.ethereumBalanceFormatted} ETH\`\n`;
+      }
+      if (b.zeroBalanceFormatted && Number(b.zeroBalanceFormatted) > 0) {
+        balSummary += `• 🅾️ Zero: \`${b.zeroBalanceFormatted} ZRO\`\n`;
+      }
+      if (b.hyperevmBalanceFormatted && Number(b.hyperevmBalanceFormatted) > 0) {
+        balSummary += `• ⚡ HyperEVM: \`${b.hyperevmBalanceFormatted} HYPE\`\n`;
+      }
+      if (b.elysiumBalanceFormatted && Number(b.elysiumBalanceFormatted) > 0) {
+        balSummary += `• 🏛️ Elysium: \`${b.elysiumBalanceFormatted} HYPE\`\n`;
       }
       balSummary += '\n';
     }
 
+    const nearBal = b ? (b.spendableNearFormatted || b.nativeNearFormatted || '0') : '0';
+    const solBal = b?.solBalanceFormatted || '0';
+    const suiBal = b?.suiBalanceFormatted || '0';
+    const strkBal = b?.strkBalanceFormatted || '0';
+    const baseBal = b?.baseBalanceFormatted || '0';
+    const arbBal = b?.arbitrumBalanceFormatted || '0';
+    const ethBal = b?.ethereumBalanceFormatted || '0';
+    const zroBal = b?.zeroBalanceFormatted || '0';
+    const hypeBal = b?.hyperevmBalanceFormatted || '0';
+    const elyBal = b?.elysiumBalanceFormatted || '0';
+
+    const rows: any[][] = [
+      [
+        cb(`⬛ NEAR (${nearBal} Ⓝ)`, 'wd_chain:near', 'primary'),
+        cb(`🟣 Solana (${solBal} SOL)`, 'wd_chain:solana', 'primary'),
+      ],
+      [
+        cb(`🔷 SUI (${suiBal} SUI)`, 'wd_chain:sui', 'primary'),
+        cb(`✨ Starknet (${strkBal} STRK)`, 'wd_chain:starknet', 'primary'),
+      ],
+    ];
+    if (b?.ethBalanceFormatted && Number(b.ethBalanceFormatted) > 0) {
+      rows.push([cb(`✨ Starknet ETH (${b.ethBalanceFormatted} ETH)`, 'wd_chain:starknet_eth', 'primary')]);
+    }
+    rows.push(
+      [
+        cb(`🔵 Base (${baseBal} ETH)`, 'wd_chain:base', 'primary'),
+        cb(`💙 Arbitrum (${arbBal} ETH)`, 'wd_chain:arbitrum', 'primary'),
+      ],
+      [
+        cb(`💎 Ethereum (${ethBal} ETH)`, 'wd_chain:ethereum', 'primary'),
+        cb(`🅾️ Zero (${zroBal} ZRO)`, 'wd_chain:zero', 'primary'),
+      ],
+      [
+        cb(`⚡ HyperEVM (${hypeBal} HYPE)`, 'wd_chain:hyperevm', 'primary'),
+        cb(`🏛️ Elysium (${elyBal} HYPE)`, 'wd_chain:elysium', 'primary'),
+      ],
+      [cb('🎒 Send Token from Bags', 'wallet_withdraw_tokens_list', 'primary')],
+      [cb('❌ Cancel', 'withdraw_cancel', 'primary'), cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')]
+    );
+
     await ctx.reply(
-      '💸 *Withdraw & Send Funds (Multi-Chain EVM, SOL, NEAR, SUI, Starknet)*\n\n' +
-      balSummary +
-      'Reply with the recipient address, amount, and optional token, for example:\n' +
-      '• *ETH (Base)*: `0x1234...abcd 0.1 ETH` or `0x1234...abcd all BASE`\n' +
-      '• *ETH (Arbitrum)*: `0x1234...abcd 0.1 ARB`\n' +
-      '• *ZRO (Zero)*: `0x1234...abcd 5 ZRO`\n' +
-      '• *HYPE*: `0x1234...abcd 1 HYPE` (HyperEVM) or `0x1234...abcd all ELYSIUM`\n' +
-      '• *SOL*: `<solana_address> 0.5` or `<solana_address> all`\n' +
-      '• *NEAR*: `mywallet.near 1.5` or `mywallet.near all`\n' +
-      '• *SUI*: `0x1234...abcd 1.0 SUI` or `0x1234...abcd all SUI`\n' +
-      '• *Starknet*: `0x1234...abcd 10 STRK` or `0x1234...abcd all STRK`\n' +
-      '• *EVM Token*: `0x1234...abcd 100 0xTOKEN_CONTRACT`\n' +
-      '_EVM sends only go to 0x addresses with exactly 40 hex characters (MetaMask, Rabby). Starknet and Sui addresses are refused._\n\n' +
-      '_Type /cancel or tap Cancel below to abort._',
+      '💸 *Withdraw Funds — Step 1 of 4: Select Chain*\n\n' +
+        balSummary +
+        'Select the chain you want to withdraw from below, or tap *Send Token from Bags* to send a token holding:',
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard(rows),
+      }
+    );
+  };
+
+  const promptWithdrawAddressStep = async (
+    ctx: Context,
+    telegramId: number,
+    state: {
+      withdrawChain: WithdrawChainId;
+      withdrawAssetSymbol: string;
+      withdrawBalanceDisplay: string;
+      tokenAddress?: string;
+      positionId?: string;
+    }
+  ) => {
+    const meta = WITHDRAW_CHAIN_META[state.withdrawChain];
+    const sym = sanitizeMd(state.withdrawAssetSymbol);
+    userPendingActions.set(telegramId, {
+      action: 'withdraw_address',
+      withdrawChain: state.withdrawChain,
+      withdrawAssetSymbol: state.withdrawAssetSymbol,
+      withdrawBalanceDisplay: state.withdrawBalanceDisplay,
+      tokenAddress: state.tokenAddress,
+      positionId: state.positionId,
+      expiresAt: Date.now() + 180000,
+    });
+
+    await ctx.reply(
+      `💸 *Withdraw ${sym} — Step 2 of 4: Enter Wallet Address*\n\n` +
+        `⛓️ Chain: *${meta.icon} ${meta.label}*\n` +
+        `🪙 Asset: *${sym}*${state.tokenAddress ? `\n📋 Contract: \`${state.tokenAddress}\`` : ''}\n` +
+        `💰 Available: \`${state.withdrawBalanceDisplay.replace(/`/g, '')}\`\n\n` +
+        `Reply with the *recipient wallet address* on *${meta.label}* (${meta.addressHint}).\n` +
+        `Example: \`${meta.addressExample}\`\n\n` +
+        `_Enter only the wallet address now. You will enter the amount in Step 3._`,
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [cb('🎒 Send Token from Bags', 'wallet_withdraw_tokens_list', 'primary')],
-          [cb('❌ Cancel', 'withdraw_cancel', 'primary'), cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
+          [
+            cb('🔄 Change Chain', 'wallet_withdraw_prompt', 'primary'),
+            cb('❌ Cancel', 'withdraw_cancel', 'primary'),
+          ],
         ]),
       }
     );
+  };
+
+  const promptWithdrawAmountStep = async (
+    ctx: Context,
+    telegramId: number,
+    pending: PendingAction
+  ) => {
+    const chain = pending.withdrawChain || 'near';
+    const meta = WITHDRAW_CHAIN_META[chain];
+    const sym = sanitizeMd(pending.withdrawAssetSymbol || meta.nativeSymbol);
+    userPendingActions.set(telegramId, {
+      ...pending,
+      action: 'withdraw_amount',
+      expiresAt: Date.now() + 180000,
+    });
+
+    await ctx.reply(
+      `💸 *Withdraw ${sym} — Step 3 of 4: Enter Amount*\n\n` +
+        `⛓️ Chain: *${meta.icon} ${meta.label}*\n` +
+        `🪙 Asset: *${sym}*${pending.tokenAddress ? `\n📋 Contract: \`${pending.tokenAddress}\`` : ''}\n` +
+        `💰 Available: \`${(pending.withdrawBalanceDisplay || '—').replace(/`/g, '')}\`\n` +
+        `📬 Recipient: \`${pending.withdrawDestination}\`\n\n` +
+        `Reply with the *amount of ${sym}* you want to send (e.g. \`1.5\`), or tap *Send Max / All* below:`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [cb('💯 Send Max / All', 'wd_amt:all', 'primary')],
+          [
+            cb('✏️ Change Address', 'wd_back_addr', 'primary'),
+            cb('🔄 Change Chain', 'wallet_withdraw_prompt', 'primary'),
+          ],
+          [cb('❌ Cancel', 'withdraw_cancel', 'primary')],
+        ]),
+      }
+    );
+  };
+
+  const promptWithdrawConfirmStep = async (
+    ctx: Context,
+    telegramId: number,
+    pending: PendingAction,
+    amount: number | 'all'
+  ) => {
+    const chain = pending.withdrawChain || 'near';
+    const meta = WITHDRAW_CHAIN_META[chain];
+    const sym = sanitizeMd(pending.withdrawAssetSymbol || meta.nativeSymbol);
+    const dest = pending.withdrawDestination!;
+
+    let evmSend: PendingAction['evmSend'] | undefined;
+    let amountDisplay = amount === 'all' ? `All available ${sym}` : `${amount} ${sym}`;
+
+    if (meta.isEvm) {
+      const evmChain = chain as EvmChain;
+      const evmUser = await getUserByTelegramId(telegramId);
+      if (!evmUser) {
+        await ctx.reply('❌ User not found. Please run /start first.');
+        return;
+      }
+      if (pending.tokenAddress) {
+        let plan: EvmTokenSendPlan;
+        try {
+          plan = await planEvmTokenSend(evmUser, pending.tokenAddress, dest, amount, evmChain);
+        } catch (err: any) {
+          await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nPlease enter a different amount or tap Cancel.`);
+          userPendingActions.set(telegramId, { ...pending, action: 'withdraw_amount', expiresAt: Date.now() + 180000 });
+          return;
+        }
+        evmSend = { kind: 'token', plan };
+        amountDisplay = `${plan.amountDisplay} ${sanitizeMd(plan.symbol)}`;
+      } else {
+        evmSend = { kind: 'hype', chain: evmChain, to: dest, amount };
+        amountDisplay = amount === 'all' ? `All ${sym} (minus gas)` : `${amount} ${sym}`;
+      }
+    }
+
+    userPendingActions.set(telegramId, {
+      ...pending,
+      action: 'withdraw_confirm',
+      withdrawAmount: amount,
+      evmSend,
+      expiresAt: Date.now() + 180000,
+    });
+
+    await ctx.reply(
+      `🔎 *Withdraw ${sym} — Step 4 of 4: Confirm & Complete*\n\n` +
+        `⛓️ Chain: *${meta.icon} ${meta.label}*\n` +
+        `🪙 Asset: *${sym}*${pending.tokenAddress ? ` (\`${pending.tokenAddress}\`)` : ''}\n` +
+        `💸 Amount to Send: \`${amountDisplay}\`\n` +
+        `📬 Recipient Address: \`${dest}\`\n\n` +
+        `⚠️ _Please verify the chain, wallet address, and amount carefully. Blockchain transfers cannot be reversed._`,
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [cb('✅ Confirm & Complete Withdrawal', 'withdraw_confirm_send', 'danger')],
+          [
+            cb('✏️ Change Amount', 'wd_back_amt', 'primary'),
+            cb('✏️ Change Address', 'wd_back_addr', 'primary'),
+          ],
+          [cb('❌ Cancel', 'withdraw_cancel', 'primary')],
+        ]),
+      }
+    );
+  };
+
+  bot.action('wallet_withdraw_prompt', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    await openWithdrawChainPicker(ctx);
+  });
+
+  bot.action(/^wd_chain:([a-z_]+)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const rawChain = ctx.match![1];
+    await ctx.answerCbQuery().catch(() => { });
+    if (!isWithdrawChainId(rawChain)) {
+      await ctx.reply('❌ Unknown chain selected. Please choose a valid chain.');
+      return;
+    }
+    const meta = WITHDRAW_CHAIN_META[rawChain];
+    const b = await getUserBalances(telegramId).catch(() => null);
+    const balDisplay = getChainBalanceDisplay(rawChain, b);
+    await promptWithdrawAddressStep(ctx, telegramId, {
+      withdrawChain: rawChain,
+      withdrawAssetSymbol: meta.nativeSymbol,
+      withdrawBalanceDisplay: balDisplay,
+    });
+  });
+
+  bot.action('wd_back_addr', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => { });
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || Date.now() >= pending.expiresAt || !pending.withdrawChain) {
+      userPendingActions.delete(telegramId);
+      await openWithdrawChainPicker(ctx);
+      return;
+    }
+    await promptWithdrawAddressStep(ctx, telegramId, {
+      withdrawChain: pending.withdrawChain,
+      withdrawAssetSymbol: pending.withdrawAssetSymbol || WITHDRAW_CHAIN_META[pending.withdrawChain].nativeSymbol,
+      withdrawBalanceDisplay: pending.withdrawBalanceDisplay || '—',
+      tokenAddress: pending.tokenAddress,
+      positionId: pending.positionId,
+    });
+  });
+
+  bot.action('wd_back_amt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => { });
+    const pending = userPendingActions.get(telegramId);
+    if (!pending || Date.now() >= pending.expiresAt || !pending.withdrawChain || !pending.withdrawDestination) {
+      userPendingActions.delete(telegramId);
+      await openWithdrawChainPicker(ctx);
+      return;
+    }
+    await promptWithdrawAmountStep(ctx, telegramId, pending);
+  });
+
+  bot.action(/^wd_amt:(all|\d+(?:\.\d+)?)$/, async (ctx) => {
+    const telegramId = ctx.from!.id;
+    await ctx.answerCbQuery().catch(() => { });
+    const pending = userPendingActions.get(telegramId);
+    if (
+      !pending ||
+      Date.now() >= pending.expiresAt ||
+      (pending.action !== 'withdraw_amount' && pending.action !== 'withdraw_confirm') ||
+      !pending.withdrawChain ||
+      !pending.withdrawDestination
+    ) {
+      userPendingActions.delete(telegramId);
+      await ctx.reply('❌ Withdrawal session expired. Please start again from Withdraw.');
+      return;
+    }
+    const rawAmt = ctx.match![1];
+    const amt: number | 'all' = rawAmt === 'all' ? 'all' : parseFloat(rawAmt);
+    await promptWithdrawConfirmStep(ctx, telegramId, pending, amt);
+  });
+
+  bot.action('withdraw_confirm_send', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    const pending = userPendingActions.get(telegramId);
+    if (
+      !pending ||
+      Date.now() >= pending.expiresAt ||
+      pending.action !== 'withdraw_confirm' ||
+      !pending.withdrawChain ||
+      !pending.withdrawDestination ||
+      pending.withdrawAmount === undefined
+    ) {
+      userPendingActions.delete(telegramId);
+      await ctx.answerCbQuery('❌ This withdrawal expired. Please start again from Withdraw.').catch(() => { });
+      await ctx.editMessageReplyMarkup(undefined).catch(() => { });
+      return;
+    }
+
+    // One tap, one send
+    userPendingActions.delete(telegramId);
+    await ctx.answerCbQuery('Processing withdrawal…').catch(() => { });
+    await ctx.editMessageReplyMarkup(undefined).catch(() => { });
+
+    const chain = pending.withdrawChain;
+    const meta = WITHDRAW_CHAIN_META[chain];
+    const dest = pending.withdrawDestination;
+    const amt = pending.withdrawAmount;
+    const tokenAddr = pending.tokenAddress;
+    const sym = sanitizeMd(pending.withdrawAssetSymbol || meta.nativeSymbol);
+    const opts = { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } } as any;
+
+    await ctx.reply(`⏳ Sending *${amt === 'all' ? `all ${sym}` : `${amt} ${sym}`}* on *${meta.label}* to \`${dest}\`...`, {
+      parse_mode: 'Markdown',
+    });
+
+    try {
+      if (meta.isEvm) {
+        const user = await getUserByTelegramId(telegramId);
+        if (!user) {
+          await ctx.reply('❌ User not found. Please run /start first.');
+          return;
+        }
+        const send = pending.evmSend;
+        if (send?.kind === 'token') {
+          const res = await sendEvmToken(user, send.plan);
+          walletMenuCache.delete(telegramId);
+          invalidateBalanceCache(telegramId);
+          void syncUserEvmHoldings(user.id, true).catch(() => { });
+          const tokSym = sanitizeMd(send.plan.symbol);
+          const chainExplorer = getEvmExplorerUrl(send.plan.chain);
+          await ctx.reply(
+            send.plan.chain === 'elysium'
+              ? `✅ *Token Transfer Sent on Elysium!*\n\n💸 Amount: \`${send.plan.amountDisplay} ${tokSym}\`\n📬 To: \`${send.plan.to}\`\n\n` +
+                  (res.viaInbox
+                    ? `It entered the Elysium inbox and usually lands within a few minutes.\n` +
+                      `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
+                    : `🔗 [View on Elysium](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`)
+              : `✅ *Token Sent!*\n\n⛓️ Chain: *${send.plan.chain.toUpperCase()}*\n💸 Amount: \`${send.plan.amountDisplay} ${tokSym}\`\n📬 To: \`${send.plan.to}\`\n🔗 [View on Explorer](${chainExplorer}/tx/${res.txHash})`,
+            opts
+          );
+          return;
+        }
+        const evmChain = chain as EvmChain;
+        const res = await withdrawEvmHype(user, evmChain, dest, amt);
+        if (!res.success) {
+          await ctx.reply(`❌ ${res.error || 'Transfer failed.'}`);
+          return;
+        }
+        walletMenuCache.delete(telegramId);
+        invalidateBalanceCache(telegramId);
+        const nativeSym = getEvmNativeSymbol(evmChain);
+        const explorerUrl = getEvmExplorerUrl(evmChain);
+        await ctx.reply(
+          evmChain === 'elysium'
+            ? `✅ *Elysium Transfer Sent!*\n\n💸 Amount: \`${res.amountHype} HYPE\`\n📬 To: \`${dest}\`\n\n` +
+                (res.viaInbox
+                  ? `It entered the Elysium inbox and usually lands within a few minutes.\n` +
+                    `🔗 [Inbox tx on HyperEVM](${HYPEREVM_EXPLORER_URL}/tx/${res.txHash}) • [Elysium tx](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`
+                  : `🔗 [View on Elysium](${ELYSIUM_MAINNET_EXPLORER_URL}/tx/${res.elysiumTxHash})`)
+            : `✅ *${meta.label} Transfer Sent!*\n\n💸 Amount: \`${res.amountHype} ${nativeSym}\`\n📬 To: \`${dest}\`\n🔗 [View on Explorer](${explorerUrl}/tx/${res.txHash})`,
+          opts
+        );
+        return;
+      }
+
+      if (tokenAddr) {
+        const result = await withdrawTokenFunds(telegramId, tokenAddr, dest, amt);
+        walletMenuCache.delete(telegramId);
+        const explorerUrl =
+          result.chain === 'solana'
+            ? `https://solscan.io/tx/${result.txHash}`
+            : result.chain === 'starknet'
+              ? `https://voyager.online/tx/${result.txHash}`
+              : result.chain === 'sui'
+                ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
+                : `https://nearblocks.io/txns/${result.txHash}`;
+        const explorerName =
+          result.chain === 'solana'
+            ? 'Solscan'
+            : result.chain === 'starknet'
+              ? 'Voyager'
+              : result.chain === 'sui'
+                ? 'Suiscan'
+                : 'NearBlocks';
+
+        await ctx.reply(
+          `✅ *Token Transfer Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+            `📬 Destination: \`${result.destination}\`\n` +
+            `🪙 Contract: \`${result.tokenAddress}\`\n\n` +
+            `🔗 Explorer: [View on ${explorerName}](${explorerUrl})`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      if (chain === 'solana') {
+        const result = await withdrawSolanaFunds(telegramId, dest, amt);
+        walletMenuCache.delete(telegramId);
+        await ctx.reply(
+          `✅ *SOL Withdrawal Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
+            `📬 Destination: \`${result.destination}\`\n\n` +
+            `🔗 Explorer: [View on Solscan](https://solscan.io/tx/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      } else if (chain === 'sui') {
+        const result = await withdrawSuiFunds(telegramId, dest, amt);
+        walletMenuCache.delete(telegramId);
+        await ctx.reply(
+          `✅ *SUI Withdrawal Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
+            `📬 Destination: \`${result.destination}\`\n\n` +
+            `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      } else if (chain === 'starknet' || chain === 'starknet_eth') {
+        const starkAsset = chain === 'starknet_eth' ? 'eth' : 'strk';
+        const result = await withdrawStarknetFunds(telegramId, dest, amt, starkAsset);
+        walletMenuCache.delete(telegramId);
+        await ctx.reply(
+          `✅ *Starknet Withdrawal Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
+            `📬 Destination: \`${result.destination}\`\n\n` +
+            `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        const result = await withdrawFunds(telegramId, dest, amt);
+        walletMenuCache.delete(telegramId);
+        await ctx.reply(
+          `✅ *NEAR Withdrawal Successful!*\n\n` +
+            `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
+            `📬 Destination: \`${result.destination}\`\n\n` +
+            `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+    }
   });
 
   bot.action('withdraw_cancel', async (ctx) => {
@@ -10381,12 +10790,12 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
     if (positions.length === 0) {
       await ctx.reply(
         '📭 *No Token Holdings*\n\n' +
-        'You currently have no token holdings in your wallet to send.\n' +
-        'Deposit tokens to your wallet or buy some first!',
+          'You currently have no token holdings in your wallet to send.\n' +
+          'Deposit tokens to your wallet or buy some first!',
         {
           parse_mode: 'Markdown',
           ...Markup.inlineKeyboard([
-            [cb('💸 Withdraw NEAR/SUI', 'wallet_withdraw_prompt', 'primary')],
+            [cb('💸 Withdraw Native Funds', 'wallet_withdraw_prompt', 'primary')],
             [cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
           ]),
         }
@@ -10398,26 +10807,30 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
     for (const pos of positions.slice(0, 15)) {
       const info = await getTokenInfo(pos.token_address, false).catch(() => null);
       const sym = info?.symbol || pos.token_address.split('.')[0].toUpperCase();
-      const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+      const posChain = resolvePositionWithdrawChain(getPositionChain(pos), pos.token_address);
+      const chainMeta = WITHDRAW_CHAIN_META[posChain];
+      const isSuiPos = posChain === 'sui';
       const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
       let humanQty = '';
       try {
         const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-        const qty = isEvmChainName(getPositionChain(pos)) ? evmStoredAmount(pos.quantity_held) : Number(rawBig) / Math.pow(10, decimals);
+        const qty = isEvmChainName(getPositionChain(pos))
+          ? evmStoredAmount(pos.quantity_held)
+          : Number(rawBig) / Math.pow(10, decimals);
         humanQty = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(2)}M` : qty.toLocaleString('en-US', { maximumFractionDigits: 2 });
       } catch {
         humanQty = pos.quantity_held;
       }
-      btnRows.push([cb(`📤 Send ${sym} (${humanQty})`, `send_token_prompt:${pos.id}`, 'primary')]);
+      btnRows.push([cb(`📤 ${chainMeta.icon} Send ${sym} (${humanQty})`, `send_token_prompt:${pos.id}`, 'primary')]);
     }
     btnRows.push([
-      cb('💸 Withdraw NEAR/SUI', 'wallet_withdraw_prompt', 'primary'),
+      cb('💸 Withdraw Native Funds', 'wallet_withdraw_prompt', 'primary'),
       cb('🔙 Back to Wallet', 'wallet_refresh', 'primary'),
     ]);
 
     await ctx.reply(
-      '🎒 *Select Token to Send*\n\n' +
-      'Choose a token from your bags to withdraw / send:',
+      '🎒 *Select Token to Withdraw / Send*\n\n' +
+        'Choose a token from your bags below. You will then enter the recipient wallet address, amount, and confirm:',
       { parse_mode: 'Markdown', ...Markup.inlineKeyboard(btnRows) }
     );
   });
@@ -10440,196 +10853,32 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
 
     const info = await getTokenInfo(pos.token_address, false).catch(() => null);
     const sym = info?.symbol || pos.token_address.split('.')[0].toUpperCase();
-    const isSuiPos = pos.chain === 'sui' || isSuiToken(pos.token_address);
+    const withdrawChain = resolvePositionWithdrawChain(getPositionChain(pos), pos.token_address);
+    const isSuiPos = withdrawChain === 'sui';
     const decimals = info?.decimals ?? (isSuiPos ? 6 : 18);
     let humanQty = '';
     try {
       const rawBig = BigInt((pos.quantity_held || '0').split('.')[0]);
-      const qty = isEvmChainName(getPositionChain(pos)) ? evmStoredAmount(pos.quantity_held) : Number(rawBig) / Math.pow(10, decimals);
+      const qty = isEvmChainName(getPositionChain(pos))
+        ? evmStoredAmount(pos.quantity_held)
+        : Number(rawBig) / Math.pow(10, decimals);
       humanQty = qty >= 1_000_000 ? `${(qty / 1_000_000).toFixed(2)}M` : qty.toLocaleString('en-US', { maximumFractionDigits: 4 });
     } catch {
       humanQty = pos.quantity_held;
     }
 
-    userPendingActions.set(telegramId, {
-      action: 'withdraw',
+    await promptWithdrawAddressStep(ctx, telegramId, {
+      withdrawChain,
+      withdrawAssetSymbol: sym,
+      withdrawBalanceDisplay: `${humanQty} ${sym}`,
       tokenAddress: pos.token_address,
       positionId: pos.id,
-      expiresAt: Date.now() + 180000,
     });
-
-    await ctx.reply(
-      `📤 *Send $${sanitizeMd(sym)}*\n\n` +
-      `💰 Balance: \`${humanQty} ${sanitizeMd(sym)}\`\n` +
-      `📋 Contract: \`${pos.token_address}\`\n\n` +
-      `Reply with the recipient address and amount, for example:\n` +
-      `• \`recipient.near 100\`\n` +
-      `• \`recipient.near all\`\n\n` +
-      `_Type /cancel to abort transfer._`,
-      { parse_mode: 'Markdown' }
-    );
   });
 
-  // ── /withdraw, /send, /transfer <destination> [amount] [token] ─────────────
+  // ── /withdraw, /send, /transfer — Always launches the guided 4-step withdrawal flow ──
   const handleWithdrawCommand = async (ctx: Context) => {
-    const telegramId = ctx.from!.id;
-    const msgText = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const args = msgText.split(' ').slice(1).filter(Boolean);
-
-    if (args.length === 0) {
-      userPendingActions.set(telegramId, {
-        action: 'withdraw',
-        expiresAt: Date.now() + 180000,
-      });
-      await ctx.reply(
-        `💸 *Withdraw & Send Funds (SOL, NEAR, SUI, Starknet & Tokens)*\n\n` +
-        `*Usage:*\n` +
-        `• Native SOL: \`/send <solana_address> <amount>\`\n` +
-        `• Native NEAR: \`/send <destination> <amount>\`\n` +
-        `• Token: \`/send <destination> <amount> <token>\`\n` +
-        `• Native SUI: \`/send <sui_address> <amount> SUI\`\n` +
-        `• Native STRK: \`/send <starknet_address> <amount> STRK\`\n\n` +
-        `*Examples:*\n` +
-        `• \`/send <solana_address> 0.5\` or \`/send <solana_address> all\`\n` +
-        `• \`/send mywallet.near 1.5\`\n` +
-        `• \`/send mywallet.near 500 LONK\`\n` +
-        `• \`/send 0x1234...abcd 1.0 SUI\`\n` +
-        `• \`/send 0x1234...abcd 10 STRK\`\n\n` +
-        `Or reply directly now with destination and amount!`,
-        {
-          parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard([
-            [cb('🎒 Send Token from Bags', 'wallet_withdraw_tokens_list', 'primary')],
-            [cb('🔙 Back to Wallet', 'wallet_refresh', 'primary')],
-          ]),
-        }
-      );
-      return;
-    }
-
-    const parsed = parseTransferArgs(args);
-    if (!parsed.destination) {
-      await ctx.reply('❌ Please specify a destination recipient address.');
-      return;
-    }
-
-    const destination = parsed.destination.trim();
-    const amountNum: number | 'all' = parsed.amount === undefined || parsed.amount === 'all' ? 'all' : parsed.amount;
-    const tokenArg = parsed.token;
-
-    if (typeof amountNum === 'number' && (isNaN(amountNum) || amountNum <= 0)) {
-      await ctx.reply('❌ Invalid amount. Please specify a positive number or "all".');
-      return;
-    }
-
-    const targetDesc = tokenArg ? `token \`${tokenArg}\`` : 'funds';
-    await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${destination}\`...`, { parse_mode: 'Markdown' });
-
-    try {
-      const isSolDest = isSolanaAddress(destination);
-      const isNearDest = destination.endsWith('.near') || (!isSolDest && !destination.startsWith('0x') && isValidNearAccountId(destination));
-      const isSuiDest = isValidSuiAddress(destination) && !destination.endsWith('.near');
-      const isStarknetDest = isValidStarknetAddress(destination) && !destination.endsWith('.near');
-      const normToken = (tokenArg || '').toLowerCase();
-      const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
-      const isSolNative = normToken === 'sol' || (!tokenArg && isSolDest);
-      const isExplicitToken = tokenArg && normToken !== 'near' && normToken !== 'sui' && normToken !== 'sol' && !isStrkOrEth;
-
-      if (isSolNative) {
-        const result = await withdrawSolanaFunds(telegramId, destination, amountNum);
-        await ctx.reply(
-          `✅ *SOL Withdrawal Successful!*\n\n` +
-          `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
-          `📬 Destination: \`${result.destination}\`\n\n` +
-          `🔗 Explorer: [View on Solscan](https://solscan.io/tx/${result.txHash})`,
-          { parse_mode: 'Markdown' }
-        );
-      } else if (isExplicitToken) {
-        const result = await withdrawTokenFunds(telegramId, tokenArg, destination, amountNum);
-        const explorerUrl =
-          result.chain === 'solana'
-            ? `https://solscan.io/tx/${result.txHash}`
-            : result.chain === 'starknet'
-              ? `https://voyager.online/tx/${result.txHash}`
-              : result.chain === 'sui'
-                ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
-                : `https://nearblocks.io/txns/${result.txHash}`;
-        const explorerName = result.chain === 'solana' ? 'Solscan' : result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
-
-        await ctx.reply(
-          `✅ *Token Transfer Successful!*\n\n` +
-          `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
-          `📬 Destination: \`${result.destination}\`\n` +
-          `🪙 Contract: \`${result.tokenAddress}\`\n\n` +
-          `🔗 Explorer: [View on ${explorerName}](${explorerUrl})`,
-          { parse_mode: 'Markdown' }
-        );
-      } else if (isStrkOrEth) {
-        const result = await withdrawStarknetFunds(telegramId, destination, amountNum, normToken);
-        await ctx.reply(
-          `✅ *Starknet Transfer Successful!*\n\n` +
-          `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
-          `📬 Destination: \`${result.destination}\`\n\n` +
-          `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
-          { parse_mode: 'Markdown' }
-        );
-      } else if (normToken === 'sui') {
-        const result = await withdrawSuiFunds(telegramId, destination, amountNum);
-        await ctx.reply(
-          `✅ *SUI Withdrawal Successful!*\n\n` +
-          `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
-          `📬 Destination: \`${result.destination}\`\n\n` +
-          `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
-          { parse_mode: 'Markdown' }
-        );
-      } else if (isStarknetDest && !isNearDest) {
-        // Resolve between SUI and Starknet by checking user balances
-        const user = await getUserByTelegramId(telegramId);
-        const [suiBal, strkBal] = await Promise.all([
-          user?.sui_address ? getSuiBalance(user.sui_address).catch(() => ({ mist: 0n })) : { mist: 0n },
-          user?.starknet_address ? getStarknetBalance(user.starknet_address).catch(() => ({ strk: 0n })) : { strk: 0n },
-        ]);
-
-        if (strkBal.strk > 0n && suiBal.mist === 0n) {
-          const result = await withdrawStarknetFunds(telegramId, destination, amountNum, 'strk');
-          await ctx.reply(
-            `✅ *Starknet Withdrawal Successful!*\n\n` +
-            `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
-            `📬 Destination: \`${result.destination}\`\n\n` +
-            `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
-            { parse_mode: 'Markdown' }
-          );
-        } else if (suiBal.mist > 0n && strkBal.strk === 0n) {
-          const result = await withdrawSuiFunds(telegramId, destination, amountNum);
-          await ctx.reply(
-            `✅ *SUI Withdrawal Successful!*\n\n` +
-            `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
-            `📬 Destination: \`${result.destination}\`\n\n` +
-            `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
-            { parse_mode: 'Markdown' }
-          );
-        } else {
-          await ctx.reply(
-            `⚠️ Destination \`${destination}\` is a 0x hex address valid on both SUI and Starknet.\n` +
-            `Please specify the token to transfer, for example:\n` +
-            `• \`/send ${destination} ${amountNum} STRK\`\n` +
-            `• \`/send ${destination} ${amountNum} SUI\``,
-            { parse_mode: 'Markdown' }
-          );
-        }
-      } else {
-        const result = await withdrawFunds(telegramId, destination, amountNum);
-        await ctx.reply(
-          `✅ *Withdrawal Successful!*\n\n` +
-          `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
-          `📬 Destination: \`${result.destination}\`\n\n` +
-          `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
-          { parse_mode: 'Markdown' }
-        );
-      }
-    } catch (err: any) {
-      await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-    }
+    await openWithdrawChainPicker(ctx);
   };
 
   bot.command(['withdraw', 'send', 'transfer'], handleWithdrawCommand);
@@ -13912,214 +14161,94 @@ Account: <code>${res.subaccountId}</code>
         return;
       }
 
-      if (pending.action === 'withdraw') {
-        const parts = rawText.split(' ').filter(Boolean);
-        const parsed = parseTransferArgs(parts);
-
-        // If user was prompted for a specific token (e.g. from send_token_prompt)
-        const tokenToUse = pending.tokenAddress || parsed.token;
-        const dest = parsed.destination;
-        const amt: number | 'all' = parsed.amount === undefined ? 'all' : parsed.amount;
-
-        if (!dest) {
-          await ctx.reply('❌ Destination address is required.\n\nExample: `recipient.near 100` or `recipient.near all`', { parse_mode: 'Markdown' });
-          userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
+      if (pending.action === 'withdraw_address') {
+        const chain = pending.withdrawChain;
+        if (!chain) {
+          await openWithdrawChainPicker(ctx);
           return;
         }
+        const user = await getUserByTelegramId(telegramId).catch(() => null);
+        const activeNearWallet = user ? await getActiveWallet(user.id, 'near').catch(() => null) : null;
+        const activeSuiWallet = user ? await getActiveWallet(user.id, 'sui').catch(() => null) : null;
+        const activeStarknetWallet = user ? await getActiveWallet(user.id, 'starknet').catch(() => null) : null;
+        const activeSolanaWallet = user ? await getActiveWallet(user.id, 'solana').catch(() => null) : null;
 
-        if (typeof amt === 'number' && (isNaN(amt) || amt <= 0)) {
-          await ctx.reply('❌ Invalid amount. Must be a positive number or "all".\n\nExample: `mywallet.near 1.5` or `mywallet.near all`', { parse_mode: 'Markdown' });
+        const check = validateWithdrawAddress(chain, rawText, {
+          near: activeNearWallet?.address || user?.subaccount_id,
+          solana: activeSolanaWallet?.address || user?.solana_address,
+          sui: activeSuiWallet?.address || user?.sui_address,
+          starknet: activeStarknetWallet?.address || user?.starknet_address,
+          evm: user?.evm_address,
+        });
+
+        if (!check.ok) {
           userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
-          return;
-        }
-
-        // EVM sends are strict. A HyperEVM/Elysium/Kleos asset only goes to a plain 20-byte 0x
-        // address, and only those assets go there: Starknet and Sui addresses are 0x too (but
-        // longer), and Sui would pad a short address into one nobody controls.
-        const evmTokRaw = (tokenToUse || '').trim();
-        const evmTokLower = evmTokRaw.toLowerCase();
-        const isEvmAssetName = ['hype', 'hyperevm', 'elysium', 'kleos', 'eth', 'base', 'arbitrum', 'zero', 'zro'].includes(evmTokLower);
-        const isEvmTokenContract = /^0x[0-9a-fA-F]{40}$/.test(evmTokRaw);
-        if (/^0x[0-9a-fA-F]{40}$/.test(dest) || isEvmAssetName || isEvmTokenContract) {
-          const rearm = () => userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
-          const evmUser = await getUserByTelegramId(telegramId);
-          if (!evmUser) {
-            await ctx.reply('❌ User not found. Please run /start first.');
-            return;
-          }
-          const problem = evmRecipientProblem(dest, evmUser.evm_address);
-          if (problem) {
-            await ctx.reply(`❌ ${problem}\n\nNothing was sent. Reply with a correct address, or tap Cancel.`);
-            rearm();
-            return;
-          }
-          if (evmTokRaw && !isEvmAssetName && !isEvmTokenContract) {
-            await ctx.reply(
-              '❌ Supported EVM assets: ETH (Base/Arb/Mainnet), ZRO (Zero), HYPE (HyperEVM/Elysium) or any ERC-20 contract address.\n\n' +
-              'Examples:\n`' + dest + ' 0.1 ETH`\n`' + dest + ' 5 ZRO`\n`' + dest + ' 1 HYPE`\n`' + dest + ' 100 0xTOKEN_CONTRACT`',
-              { parse_mode: 'Markdown' }
-            );
-            rearm();
-            return;
-          }
-
-          const to = ethers.getAddress(dest);
-          let evmSend: NonNullable<PendingAction['evmSend']>;
-          let card: string;
-          if (isEvmTokenContract) {
-            let plan: EvmTokenSendPlan;
-            try {
-              plan = await planEvmTokenSend(evmUser, evmTokRaw, to, amt);
-            } catch (err: any) {
-              await ctx.reply(`❌ ${getUserFriendlyError(err)}\n\nNothing was sent.`);
-              rearm();
-              return;
+          await ctx.reply(
+            `❌ ${check.error}\n\nPlease reply with a valid *${WITHDRAW_CHAIN_META[chain].label}* wallet address, or tap Cancel.`,
+            {
+              parse_mode: 'Markdown',
+              ...Markup.inlineKeyboard([
+                [
+                  cb('🔄 Change Chain', 'wallet_withdraw_prompt', 'primary'),
+                  cb('❌ Cancel', 'withdraw_cancel', 'primary'),
+                ],
+              ]),
             }
-            evmSend = { kind: 'token', plan };
-            card =
-              `🔎 *Check this send carefully*\n\n` +
-              `⛓️ Chain: *${plan.chain === 'elysium' ? 'Elysium (Kleos)' : plan.chain.toUpperCase()}*\n` +
-              `🪙 Token: *${sanitizeMd(plan.symbol)}* \`${plan.token}\`\n` +
-              `💸 Amount: \`${plan.amountDisplay} ${sanitizeMd(plan.symbol)}\`\n` +
-              `📬 To: \`${plan.to}\`\n\n` +
-              `Sends on EVM chains cannot be reversed.`;
-          } else {
-            let chain: EvmChain;
-            if (evmTokLower === 'elysium' || evmTokLower === 'kleos') chain = 'elysium';
-            else if (evmTokLower === 'hyperevm' || evmTokLower === 'hype') chain = 'hyperevm';
-            else if (evmTokLower === 'arbitrum' || evmTokLower === 'arb') chain = 'arbitrum';
-            else if (evmTokLower === 'zero' || evmTokLower === 'zro') chain = 'zero';
-            else if (evmTokLower === 'ethereum' || evmTokLower === 'mainnet') chain = 'ethereum';
-            else chain = 'base';
+          );
+          return;
+        }
 
-            const nativeSym = getEvmNativeSymbol(chain);
-            evmSend = { kind: 'hype', chain, to, amount: amt };
-            card =
-              `🔎 *Check this send carefully*\n\n` +
-              `⛓️ Chain: *${chain === 'elysium' ? 'Elysium (Kleos)' : chain.toUpperCase()}*\n` +
-              `🪙 Asset: *${nativeSym}*\n` +
-              `💸 Amount: \`${amt === 'all' ? 'All (minus gas)' : `${amt} ${nativeSym}`}\`\n` +
-              `📬 To: \`${to}\`\n\n` +
-              `Sends on EVM chains cannot be reversed.`;
-          }
-          userPendingActions.set(telegramId, { action: 'evm_send_confirm', evmSend, expiresAt: Date.now() + 120000 });
-          await ctx.reply(card, {
+        const nextPending: PendingAction = {
+          ...pending,
+          action: 'withdraw_amount',
+          withdrawDestination: check.address,
+          expiresAt: Date.now() + 180000,
+        };
+        await promptWithdrawAmountStep(ctx, telegramId, nextPending);
+        return;
+      }
+
+      if (pending.action === 'withdraw_amount') {
+        if (!pending.withdrawChain || !pending.withdrawDestination) {
+          await openWithdrawChainPicker(ctx);
+          return;
+        }
+        const parsedAmt = parseWithdrawAmount(rawText);
+        if (!parsedAmt.ok) {
+          userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
+          await ctx.reply(`❌ ${parsedAmt.error}`, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([
-              [cb('✅ Confirm & Send', 'evm_send_confirm', 'danger')],
-              [cb('❌ Cancel', 'evm_send_cancel', 'primary')],
+              [cb('💯 Send Max / All', 'wd_amt:all', 'primary')],
+              [
+                cb('✏️ Change Address', 'wd_back_addr', 'primary'),
+                cb('❌ Cancel', 'withdraw_cancel', 'primary'),
+              ],
             ]),
           });
           return;
         }
 
-        const isSolDest = isSolanaAddress(dest);
-        const destLower = dest.trim().toLowerCase();
-        const isNearDest = destLower.endsWith('.near') || (!isSolDest && !destLower.startsWith('0x') && isValidNearAccountId(destLower));
-        const isSuiDest = isValidSuiAddress(dest) && !destLower.endsWith('.near');
-        const isStarknetDest = isValidStarknetAddress(dest) && !destLower.endsWith('.near');
-        const effectiveDest = isNearDest ? destLower : dest;
-        const normToken = (tokenToUse || '').toLowerCase();
-        const isStrkOrEth = normToken === 'strk' || normToken === 'eth';
-        const isSolNative = normToken === 'sol' || (!tokenToUse && isSolDest);
-        const isExplicitToken = tokenToUse && normToken !== 'near' && normToken !== 'sui' && normToken !== 'sol' && !isStrkOrEth;
-        const targetDesc = isSolNative ? 'SOL' : isExplicitToken ? `token \`${tokenToUse}\`` : (isStrkOrEth ? `Starknet ${normToken.toUpperCase()}` : 'funds');
-        await ctx.reply(`⏳ Processing transfer of ${targetDesc} to \`${effectiveDest}\`...`, { parse_mode: 'Markdown' });
+        await promptWithdrawConfirmStep(ctx, telegramId, pending, parsedAmt.amount);
+        return;
+      }
 
-        try {
-          if (isSolNative) {
-            const result = await withdrawSolanaFunds(telegramId, effectiveDest, amt);
-            await ctx.reply(
-              `✅ *SOL Withdrawal Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
-              `📬 Destination: \`${result.destination}\`\n\n` +
-              `🔗 Explorer: [View on Solscan](https://solscan.io/tx/${result.txHash})`,
-              { parse_mode: 'Markdown' }
-            );
-          } else if (isExplicitToken) {
-            const result = await withdrawTokenFunds(telegramId, tokenToUse, effectiveDest, amt);
-            const explorerUrl =
-              result.chain === 'solana'
-                ? `https://solscan.io/tx/${result.txHash}`
-                : result.chain === 'starknet'
-                ? `https://voyager.online/tx/${result.txHash}`
-                : result.chain === 'sui'
-                ? `https://suiscan.xyz/mainnet/tx/${result.txHash}`
-                : `https://nearblocks.io/txns/${result.txHash}`;
-            const explorerName = result.chain === 'solana' ? 'Solscan' : result.chain === 'starknet' ? 'Voyager' : result.chain === 'sui' ? 'Suiscan' : 'NearBlocks';
-
-            await ctx.reply(
-              `✅ *Token Transfer Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
-              `📬 Destination: \`${result.destination}\`\n` +
-              `🪙 Contract: \`${result.tokenAddress}\`\n\n` +
-              `🔗 Explorer: [View on ${explorerName}](${explorerUrl})`,
-              { parse_mode: 'Markdown' }
-            );
-          } else if (isStrkOrEth) {
-            const result = await withdrawStarknetFunds(telegramId, effectiveDest, amt, normToken);
-            await ctx.reply(
-              `✅ *Starknet Transfer Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
-              `📬 Destination: \`${result.destination}\`\n\n` +
-              `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
-              { parse_mode: 'Markdown' }
-            );
-          } else if (normToken === 'sui') {
-            const result = await withdrawSuiFunds(telegramId, effectiveDest, amt);
-            await ctx.reply(
-              `✅ *SUI Withdrawal Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
-              `📬 Destination: \`${result.destination}\`\n\n` +
-              `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
-              { parse_mode: 'Markdown' }
-            );
-          } else if (isStarknetDest && !isNearDest) {
-            const user = await getUserByTelegramId(telegramId);
-            const [suiBal, strkBal] = await Promise.all([
-              user?.sui_address ? getSuiBalance(user.sui_address).catch(() => ({ mist: 0n })) : { mist: 0n },
-              user?.starknet_address ? getStarknetBalance(user.starknet_address).catch(() => ({ strk: 0n })) : { strk: 0n },
-            ]);
-
-            if (strkBal.strk > 0n && suiBal.mist === 0n) {
-              const result = await withdrawStarknetFunds(telegramId, effectiveDest, amt, 'strk');
-              await ctx.reply(
-                `✅ *Starknet Withdrawal Successful!*\n\n` +
-                `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
-                `📬 Destination: \`${result.destination}\`\n\n` +
-                `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
-                { parse_mode: 'Markdown' }
-              );
-            } else if (suiBal.mist > 0n && strkBal.strk === 0n) {
-              const result = await withdrawSuiFunds(telegramId, effectiveDest, amt);
-              await ctx.reply(
-                `✅ *SUI Withdrawal Successful!*\n\n` +
-                `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
-                `📬 Destination: \`${result.destination}\`\n\n` +
-                `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
-                { parse_mode: 'Markdown' }
-              );
-            } else {
-              await ctx.reply(
-                `⚠️ Destination \`${effectiveDest}\` is a 0x hex address valid on both SUI and Starknet.\n` +
-                `Please specify the token, e.g. \`${effectiveDest} ${amt} STRK\` or \`${effectiveDest} ${amt} SUI\``,
-                { parse_mode: 'Markdown' }
-              );
-            }
-          } else {
-            const result = await withdrawFunds(telegramId, effectiveDest, amt);
-            await ctx.reply(
-              `✅ *Withdrawal Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
-              `📬 Destination: \`${result.destination}\`\n\n` +
-              `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
-              { parse_mode: 'Markdown' }
-            );
+      if (pending.action === 'withdraw_confirm') {
+        userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
+        await ctx.reply(
+          '🔎 Your withdrawal is ready to confirm. Tap *✅ Confirm & Complete Withdrawal* above to send, or *❌ Cancel* to abort.',
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([
+              [cb('✅ Confirm & Complete Withdrawal', 'withdraw_confirm_send', 'danger')],
+              [
+                cb('✏️ Change Amount', 'wd_back_amt', 'primary'),
+                cb('✏️ Change Address', 'wd_back_addr', 'primary'),
+              ],
+              [cb('❌ Cancel', 'withdraw_cancel', 'primary')],
+            ]),
           }
-        } catch (err: any) {
-          userPendingActions.set(telegramId, { ...pending, expiresAt: Date.now() + 180000 });
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
-        }
+        );
         return;
       }
 
@@ -15072,90 +15201,6 @@ Account: <code>${res.subaccountId}</code>
           );
         } catch (err: any) {
           await ctx.reply(`❌ Failed to create fleet limit order: ${getUserFriendlyError(err)}`);
-        }
-        return;
-      }
-    }
-
-    // 1.5. Implicit Withdrawal Format Detection (<destination> <amount|all>)
-    const withdrawParts = rawText.trim().split(/\s+/);
-    if (withdrawParts.length === 2) {
-      const possibleDest = withdrawParts[0];
-      const possibleDestLower = possibleDest.toLowerCase();
-      const possibleAmtStr = withdrawParts[1].toLowerCase();
-      const isSolDest = isSolanaAddress(possibleDest);
-      const isNearDest = possibleDestLower.endsWith('.near') || (!isSolDest && !possibleDestLower.startsWith('0x') && isValidNearAccountId(possibleDestLower));
-      const isSuiDest = isValidSuiAddress(possibleDest) && !possibleDestLower.endsWith('.near');
-      const isStarknetDest = isValidStarknetAddress(possibleDest) && !possibleDestLower.endsWith('.near');
-      const isAmtValid = possibleAmtStr === 'all' || (!isNaN(parseFloat(possibleAmtStr)) && parseFloat(possibleAmtStr) > 0);
-
-      if ((isNearDest || isSuiDest || isStarknetDest || isSolDest) && isAmtValid) {
-        const amt: number | 'all' = possibleAmtStr === 'all' ? 'all' : parseFloat(possibleAmtStr);
-        const displayDest = isNearDest ? possibleDestLower : possibleDest;
-        await ctx.reply(`⏳ Processing withdrawal to \`${displayDest}\`...`, { parse_mode: 'Markdown' });
-        try {
-          if (isSolDest) {
-            const result = await withdrawSolanaFunds(telegramId, possibleDest, amt);
-            await ctx.reply(
-              `✅ *SOL Withdrawal Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} SOL\`\n` +
-              `📬 Destination: \`${result.destination}\`\n\n` +
-              `🔗 Explorer: [View on Solscan](https://solscan.io/tx/${result.txHash})`,
-              { parse_mode: 'Markdown' }
-            );
-          } else if (isStarknetDest && !isNearDest) {
-            const user = await getUserByTelegramId(telegramId);
-            const [suiBal, strkBal] = await Promise.all([
-              user?.sui_address ? getSuiBalance(user.sui_address).catch(() => ({ mist: 0n })) : { mist: 0n },
-              user?.starknet_address ? getStarknetBalance(user.starknet_address).catch(() => ({ strk: 0n })) : { strk: 0n },
-            ]);
-
-            if (strkBal.strk > 0n && suiBal.mist === 0n) {
-              const result = await withdrawStarknetFunds(telegramId, possibleDest, amt, 'strk');
-              await ctx.reply(
-                `✅ *Starknet Withdrawal Successful!*\n\n` +
-                `💸 Amount: \`${result.amountWithdrawn} ${result.symbol}\`\n` +
-                `📬 Destination: \`${result.destination}\`\n\n` +
-                `🔗 Explorer: [View on Voyager](https://voyager.online/tx/${result.txHash})`,
-                { parse_mode: 'Markdown' }
-              );
-            } else if (suiBal.mist > 0n && strkBal.strk === 0n) {
-              const result = await withdrawSuiFunds(telegramId, possibleDest, amt);
-              await ctx.reply(
-                `✅ *SUI Withdrawal Successful!*\n\n` +
-                `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
-                `📬 Destination: \`${result.destination}\`\n\n` +
-                `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
-                { parse_mode: 'Markdown' }
-              );
-            } else {
-              await ctx.reply(
-                `⚠️ Destination \`${possibleDest}\` is a 0x hex address valid on both SUI and Starknet.\n` +
-                `Please specify the token, e.g. \`/send ${possibleDest} ${amt} STRK\` or \`/send ${possibleDest} ${amt} SUI\``,
-                { parse_mode: 'Markdown' }
-              );
-            }
-          } else if (isSuiDest) {
-            const result = await withdrawSuiFunds(telegramId, possibleDest, amt);
-            await ctx.reply(
-              `✅ *SUI Withdrawal Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} SUI\`\n` +
-              `📬 Destination: \`${result.destination}\`\n\n` +
-              `🔗 Explorer: [View on Suiscan](https://suiscan.xyz/mainnet/tx/${result.txHash})`,
-              { parse_mode: 'Markdown' }
-            );
-          } else {
-            const result = await withdrawFunds(telegramId, possibleDestLower, amt);
-            await ctx.reply(
-              `✅ *Withdrawal Successful!*\n\n` +
-              `💸 Amount: \`${result.amountWithdrawn} NEAR\`\n` +
-              `📬 Destination: \`${result.destination}\`\n\n` +
-              `🔗 Explorer: [View on NearBlocks](https://nearblocks.io/txns/${result.txHash})`,
-              { parse_mode: 'Markdown' }
-            );
-          }
-        } catch (err: any) {
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
         }
         return;
       }

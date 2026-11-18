@@ -162,7 +162,13 @@ export interface EvmTokenSendPlan {
  * (not a token contract: the usual mistake when address and token are swapped), and
  * the amount must fit the balance.
  */
-export async function planEvmTokenSend(user: UserRecord, tokenInput: string, to: string, amount: number | 'all'): Promise<EvmTokenSendPlan> {
+export async function planEvmTokenSend(
+  user: UserRecord,
+  tokenInput: string,
+  to: string,
+  amount: number | 'all',
+  preferredChain?: EvmChain
+): Promise<EvmTokenSendPlan> {
   if (!user.evm_address) throw new Error('Your EVM wallet is not ready yet. Send /start and try again.');
   const problem = evmRecipientProblem(to, user.evm_address);
   if (problem) throw new Error(problem);
@@ -179,8 +185,11 @@ export async function planEvmTokenSend(user: UserRecord, tokenInput: string, to:
     ethereum: getEvmProvider('ethereum', false),
     zero: getEvmProvider('zero', false),
   };
-  // The chain is wherever the wallet actually holds this token
-  for (const chain of ['base', 'arbitrum', 'zero', 'hyperevm', 'elysium', 'ethereum'] as const) {
+  // If a specific chain was selected, check that chain; otherwise scan all supported EVM chains
+  const chainsToCheck: EvmChain[] = preferredChain
+    ? [preferredChain]
+    : ['base', 'arbitrum', 'zero', 'hyperevm', 'elysium', 'ethereum'];
+  for (const chain of chainsToCheck) {
     const provider = providers[chain];
     if (!(await isContract(provider, token))) continue;
     const erc20 = new ethers.Contract(token, ERC20_ABI, provider);
@@ -192,8 +201,7 @@ export async function planEvmTokenSend(user: UserRecord, tokenInput: string, to:
     if (balance <= 0n) continue;
     if (await isContract(provider, recipient)) {
       throw new Error(
-        `The destination is a contract on ${chain}, not a wallet. ` +
-        'Check the order: address first, then amount, then token.'
+        `The destination is a contract on ${chain}, not a wallet. Please enter a valid recipient wallet address.`
       );
     }
     const amountRaw = amount === 'all' ? balance : toTokenUnits(amount, decimals);
