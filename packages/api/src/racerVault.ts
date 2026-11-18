@@ -749,9 +749,14 @@ export async function planVaultHops(params: {
   if (isDclVenue) {
     let dclPoolId: string | null = params.dclPoolId || null;
 
+    // Why a launch cannot be routed from NEAR, kept for the user (never replaced by a guessed pool)
+    let routeError = null as string | null;
     if (!dclPoolId) {
       // Check multi-hop route for non-NEAR quote assets (USDT, USDC)
-      const route = await near.planNearlytradeRoute(params.tokenAddress).catch(() => null);
+      const route = await near.planNearlytradeRoute(params.tokenAddress).catch((e: any) => {
+        routeError = e?.message || 'no route';
+        return null;
+      });
       if (route && route.kind === 'multihop') {
         const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
         const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
@@ -813,13 +818,20 @@ export async function planVaultHops(params: {
     if (!dclPoolId) {
       dclPoolId = await near.findDclPoolId(WRAP_NEAR, params.tokenAddress).catch(() => null);
     }
+    // No real pool to trade through: refuse with the reason. A guessed pool id quoted "supported" with no
+    // output, and the swap then failed on-chain (pool does not exist) after the user had committed.
+    if (!dclPoolId) {
+      throw new Error(routeError
+        ? `This token cannot be ${isBuy ? 'bought with' : 'sold for'} NEAR yet: it only trades against ${routeError.match(/paired with (.+?)\. No /)?.[1] || 'another token'}, which has no route from NEAR.`
+        : 'No trading pool was found for this token.');
+    }
 
     const tokenIn = isBuy ? WRAP_NEAR : params.tokenAddress;
     const tokenOut = isBuy ? params.tokenAddress : WRAP_NEAR;
     const plan = {
       venue: 'Dcl' as const,
       hops: [{
-        dcl_pool_id: dclPoolId || `${params.tokenAddress}|${WRAP_NEAR}|10000`,
+        dcl_pool_id: dclPoolId,
         token_in: tokenIn,
         token_out: tokenOut,
         min_amount_out: '0',

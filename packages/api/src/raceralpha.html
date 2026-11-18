@@ -9054,6 +9054,13 @@
           });
           if (res.ok) {
             const q = await res.json();
+            // The token cannot be routed from NEAR: say why instead of quoting a price that will never fill
+            if (q.supported === false) {
+              estEl.textContent = q.reason || 'Not tradable from NEAR right now';
+              estEl.style.color = 'var(--color-danger)';
+              return;
+            }
+            estEl.style.color = '';
             const badge = document.getElementById('intent-routing-badge');
             const desc = document.getElementById('intent-routing-desc');
             const tag = document.getElementById('intent-routing-tag');

@@ -1010,6 +1010,7 @@ router.post('/alpha/trade/intent-quote', async (req, res) => {
 
     let minOut = '0';
     let minOutFormatted = '0';
+    let unsupportedReason: string | null = null;
     try {
       minOut = await quoteMinimumOut({
         tokenAddress,
@@ -1022,8 +1023,15 @@ router.post('/alpha/trade/intent-quote', async (req, res) => {
       });
       const decimals = isBuy ? (Number(tokenDecimals) || 18) : 24;
       minOutFormatted = formatTokenUnits(BigInt(minOut), decimals);
-    } catch {
-      // Best-effort quote
+    } catch (quoteErr: any) {
+      // A token that cannot be routed from NEAR must say so: "supported" with no output sent users into a
+      // buy that could not fill. Transient pricing gaps are reported the same way, so the user can retry.
+      unsupportedReason = quoteErr?.message || 'This token cannot be traded right now.';
+    }
+
+    if (unsupportedReason) {
+      res.json({ supported: false, reason: unsupportedReason, routing: 'RACER_EXECUTOR', amountIn: rawAmountIn });
+      return;
     }
 
     res.json({
