@@ -543,6 +543,10 @@ async function prewarmTradePath(telegramId: number, tokenAddress: string): Promi
   }
 }
 
+/** Stock pairs: the most NEAR one buy may spend, and the slippage cap, set from the launch pool's depth */
+const STOCK_PAIR_MAX_NEAR = 50;
+const STOCK_PAIR_MAX_SLIPPAGE_PCT = 3;
+
 // ── Helper: Safe Markdown string sanitization ────────────────────────────────
 function sanitizeMd(str: string): string {
   // Replace special Markdown characters but keep hyphens (valid in NEAR addresses)
@@ -3789,10 +3793,16 @@ async function executeBuyHelperAsTrade(
   // Stock pairs buy the stock leg through NEAR Intents (1Click) directly; the on-chain pool is the fallback
   // when 1Click has no liquidity. Other launches keep the on-chain route first, with 1Click as the fallback.
   const viaIntentsFirst = Boolean(info.prefer_intents && info.intents_route && info.tradeable);
+  // A stock pair's launch pool is thin: about 1% price impact at 50 NEAR (about $160), 2.6% at about $200
+  // and 8% at about $650. Larger buys are refused, and slippage is capped at 3% for them.
+  if (info.prefer_intents && amountNear > STOCK_PAIR_MAX_NEAR) {
+    throw new Error(`Stock pairs take at most ${STOCK_PAIR_MAX_NEAR} NEAR per buy. This coin's pool is thin: a buy of about $200 moves its price about 3%, and a larger buy moves it much further. Buy in smaller amounts.`);
+  }
+  const buySlippagePct = info.prefer_intents ? Math.min(slippagePct, STOCK_PAIR_MAX_SLIPPAGE_PCT) : slippagePct;
   const buyViaIntentsRoute = async () => {
     const { buyViaIntents } = await import('./intentsRoute.js');
     onProgress?.('submitting');
-    return buyViaIntents(user, tokenAddress, info.intents_route!, amountNear, slippagePct);
+    return buyViaIntents(user, tokenAddress, info.intents_route!, amountNear, buySlippagePct);
   };
   if (viaIntentsFirst) {
     const res = await buyViaIntentsRoute();
@@ -3823,14 +3833,14 @@ async function executeBuyHelperAsTrade(
           `🔗 [View on NearBlocks](https://nearblocks.io/txns/${res.txHash})`,
       };
     }
-    // Nothing was spent by a 1Click buy that did not fill; without an on-chain pool there is no fallback
-    if (!info.dcl_path?.length) throw new Error(res.reason || 'NEAR Intents buy failed.');
-    console.warn(`NEAR Intents buy of ${tokenAddress} did not fill (${res.reason}); trying its pool`);
+    // Nothing was spent by a 1Click buy that did not fill. Rhea is the fallback, never the first choice.
+    if (!info.dcl_path?.length && !info.rhea_pool_id) throw new Error(res.reason || 'NEAR Intents buy failed.');
+    console.warn(`NEAR Intents buy of ${tokenAddress} did not fill (${res.reason}); trying Rhea`);
   }
 
   if (info.dcl_path?.length && info.tradeable) {
     try {
-      return await buyLaunchpadDclPath(user, tokenAddress, info, amountNear, slippagePct, onProgress);
+      return await buyLaunchpadDclPath(user, tokenAddress, info, amountNear, buySlippagePct, onProgress);
     } catch (dclErr: any) {
       // The on-chain route could not be priced or filled (a thin quote-token pool, or RPC too slow to finish
       // the quote). Nothing was spent: a failed or unfilled route sends no NEAR. When the quote token is on
@@ -3867,7 +3877,7 @@ async function executeBuyHelperAsTrade(
     }
   }
 
-  if (info.intents_route && info.tradeable) {
+  if (info.intents_route && info.tradeable && !viaIntentsFirst) {
     onProgress?.('submitting');
     const { buyViaIntents } = await import('./intentsRoute.js');
     const res = await buyViaIntents(user, tokenAddress, info.intents_route, amountNear, slippagePct);
