@@ -75,6 +75,32 @@ export const SUPPORTED_CHAINS: Record<string, SupportedChain> = {
   near: { id: 'near', name: 'NEAR Protocol', icon: '⬛', category: 'popular', nativeSymbol: 'wNEAR', nativeDecimals: 24 },
 };
 
+export type DepositDestinationChain = 'near' | 'sol' | 'sui' | 'starknet' | 'base' | 'arb' | 'eth';
+
+export interface DepositDestinationMeta {
+  id: DepositDestinationChain;
+  name: string;
+  icon: string;
+  symbol: string;
+  assetId: string;
+  decimals: number;
+}
+
+/** Main trading bot wallet chains that a NEAR Intents (1Click) deposit can settle into */
+export const DEPOSIT_DESTINATIONS: Record<DepositDestinationChain, DepositDestinationMeta> = {
+  near: { id: 'near', name: 'NEAR', icon: '⬛', symbol: 'NEAR', assetId: 'nep141:wrap.near', decimals: 24 },
+  sol: { id: 'sol', name: 'Solana', icon: '🟣', symbol: 'SOL', assetId: 'nep141:sol.omft.near', decimals: 9 },
+  sui: { id: 'sui', name: 'SUI', icon: '🔷', symbol: 'SUI', assetId: 'nep141:sui.omft.near', decimals: 9 },
+  starknet: { id: 'starknet', name: 'Starknet', icon: '✨', symbol: 'STRK', assetId: 'nep141:starknet.omft.near', decimals: 18 },
+  base: { id: 'base', name: 'Base', icon: '🔵', symbol: 'ETH', assetId: 'nep141:base.omft.near', decimals: 18 },
+  arb: { id: 'arb', name: 'Arbitrum', icon: '💙', symbol: 'ETH', assetId: 'nep141:arb.omft.near', decimals: 18 },
+  eth: { id: 'eth', name: 'Ethereum', icon: '💎', symbol: 'ETH', assetId: 'nep141:eth.omft.near', decimals: 18 },
+};
+
+export function isDepositDestinationChain(val: string): val is DepositDestinationChain {
+  return Object.prototype.hasOwnProperty.call(DEPOSIT_DESTINATIONS, val);
+}
+
 // ── In-Memory Token Registry ────────────────────────────────────────────────
 const tokenKeyMap = new Map<string, OneClickToken>();
 const tokensByChain = new Map<string, OneClickToken[]>();
@@ -387,15 +413,24 @@ export async function create1ClickDepositQuote(params: {
   subaccountId: string;
   token: OneClickToken;
   amount: number;
+  destinationChain?: DepositDestinationChain;
+  destinationAddress?: string;
 }): Promise<RacerDepositRecord> {
   const token = params.token;
   const user = params.userId
     ? await getUserById(params.userId)
     : params.telegramId > 0 ? await getUserByTelegramId(params.telegramId) : null;
 
-  // Calculate raw base units (e.g. 1 SOL = 1000000000)
+  const destChain: DepositDestinationChain =
+    params.destinationChain && isDepositDestinationChain(params.destinationChain)
+      ? params.destinationChain
+      : 'near';
+  const destMeta = DEPOSIT_DESTINATIONS[destChain];
+  const recipientAddress = (params.destinationAddress || params.subaccountId).trim();
+
+  // Calculate exact raw base units without capping decimals at 18 (NEAR/wNEAR has 24 decimals)
   const decimals = token.decimals;
-  const rawUnits = BigInt(Math.floor(params.amount * Math.pow(10, Math.min(decimals, 18)))).toString();
+  const rawUnits = unitsToRaw(params.amount, decimals);
 
   const deadline = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
@@ -405,9 +440,9 @@ export async function create1ClickDepositQuote(params: {
     slippageTolerance: 100, // 1%
     originAsset: token.assetId,
     depositType: 'ORIGIN_CHAIN',
-    destinationAsset: 'nep141:wrap.near',
+    destinationAsset: destMeta.assetId,
     amount: rawUnits,
-    recipient: params.subaccountId,
+    recipient: recipientAddress,
     recipientType: 'DESTINATION_CHAIN',
     refundTo: params.subaccountId,
     refundType: 'INTENTS',
@@ -420,11 +455,11 @@ export async function create1ClickDepositQuote(params: {
     ],
   };
 
-  logger.info(`Requesting 1Click deposit quote: chain=${token.blockchain} asset=${token.assetId} amt=${rawUnits} tg=${params.telegramId}`);
+  logger.info(`Requesting 1Click deposit quote: chain=${token.blockchain} asset=${token.assetId} dest=${destMeta.id} amt=${rawUnits} tg=${params.telegramId}`);
 
   let quoteData: any;
   let depositAddress = '';
-  let minNearOut: number | undefined;
+  let minDestOut: number | undefined;
 
   try {
     const res = await fetch(`${NEAR_INTENTS_API_URL}/v0/quote`, {
@@ -461,13 +496,14 @@ export async function create1ClickDepositQuote(params: {
     depositAddress = quoteData.depositAddress || quoteData.address || data.depositAddress;
 
     if (quoteData.amountOutFormatted) {
-      minNearOut = parseFloat(quoteData.amountOutFormatted);
+      minDestOut = parseFloat(quoteData.amountOutFormatted);
     } else if (quoteData.amountOut || quoteData.minAmountOut) {
       const out = quoteData.amountOut || quoteData.minAmountOut;
       try {
-        minNearOut = Number(BigInt(out) / 1000000000000000000n) / 1e6;
+        const divisor = 10n ** BigInt(Math.max(0, destMeta.decimals - 6));
+        minDestOut = Number(BigInt(out) / divisor) / 1e6;
       } catch {
-        minNearOut = parseFloat(out) / 1e24;
+        minDestOut = parseFloat(out) / Math.pow(10, destMeta.decimals);
       }
     }
   } catch (err: any) {
@@ -489,12 +525,12 @@ export async function create1ClickDepositQuote(params: {
     source_asset: token.assetId,
     source_symbol: token.symbol,
     source_amount: params.amount,
-    destination_chain: 'near',
-    destination_asset: 'nep141:wrap.near',
-    destination_symbol: 'NEAR',
-    destination_address: params.subaccountId,
+    destination_chain: destMeta.id,
+    destination_asset: destMeta.assetId,
+    destination_symbol: destMeta.symbol,
+    destination_address: recipientAddress,
     deposit_address: depositAddress,
-    min_destination_amount: minNearOut,
+    min_destination_amount: minDestOut,
     fee_recipient: RACER_FEE_RECIPIENT,
     fee_bps: RACER_FEE_BPS,
     status: 'PENDING',
@@ -511,7 +547,9 @@ export async function check1ClickDepositStatus(depositAddress: string): Promise<
   status: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'EXPIRED' | 'REFUNDED';
   txHash?: string;
   nearAmount?: number;
+  amountOutFormatted?: string;
   depositedFormatted?: string;
+  refundedAmount?: string;
   refundedFormatted?: string;
   refundReason?: string;
 }> {
@@ -528,21 +566,32 @@ export async function check1ClickDepositStatus(depositAddress: string): Promise<
 
     const data: any = await res.json();
     const rawStatus = (data.status || data.state || '').toUpperCase();
+    const swapDetails = data.swapDetails || {};
 
     if (rawStatus === 'SUCCESS' || rawStatus === 'COMPLETED' || rawStatus === 'FILLED') {
       return {
         status: 'SUCCESS',
-        txHash: data.txHash || data.transactionHash || data.nearTxHash,
+        txHash:
+          data.txHash ||
+          data.transactionHash ||
+          data.nearTxHash ||
+          swapDetails.destinationChainTxHashes?.[0]?.hash ||
+          swapDetails.nearTxHashes?.[0],
         nearAmount: data.amountOut ? Number(BigInt(data.amountOut) / 1000000000000000000n) / 1e6 : undefined,
+        amountOutFormatted: swapDetails.amountOutFormatted || data.quoteResponse?.quote?.amountOutFormatted,
+        depositedFormatted: swapDetails.depositedAmountFormatted,
+        refundedAmount: swapDetails.refundedAmount,
+        refundedFormatted: swapDetails.refundedAmountFormatted,
+        refundReason: swapDetails.refundReason,
       };
     } else if (rawStatus === 'PROCESSING' || rawStatus === 'DETECTED') {
       return { status: 'PROCESSING', txHash: data.txHash };
     } else if (rawStatus === 'REFUNDED') {
-      const swapDetails = data.swapDetails || {};
       return {
         status: 'REFUNDED',
         txHash: swapDetails.nearTxHashes?.[0] || swapDetails.originChainTxHashes?.[0]?.hash,
         depositedFormatted: swapDetails.depositedAmountFormatted,
+        refundedAmount: swapDetails.refundedAmount,
         refundedFormatted: swapDetails.refundedAmountFormatted,
         refundReason: swapDetails.refundReason,
       };
@@ -594,10 +643,14 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
 
           if (check.status === 'SUCCESS' && dep.status !== 'SUCCESS') {
             notifiedMultichainDeposits.add(dep.deposit_id);
-            logger.info(`Deposit ${dep.deposit_id} fulfilled! Triggering JIT auto-unwrap for user ${dep.telegram_id}`);
+            const destChain = (dep.destination_chain || 'near').toLowerCase();
+            const destSym = dep.destination_symbol || 'NEAR';
+            const destAddr = dep.destination_address || dep.subaccount_id;
+            const isNearDest = destChain === 'near';
+            logger.info(`Deposit ${dep.deposit_id} fulfilled on ${destChain}! User ${dep.telegram_id}`);
 
-            // Explicitly suppress duplicate native NEAR deposit alert in depositWatcher for 10 minutes
-            if (tgChat) suppressDepositAlert(tgChat, 'near', 10 * 60 * 1000);
+            // Explicitly suppress duplicate deposit alert in depositWatcher for 10 minutes
+            if (tgChat && isNearDest) suppressDepositAlert(tgChat, 'near', 10 * 60 * 1000);
 
             await updateRacerDeposit(dep.deposit_id, {
               status: 'SUCCESS',
@@ -606,29 +659,49 @@ export function startMultichainDepositPoller(bot: Telegraf, intervalMs = 10000):
             });
 
             let unwrappedAmount = '0';
-            try {
-              const unwrapRes = await unwrapUserWrapNear(owner);
-              unwrappedAmount = unwrapRes.unwrappedAmount;
-              await updateRacerDeposit(dep.deposit_id, {
-                unwrapped: true,
-                unwrapped_amount: parseFloat(unwrappedAmount) || 0,
-              });
-              logger.info(`Auto-unwrapped ${unwrappedAmount} wNEAR for user ${dep.telegram_id}`);
-            } catch (unwrapErr: any) {
-              logger.warn(`Auto-unwrap wrap.near deferred for ${dep.telegram_id}: ${unwrapErr.message}`);
+            if (isNearDest) {
+              try {
+                const unwrapRes = await unwrapUserWrapNear(owner);
+                unwrappedAmount = unwrapRes.unwrappedAmount;
+                await updateRacerDeposit(dep.deposit_id, {
+                  unwrapped: true,
+                  unwrapped_amount: parseFloat(unwrappedAmount) || 0,
+                });
+                logger.info(`Auto-unwrapped ${unwrappedAmount} wNEAR for user ${dep.telegram_id}`);
+              } catch (unwrapErr: any) {
+                logger.warn(`Auto-unwrap wrap.near deferred for ${dep.telegram_id}: ${unwrapErr.message}`);
+              }
+            }
+
+            // If 1Click also refunded an overfunded/excess amount to intents.near, auto-recover it too
+            let recoveredRefundAmt = '';
+            if (check.refundedAmount && BigInt(check.refundedAmount) > 0n) {
+              logger.info(`Deposit ${dep.deposit_id} has excess refund (${check.refundedFormatted || check.refundedAmount}) in intents.near; recovering...`);
+              const rec = await recoverIntentRefund(owner, dep.source_asset).catch(() => ({ success: false as const }));
+              if (rec.success && 'unwrappedAmount' in rec && rec.unwrappedAmount && rec.unwrappedAmount !== '0') {
+                recoveredRefundAmt = rec.unwrappedAmount;
+              }
             }
 
             const chainInfo = SUPPORTED_CHAINS[dep.source_chain.toLowerCase()];
             const chainName = chainInfo ? `${chainInfo.icon} ${chainInfo.name}` : dep.source_chain.toUpperCase();
+            const destInfo = isDepositDestinationChain(destChain) ? DEPOSIT_DESTINATIONS[destChain] : undefined;
+            const destName = destInfo ? `${destInfo.icon} ${destInfo.name}` : destChain.toUpperCase();
             const sourceAmtStr = dep.source_amount ? `${dep.source_amount} ${dep.source_symbol || ''}` : '';
-            const nearAmtStr = dep.min_destination_amount ? `${dep.min_destination_amount.toFixed(4)} Ⓝ` : 'NEAR';
+            const receivedAmtStr = check.amountOutFormatted
+              ? `${check.amountOutFormatted} ${destSym}`
+              : dep.min_destination_amount
+                ? `${dep.min_destination_amount.toFixed(4)} ${destSym}`
+                : destSym;
 
             const msg =
               `🎉 <b>Deposit Received &amp; Settled!</b>\n\n` +
               `📥 <b>Source:</b> ${chainName} (${sourceAmtStr})\n` +
-              `💳 <b>Received:</b> <b>${nearAmtStr}</b>\n` +
-              `🏎️ <b>Account:</b> <code>${dep.subaccount_id}</code>\n` +
-              (unwrappedAmount !== '0' ? `🔄 <b>Auto-Unwrap:</b> Converted to native NEAR\n` : '') +
+              `🎯 <b>Destination:</b> ${destName}\n` +
+              `💳 <b>Received:</b> <b>${receivedAmtStr}</b>\n` +
+              `🏎️ <b>Wallet:</b> <code>${destAddr}</code>\n` +
+              (isNearDest && unwrappedAmount !== '0' ? `🔄 <b>Auto-Unwrap:</b> Converted to native NEAR\n` : '') +
+              (recoveredRefundAmt ? `🛡️ <b>Excess Refund Recovered:</b> ${recoveredRefundAmt} NEAR\n` : '') +
               (check.txHash ? `🔗 <b>Tx:</b> <code>${check.txHash.slice(0, 16)}...</code>\n` : '') +
               `\n<i>Your funds are ready to trade immediately!</i>`;
 

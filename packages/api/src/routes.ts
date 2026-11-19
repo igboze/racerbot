@@ -64,6 +64,8 @@ import {
 } from '@racerbot/db';
 import {
   SUPPORTED_CHAINS,
+  DEPOSIT_DESTINATIONS,
+  isDepositDestinationChain,
   create1ClickDepositQuote,
   check1ClickDepositStatus,
   generateWalletDeepLink,
@@ -74,6 +76,7 @@ import {
   getAmountSuggestions,
   type SupportedChain,
   type OneClickToken,
+  type DepositDestinationChain,
 } from './multichainDeposit.js';
 import {
   getTokenInfo,
@@ -320,10 +323,14 @@ export async function replyGroupDmRedirect(
 
 const near = getNear(RPC_PROVIDERS.length > 0 ? RPC_PROVIDERS : ['https://rpc.mainnet.fastnear.com']);
 
+const userDepositDestination = new Map<number, DepositDestinationChain>();
+
 /** The multi-chain deposit chain picker: a private deposit while the user started one from 🛡 Private */
 function depositChainPicker(telegramId: number | undefined, cat: Parameters<typeof buildDepositChainPickerMenu>[0] = 'popular') {
-  const menu = buildDepositChainPickerMenu(cat);
-  return telegramId && PRIVATE_TRADING_ENABLED && isPrivateDeposit(telegramId)
+  const isPriv = Boolean(telegramId && PRIVATE_TRADING_ENABLED && isPrivateDeposit(telegramId));
+  const destChain: DepositDestinationChain = isPriv ? 'near' : ((telegramId && userDepositDestination.get(telegramId)) || 'near');
+  const menu = buildDepositChainPickerMenu(cat, destChain);
+  return isPriv
     ? privatizeDepositPicker(menu)
     : withSolanaDirectDepositRow(menu);
 }
@@ -4280,16 +4287,55 @@ export function evmLookupFailureMessage(address: string, err: any): string {
 }
 
 // ── Multichain Deposit UI Builders (NEAR Intents 1Click) ────────────────────
-export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 'other' | 'all' = 'popular') {
+export function buildDepositDestinationPickerMenu() {
+  const text =
+    `📥 <b>Deposit via NEAR Intents (1Click)</b>\n\n` +
+    `Deposit from <b>37 blockchains</b> and settle directly into any of your <b>main RacerBot trading wallets</b>.\n\n` +
+    `🎯 <b>Step 1: Choose which chain you want your deposit to go to:</b>`;
+
+  const rows: any[][] = [
+    [
+      cb('⬛ NEAR (NEAR)', 'dep_dest:near', 'success'),
+      cb('🟣 Solana (SOL)', 'dep_dest:sol', 'primary'),
+    ],
+    [
+      cb('🔷 SUI (SUI)', 'dep_dest:sui', 'primary'),
+      cb('✨ Starknet (STRK)', 'dep_dest:starknet', 'primary'),
+    ],
+    [
+      cb('🔵 Base (ETH)', 'dep_dest:base', 'primary'),
+      cb('💙 Arbitrum (ETH)', 'dep_dest:arb', 'primary'),
+    ],
+    [
+      cb('💎 Ethereum (ETH)', 'dep_dest:eth', 'primary'),
+    ],
+    [
+      cb('◎ Direct SOL Address', 'dep_sol_direct', 'primary'),
+      cb('⚡ Direct EVM Address', 'dep_evm_direct', 'primary'),
+    ],
+    [
+      cb('🔙 Back to Wallet', 'menu_wallet', 'primary'),
+      cb('🏠 Main Menu', 'menu_home', 'primary'),
+    ],
+  ];
+
+  return { text, keyboard: Markup.inlineKeyboard(rows) };
+}
+
+export function buildDepositChainPickerMenu(
+  cat: 'popular' | 'evm' | 'alt_l1' | 'other' | 'all' = 'popular',
+  destChain: DepositDestinationChain = 'near'
+) {
   const chains = Object.values(SUPPORTED_CHAINS).filter(c => cat === 'all' || c.category === cat);
+  const destMeta = DEPOSIT_DESTINATIONS[destChain] || DEPOSIT_DESTINATIONS.near;
 
   const text =
     `📥 <b>Universal Multi-Chain Deposit (37 Chains)</b>\n\n` +
-    `Deposit crypto from <b>37 blockchains</b> directly into your RacerBot NEAR account.\n` +
-    `Powered by <b>NEAR Intents (1Click)</b> — funds settle in pure NEAR automatically!\n\n` +
-    `• <i>100 bps Platform Fee in NEAR to Treasury</i>\n` +
-    `• <i>Automatic Dual-Unwrap to native NEAR on arrival</i>\n\n` +
-    `🪙 <b>Select Source Blockchain:</b>`;
+    `🎯 <b>Destination Wallet:</b> ${destMeta.icon} <b>${destMeta.name} (${destMeta.symbol})</b>\n` +
+    `Powered by <b>NEAR Intents (1Click)</b> — funds settle automatically into your main ${destMeta.name} trading wallet!\n\n` +
+    `• <i>100 bps Platform Fee</i>\n` +
+    (destChain === 'near' ? `• <i>Automatic Dual-Unwrap to native NEAR on arrival</i>\n` : '') +
+    `\n🪙 <b>Step 2: Select Source Blockchain:</b>`;
 
   const rows: any[] = [];
 
@@ -4317,6 +4363,9 @@ export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 
 
   // Navigation
   rows.push([
+    cb('🔄 Change Destination Chain', 'menu_multichain_deposit', 'primary'),
+  ]);
+  rows.push([
     cb('🔙 Back to Wallet', 'menu_wallet', 'primary'),
     cb('🏠 Main Menu', 'menu_home', 'primary'),
   ]);
@@ -4324,9 +4373,14 @@ export function buildDepositChainPickerMenu(cat: 'popular' | 'evm' | 'alt_l1' | 
   return { text, keyboard: Markup.inlineKeyboard(rows) };
 }
 
-export function buildDepositTokenPickerMenu(chainId: string, page = 0) {
+export function buildDepositTokenPickerMenu(
+  chainId: string,
+  page = 0,
+  destChain: DepositDestinationChain = 'near'
+) {
   const chain = SUPPORTED_CHAINS[chainId.toLowerCase()];
-  if (!chain) return buildDepositChainPickerMenu('popular');
+  if (!chain) return buildDepositChainPickerMenu('popular', destChain);
+  const destMeta = DEPOSIT_DESTINATIONS[destChain] || DEPOSIT_DESTINATIONS.near;
 
   const tokens = getTokensForChain(chain.id);
   const pageSize = 6;
@@ -4336,8 +4390,8 @@ export function buildDepositTokenPickerMenu(chainId: string, page = 0) {
 
   const text =
     `📥 <b>Deposit from ${chain.icon} ${chain.name}</b>\n\n` +
-    `Select the asset you want to deposit into RacerBot:\n` +
-    `• Network: <b>${chain.name}</b> (<code>${chain.id.toUpperCase()}</code>)\n` +
+    `• Source Network: <b>${chain.name}</b> (<code>${chain.id.toUpperCase()}</code>)\n` +
+    `• 🎯 Destination Wallet: <b>${destMeta.icon} ${destMeta.name} (${destMeta.symbol})</b>\n` +
     `• Supported Assets: <b>${tokens.length} tokens</b>\n\n` +
     `<i>Tap any token below or enter a custom contract:</i>`;
 
@@ -4374,30 +4428,36 @@ export function buildDepositTokenPickerMenu(chainId: string, page = 0) {
     cb('✍️ Enter Custom Token CA / Symbol', `dep_custom_tok:${chain.id}`, 'primary'),
   ]);
 
-  // Back button
+  // Back buttons
   rows.push([
-    cb('🔙 Back to Chains', 'menu_multichain_deposit', 'primary'),
+    cb('🔙 Back to Source Chains', `dep_dest:${destChain}`, 'primary'),
+    cb('🔄 Change Destination', 'menu_multichain_deposit', 'primary'),
   ]);
 
   return { text, keyboard: Markup.inlineKeyboard(rows) };
 }
 
-export function buildDepositAmountPickerMenu(tokenKey: string) {
+export function buildDepositAmountPickerMenu(
+  tokenKey: string,
+  destChain: DepositDestinationChain = 'near'
+) {
   const token = getTokenByKey(tokenKey);
-  if (!token) return buildDepositChainPickerMenu('popular');
+  if (!token) return buildDepositChainPickerMenu('popular', destChain);
 
   const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
   const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
+  const destMeta = DEPOSIT_DESTINATIONS[destChain] || DEPOSIT_DESTINATIONS.near;
   const minDeposit = getMinimumDeposit(token);
 
   const text =
     `💰 <b>Deposit Amount: ${token.symbol}</b>\n\n` +
-    `• Network: <b>${chainName}</b>\n` +
+    `• Source Network: <b>${chainName}</b>\n` +
+    `• 🎯 Destination Wallet: <b>${destMeta.icon} ${destMeta.name} (${destMeta.symbol})</b>\n` +
     `• ⚡ <b>Lowest Deposit:</b> <code>${minDeposit.formatted}</code>\n` +
-    `• <b>1% Platform Fee</b> (settled in NEAR to Treasury)\n` +
-    `• Funds convert directly to <b>NEAR</b> in your subaccount\n` +
-    `• <b>Dual Auto-Unwrap</b> to native NEAR immediately on arrival!\n\n` +
-    `<i>Tap a preset amount below, tap <b>✍️ Enter Custom Amount</b>, or reply with your desired number:</i>`;
+    `• <b>1% Platform Fee</b>\n` +
+    `• Funds convert directly to <b>${destMeta.symbol}</b> in your main ${destMeta.name} wallet\n` +
+    (destChain === 'near' ? `• <b>Dual Auto-Unwrap</b> to native NEAR immediately on arrival!\n` : '') +
+    `\n<i>Tap a preset amount below, tap <b>✍️ Enter Custom Amount</b>, or reply with your desired number:</i>`;
 
   const suggestions = getAmountSuggestions(token, minDeposit.amount);
 
@@ -4417,10 +4477,41 @@ export function buildDepositAmountPickerMenu(tokenKey: string) {
     ],
     [
       cb('🔙 Back to Tokens', `dep_chain:${token.blockchain}:0`, 'primary'),
+      cb('🔄 Change Destination', 'menu_multichain_deposit', 'primary'),
     ],
   ];
 
   return { text, keyboard: Markup.inlineKeyboard(rows) };
+}
+
+async function resolveUserDepositDestinationAddress(
+  user: UserRecord,
+  destChain: DepositDestinationChain
+): Promise<string> {
+  if (destChain === 'near') {
+    const activeNear = await getActiveWallet(user.id, 'near').catch(() => null);
+    return activeNear?.address || user.subaccount_id;
+  }
+  if (destChain === 'sol') {
+    const solUser = await ensureUserSolanaWallet(user);
+    if (!solUser.solana_address) throw new Error('Solana wallet could not be initialized.');
+    return solUser.solana_address;
+  }
+  if (destChain === 'sui') {
+    const activeSui = await getActiveWallet(user.id, 'sui').catch(() => null);
+    const suiAddr = activeSui?.address || user.sui_address;
+    if (!suiAddr) throw new Error('SUI wallet not initialized yet. Please open /wallet first.');
+    return suiAddr;
+  }
+  if (destChain === 'starknet') {
+    const starkUser = await ensureUserStarknetWallet(user);
+    if (!starkUser.starknet_address) throw new Error('Starknet wallet could not be initialized.');
+    return starkUser.starknet_address;
+  }
+  // EVM chains: base, arb, eth
+  const evmUser = await ensureUserEvmWallet(user);
+  if (!evmUser.evm_address) throw new Error('EVM wallet could not be initialized.');
+  return evmUser.evm_address;
 }
 
 export async function renderDepositQuoteCard(ctx: any, telegramId: number, tokenKey: string, amount: number) {
@@ -4441,17 +4532,24 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
     return;
   }
 
+  const destChain: DepositDestinationChain = userDepositDestination.get(telegramId) || 'near';
+  const destMeta = DEPOSIT_DESTINATIONS[destChain] || DEPOSIT_DESTINATIONS.near;
   const chain = SUPPORTED_CHAINS[token.blockchain.toLowerCase()];
   const chainName = chain ? `${chain.icon} ${chain.name}` : token.blockchain.toUpperCase();
 
-  const waitMsg = await ctx.reply(`⏳ Generating 1Click Solver deposit route for ${amount} ${token.symbol} from ${chainName}...`);
+  const waitMsg = await ctx.reply(
+    `⏳ Generating 1Click Solver deposit route for ${amount} ${token.symbol} (${chainName}) → ${destMeta.icon} ${destMeta.name} (${destMeta.symbol})...`
+  );
 
   try {
+    const destinationAddress = await resolveUserDepositDestinationAddress(user, destChain);
     const record = await create1ClickDepositQuote({
       telegramId,
       subaccountId: user.subaccount_id,
       token,
       amount,
+      destinationChain: destChain,
+      destinationAddress,
     });
 
     if (waitMsg) await ctx.deleteMessage(waitMsg.message_id).catch(() => { });
@@ -4460,14 +4558,15 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
     const qrBuffer = await generateQrBuffer(record.deposit_address);
     const deepLink = generateWalletDeepLink(token.blockchain, record.deposit_address, amount);
 
-    const estNear = record.min_destination_amount ? record.min_destination_amount.toFixed(4) : 'Auto';
+    const estOut = record.min_destination_amount ? record.min_destination_amount.toFixed(4) : 'Auto';
 
     const caption =
       `📥 <b>Multi-Chain Deposit Order Created!</b>\n\n` +
       `⚡ <b>Source:</b> ${chainName} (<code>${amount} ${token.symbol}</code>)\n` +
-      `🎯 <b>Recipient:</b> <code>${user.subaccount_id}</code>\n` +
-      `💰 <b>Expected Output:</b> ~<b>${estNear} NEAR</b>\n` +
-      `💎 <b>Platform Fee:</b> 1.00% (Settled in NEAR to Treasury)\n\n` +
+      `🎯 <b>Destination Chain:</b> ${destMeta.icon} <b>${destMeta.name}</b>\n` +
+      `💳 <b>Recipient Wallet:</b> <code>${destinationAddress}</code>\n` +
+      `💰 <b>Expected Output:</b> ~<b>${estOut} ${destMeta.symbol}</b>\n` +
+      `💎 <b>Platform Fee:</b> 1.00%\n\n` +
       `📍 <b>Deposit Address (Tap to Copy):</b>\n` +
       `<code>${record.deposit_address}</code>\n\n` +
       `⏱️ <b>Important:</b> Send exactly <code>${amount} ${token.symbol}</code> to the address above. Ensure your wallet does not deduct transfer fees from the sent amount so the full amount arrives!`;
@@ -5266,7 +5365,9 @@ export function setupRoutes(bot: Telegraf): void {
       await replyGroupDmRedirect(ctx, 'Multi-chain deposits');
       return;
     }
-    const menu = depositChainPicker(ctx.from?.id, 'popular');
+    const tgId = ctx.from?.id;
+    const isPriv = Boolean(tgId && PRIVATE_TRADING_ENABLED && isPrivateDeposit(tgId));
+    const menu = isPriv ? depositChainPicker(tgId, 'popular') : buildDepositDestinationPickerMenu();
     const canEdit = typeof (ctx as any).editMessageText === 'function';
     if (canEdit && ctx.callbackQuery) {
       await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
@@ -5368,6 +5469,22 @@ export function setupRoutes(bot: Telegraf): void {
     ).catch(() => { });
   });
 
+  bot.action(/^dep_dest:([a-z_]+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const telegramId = ctx.from!.id;
+    const rawDest = (ctx as any).match[1];
+    if (!isDepositDestinationChain(rawDest)) {
+      await ctx.reply('❌ Unsupported destination chain selected.');
+      return;
+    }
+    userDepositDestination.set(telegramId, rawDest);
+    const menu = depositChainPicker(telegramId, 'popular');
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
+      console.warn('[dep_dest] editMessageText fallback:', err?.message);
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
+    });
+  });
+
   bot.action(/^dep_cat:(popular|evm|alt_l1|other|all)$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => { });
     const cat = (ctx as any).match[1] as any;
@@ -5380,9 +5497,11 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.action(/^dep_chain:([a-zA-Z0-9_]+)(?::([0-9]+))?$/, async (ctx) => {
     await ctx.answerCbQuery().catch(() => { });
+    const telegramId = ctx.from?.id;
+    const destChain: DepositDestinationChain = (telegramId && userDepositDestination.get(telegramId)) || 'near';
     const chainId = (ctx as any).match[1];
     const page = (ctx as any).match[2] ? parseInt((ctx as any).match[2], 10) : 0;
-    const menu = buildDepositTokenPickerMenu(chainId, page);
+    const menu = buildDepositTokenPickerMenu(chainId, page, destChain);
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_chain] editMessageText fallback:', err?.message);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
@@ -5393,6 +5512,7 @@ export function setupRoutes(bot: Telegraf): void {
     await ctx.answerCbQuery().catch(() => { });
     const tokenKey = (ctx as any).match[1];
     const telegramId = ctx.from!.id;
+    const destChain: DepositDestinationChain = userDepositDestination.get(telegramId) || 'near';
 
     // Set pending action immediately so user can either tap preset numbers OR reply directly with their amount
     userPendingActions.set(telegramId, {
@@ -5401,7 +5521,7 @@ export function setupRoutes(bot: Telegraf): void {
       expiresAt: Date.now() + 10 * 60_000,
     });
 
-    const menu = buildDepositAmountPickerMenu(tokenKey);
+    const menu = buildDepositAmountPickerMenu(tokenKey, destChain);
     await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async (err: any) => {
       console.warn('[dep_tok] editMessageText fallback:', err?.message);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
@@ -5465,11 +5585,25 @@ export function setupRoutes(bot: Telegraf): void {
       }
       const check = await check1ClickDepositStatus(dep.deposit_address);
       if (check.status === 'SUCCESS') {
+        const destChain = (dep.destination_chain || 'near').toLowerCase();
+        const destSym = dep.destination_symbol || 'NEAR';
+        const isNearDest = destChain === 'near';
         await updateRacerDeposit(dep.deposit_id, { status: 'SUCCESS', tx_hash: check.txHash, completed_at: new Date() });
-        await unwrapUserWrapNear(dep.telegram_id).catch(() => { });
+        if (isNearDest) {
+          await unwrapUserWrapNear(dep.telegram_id).catch(() => { });
+        }
+        let recoveredNote = '';
+        if (check.refundedAmount && BigInt(check.refundedAmount) > 0n) {
+          const rec = await recoverIntentRefund(dep.telegram_id, dep.source_asset).catch(() => ({ success: false as const }));
+          if (rec.success && 'unwrappedAmount' in rec && rec.unwrappedAmount && rec.unwrappedAmount !== '0') {
+            recoveredNote = `\n🛡️ Excess refund recovered: <b>${rec.unwrappedAmount} NEAR</b>`;
+          }
+        }
         await ctx.reply(
           `✅ <b>Deposit Confirmed &amp; Settled!</b>\n\n` +
-          `Your funds have arrived, settled in NEAR, and have been auto-unwrapped to native NEAR.\n\n` +
+          `Your funds have arrived and settled in <b>${destSym}</b> on <b>${destChain.toUpperCase()}</b>` +
+          (isNearDest ? ' (auto-unwrapped to native NEAR)' : '') +
+          `.${recoveredNote}\n\n` +
           `Ready to trade immediately! 🏎️`,
           {
             parse_mode: 'HTML',
@@ -14969,7 +15103,8 @@ Account: <code>${res.subaccountId}</code>
         if (!matched) {
           matched = chainTokens[0];
         }
-        const menu = buildDepositAmountPickerMenu(matched.key);
+        const destChain: DepositDestinationChain = userDepositDestination.get(telegramId) || 'near';
+        const menu = buildDepositAmountPickerMenu(matched.key, destChain);
         await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
         return;
       }

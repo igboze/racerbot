@@ -109,6 +109,7 @@ import {
   HYPE_SYMBOL,
   nearKeyFor,
   nearSignerFor,
+  remoteSigningEnabled,
   type NearKeyLike,
 } from '@racerbot/shared';
 import { ethers } from 'ethers';
@@ -4330,32 +4331,65 @@ export async function recoverIntentRefund(
     }
 
     const masterKey = (process.env.KEY_ENCRYPTION_MASTER_KEY || '');
-    if (!masterKey) return { success: false, error: 'Master key not configured' };
+    if (!masterKey && !remoteSigningEnabled()) return { success: false, error: 'Master key not configured' };
 
     // Signed by the signer service when SIGNER_URL is set, else with the local key as before
     const keyPair = nearKeyFor({ userId: user.id, address: user.subaccount_id, encryptedKey: user.scoped_key_encrypted, purpose: 'near_intent_refund' }, masterKey);
 
-    // 1. Check user mt_balance_of in intents.near
-    const nearConnection = await connect({
-      networkId: 'mainnet',
-      keyStore: new keyStores.InMemoryKeyStore(),
-      nodeUrl: 'https://rpc.mainnet.fastnear.com',
-    });
-    const viewAccount = await nearConnection.account(user.subaccount_id);
-    const balRaw = await viewAccount.viewFunction({
-      contractId: 'intents.near',
-      methodName: 'mt_balance_of',
-      args: {
-        account_id: user.subaccount_id,
-        token_id: assetId,
-      },
+    // 1. Check user mt_balance_of in intents.near using configured RPC providers
+    const balRaw = await near.view<string>('intents.near', 'mt_balance_of', {
+      account_id: user.subaccount_id,
+      token_id: assetId,
     }).catch(() => '0');
 
     if (!balRaw || balRaw === '0') {
       return { success: false, error: 'No balance in intents.near' };
     }
 
-    // 2. Request 1Click quote for intent swap
+    // Ensure the subaccount has enough native NEAR gas for intents.near contract calls
+    const nativeBalYocto = BigInt(await near.getNearBalance(user.subaccount_id, 0).catch(() => '0'));
+    if (nativeBalYocto < BigInt('25000000000000000000000')) {
+      await refuelNearGasIfNeeded(user.subaccount_id, nativeBalYocto).catch(() => false);
+    }
+
+    // Fast path: if the stuck balance in intents.near is already wrap.near, withdraw directly via ft_withdraw + unwrap
+    if (assetId === 'nep141:wrap.near') {
+      const storageBal = await near.view<any>('wrap.near', 'storage_balance_of', {
+        account_id: user.subaccount_id,
+      }).catch(() => null);
+
+      await connectWithNearRpcFailover(user.subaccount_id, keyPair, async (account) => {
+        if (!storageBal) {
+          await account.functionCall({
+            contractId: 'wrap.near',
+            methodName: 'storage_deposit',
+            args: { account_id: user.subaccount_id, registration_only: true },
+            gas: BigInt('20000000000000'),
+            attachedDeposit: BigInt('1250000000000000000000'),
+          });
+        }
+        await account.functionCall({
+          contractId: 'intents.near',
+          methodName: 'ft_withdraw',
+          args: {
+            token: 'wrap.near',
+            receiver_id: user.subaccount_id,
+            amount: balRaw,
+          },
+          gas: BigInt('80000000000000'),
+          attachedDeposit: BigInt('1'),
+        });
+      });
+
+      await new Promise((r) => setTimeout(r, 1500));
+      const unwrapRes = await unwrapUserWrapNear(user).catch(() => ({ success: true, unwrappedAmount: '0' }));
+      return {
+        success: true,
+        unwrappedAmount: unwrapRes.unwrappedAmount,
+      };
+    }
+
+    // 2. Request 1Click quote for non-wNEAR intent swap
     const nearIntentsUrl = process.env.NEAR_INTENTS_API_URL || 'https://1click.chaindefuser.com';
     const nearIntentsKey = process.env.NEAR_INTENTS_API_KEY;
 
