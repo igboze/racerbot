@@ -2263,6 +2263,23 @@ export interface VolumeStats {
   trades24hElysium: number;
   volumeTotalElysium: number;
   tradesTotalElysium: number;
+  // Base, Arbitrum, Ethereum (ETH) and Zero Network (ZRO)
+  volume24hBase: number;
+  trades24hBase: number;
+  volumeTotalBase: number;
+  tradesTotalBase: number;
+  volume24hArbitrum: number;
+  trades24hArbitrum: number;
+  volumeTotalArbitrum: number;
+  tradesTotalArbitrum: number;
+  volume24hEthereum: number;
+  trades24hEthereum: number;
+  volumeTotalEthereum: number;
+  tradesTotalEthereum: number;
+  volume24hZero: number;
+  trades24hZero: number;
+  volumeTotalZero: number;
+  tradesTotalZero: number;
   // Combined
   usersTotal: number;
   newUsers24h: number;
@@ -2332,9 +2349,9 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
 
-  // HyperEVM and Elysium fills: the fee is taken on buys only (sells record 0),
-  // so volume is the HYPE actually traded (input_amount: HYPE in on a buy, HYPE
-  // out on a sell). Rows still in wei (>= 1e9, see migration 065) are converted.
+  // EVM fills (HyperEVM, Elysium, Base, Arbitrum, Ethereum, Zero): fees may be taken on
+  // buys only, so volume is the native coin traded (input_amount: native in on a buy,
+  // native out on a sell). Rows still in wei (>= 1e9, see migration 065) are converted.
   const evm = await db.query(
     `SELECT
        chain,
@@ -2343,7 +2360,7 @@ export async function getVolumeStats(): Promise<VolumeStats> {
        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours')::int AS trades24,
        COUNT(*)::int AS trades_total
      FROM fills
-     WHERE chain IN ('hyperevm', 'elysium')
+     WHERE chain IN ('hyperevm', 'elysium', 'base', 'arbitrum', 'ethereum', 'zero')
        AND side IN ('buy', 'sell')
        AND COALESCE(input_amount, 0) > 0
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')
@@ -2361,7 +2378,7 @@ export async function getVolumeStats(): Promise<VolumeStats> {
      FROM fills
      WHERE side IN ('buy', 'sell')
        AND (COALESCE(fee_paid::numeric, 0) > 0
-            OR (chain IN ('hyperevm', 'elysium') AND COALESCE(input_amount, 0) > 0))
+            OR (chain IN ('hyperevm', 'elysium', 'base', 'arbitrum', 'ethereum', 'zero') AND COALESCE(input_amount, 0) > 0))
        AND (tx_hash IS NULL OR tx_hash NOT LIKE 'deposit\_%')`
   );
 
@@ -2380,6 +2397,10 @@ export async function getVolumeStats(): Promise<VolumeStats> {
   const ur = u.rows[0];
   const hyper = evmRow('hyperevm');
   const ely = evmRow('elysium');
+  const base = evmRow('base');
+  const arb = evmRow('arbitrum');
+  const eth = evmRow('ethereum');
+  const zero = evmRow('zero');
 
   return {
     // NEAR
@@ -2422,6 +2443,23 @@ export async function getVolumeStats(): Promise<VolumeStats> {
     trades24hElysium:    ely.trades24,
     volumeTotalElysium:  ely.volume_total,
     tradesTotalElysium:  ely.trades_total,
+    // Base, Arbitrum, Ethereum (ETH) and Zero Network (ZRO)
+    volume24hBase:       base.volume24,
+    trades24hBase:       base.trades24,
+    volumeTotalBase:     base.volume_total,
+    tradesTotalBase:     base.trades_total,
+    volume24hArbitrum:   arb.volume24,
+    trades24hArbitrum:   arb.trades24,
+    volumeTotalArbitrum: arb.volume_total,
+    tradesTotalArbitrum: arb.trades_total,
+    volume24hEthereum:   eth.volume24,
+    trades24hEthereum:   eth.trades24,
+    volumeTotalEthereum: eth.volume_total,
+    tradesTotalEthereum: eth.trades_total,
+    volume24hZero:       zero.volume24,
+    trades24hZero:       zero.trades24,
+    volumeTotalZero:     zero.volume_total,
+    tradesTotalZero:     zero.trades_total,
     // Users
     usersTotal:          ur.total,
     newUsers24h:         ur.new24h,

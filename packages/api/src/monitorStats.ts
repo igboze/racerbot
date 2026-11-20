@@ -115,8 +115,11 @@ export function buildVolumeUpdateText(
   strkUsd = 0,
   solUsd = 0,
   hypeUsd = 0,
+  ethUsd = 0,
+  zroUsd = 0,
 ): string {
-  const amt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const amt = (n: number) =>
+    n.toLocaleString('en-US', { maximumFractionDigits: n > 0 && n < 1 ? 4 : 2 });
   const usd = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
   const approx = (n: number, price: number) => (price > 0 ? ` (~${usd(n * price)})` : '');
 
@@ -127,6 +130,10 @@ export function buildVolumeUpdateText(
     { name: 'Solana', head: '🟣 *Solana — 24h*', unit: 'SOL', price: solUsd, v24: s.volume24hSolana || 0, t24: s.trades24hSolana || 0, vAll: s.volumeTotalSolana || 0, tAll: s.tradesTotalSolana || 0 },
     { name: 'HyperEVM', head: '🟢 *HyperEVM — 24h*', unit: 'HYPE', price: hypeUsd, v24: s.volume24hHyperevm || 0, t24: s.trades24hHyperevm || 0, vAll: s.volumeTotalHyperevm || 0, tAll: s.tradesTotalHyperevm || 0 },
     { name: 'Elysium', head: '🏛 *Elysium (Kleos) — 24h*', unit: 'HYPE', price: hypeUsd, v24: s.volume24hElysium || 0, t24: s.trades24hElysium || 0, vAll: s.volumeTotalElysium || 0, tAll: s.tradesTotalElysium || 0 },
+    { name: 'Base', head: '🔵 *Base — 24h*', unit: 'ETH', price: ethUsd, v24: s.volume24hBase || 0, t24: s.trades24hBase || 0, vAll: s.volumeTotalBase || 0, tAll: s.tradesTotalBase || 0 },
+    { name: 'Arbitrum', head: '💙 *Arbitrum — 24h*', unit: 'ETH', price: ethUsd, v24: s.volume24hArbitrum || 0, t24: s.trades24hArbitrum || 0, vAll: s.volumeTotalArbitrum || 0, tAll: s.tradesTotalArbitrum || 0 },
+    { name: 'Ethereum', head: '💎 *Ethereum — 24h*', unit: 'ETH', price: ethUsd, v24: s.volume24hEthereum || 0, t24: s.trades24hEthereum || 0, vAll: s.volumeTotalEthereum || 0, tAll: s.tradesTotalEthereum || 0 },
+    { name: 'Zero', head: '🅾️ *Zero Network — 24h*', unit: 'ZRO', price: zroUsd, v24: s.volume24hZero || 0, t24: s.trades24hZero || 0, vAll: s.volumeTotalZero || 0, tAll: s.tradesTotalZero || 0 },
   ];
 
   const total24hTrades = chains.reduce((n, c) => n + c.t24, 0);

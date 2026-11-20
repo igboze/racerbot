@@ -9,7 +9,7 @@ import {
   type VolumeStats,
 } from '@racerbot/db';
 import { getNearUsdPrice } from './wallet.js';
-import { getSuiUsdPrice, getStrkUsdPrice, getSolUsdPrice, getHypeUsdPrice } from '@racerbot/shared';
+import { getSuiUsdPrice, getStrkUsdPrice, getSolUsdPrice, getHypeUsdPrice, getEthUsdPrice, getZroUsdPrice } from '@racerbot/shared';
 import {
   ADMIN_USERNAMES,
   ADMIN_TELEGRAM_ID,
@@ -175,14 +175,16 @@ async function maybeSendDailyVolumeUpdate(bot: Telegraf): Promise<void> {
   if (Number.isFinite(last) && Date.now() - last < VOLUME_UPDATE_INTERVAL_MS) return;
 
   const stats = await getVolumeStats();
-  const [nearUsd, suiUsd, strkUsd, solUsd, hypeUsd] = await Promise.all([
+  const [nearUsd, suiUsd, strkUsd, solUsd, hypeUsd, ethUsd, zroUsd] = await Promise.all([
     getNearUsdPrice().catch(() => 0),
     getSuiUsdPrice().catch(() => 0),
     getStrkUsdPrice().catch(() => 0),
     getSolUsdPrice().catch(() => 0),
     getHypeUsdPrice().catch(() => 0),
+    getEthUsdPrice().catch(() => 0),
+    getZroUsdPrice().catch(() => 0),
   ]);
-  await sendAdminAlert(bot, buildVolumeUpdateText(stats, nearUsd, suiUsd, strkUsd, solUsd, hypeUsd));
+  await sendAdminAlert(bot, buildVolumeUpdateText(stats, nearUsd, suiUsd, strkUsd, solUsd, hypeUsd, ethUsd, zroUsd));
   await setBotSetting(VOLUME_LAST_SENT_KEY, String(Date.now())).catch((err: any) => {
     logger.warn('Failed to persist volume-update timestamp', { error: err.message });
   });
@@ -272,14 +274,16 @@ export function setupMonitor(bot: Telegraf): void {
     if (!isAdmin(ctx)) return;
     try {
       const stats = await getVolumeStats();
-      const [nearUsd, suiUsd, strkUsd, solUsd, hypeUsd] = await Promise.all([
+      const [nearUsd, suiUsd, strkUsd, solUsd, hypeUsd, ethUsd, zroUsd] = await Promise.all([
         getNearUsdPrice().catch(() => 0),
         getSuiUsdPrice().catch(() => 0),
         getStrkUsdPrice().catch(() => 0),
         getSolUsdPrice().catch(() => 0),
         getHypeUsdPrice().catch(() => 0),
+        getEthUsdPrice().catch(() => 0),
+        getZroUsdPrice().catch(() => 0),
       ]);
-      await ctx.replyWithMarkdown(buildVolumeUpdateText(stats, nearUsd, suiUsd, strkUsd, solUsd, hypeUsd));
+      await ctx.replyWithMarkdown(buildVolumeUpdateText(stats, nearUsd, suiUsd, strkUsd, solUsd, hypeUsd, ethUsd, zroUsd));
     } catch (err: any) {
       await ctx.reply('Volume query failed — check logs.').catch(() => {});
       logger.error('/volume failed', err);

@@ -196,4 +196,38 @@ describe('buildVolumeUpdateText', () => {
     expect(noHype).toContain('No price right now for HyperEVM, Elysium: not in these totals');
     expect(noHype).toContain('• Volume: `100 HYPE`\n');
   });
+
+  it('includes Base, Arbitrum, Ethereum, and Zero EVM volumes in USD totals', async () => {
+    const { buildVolumeUpdateText } = await import('./monitorStats.js');
+    const stats = {
+      volume24hNear: 0, fees24hNear: 0, trades24h: 0, buys24h: 6, sells24h: 4, activeTraders24h: 3,
+      volumeTotalNear: 0, feesTotalNear: 0, tradesTotal: 0,
+      volume24hSui: 0, fees24hSui: 0, trades24hSui: 0, volumeTotalSui: 0, feesTotalSui: 0, tradesTotalSui: 0,
+      volume24hStarknet: 0, fees24hStarknet: 0, trades24hStarknet: 0, volumeTotalStarknet: 0, feesTotalStarknet: 0, tradesTotalStarknet: 0,
+      volume24hSolana: 0, fees24hSolana: 0, trades24hSolana: 0, volumeTotalSolana: 0, feesTotalSolana: 0, tradesTotalSolana: 0,
+      volume24hHyperevm: 0, trades24hHyperevm: 0, volumeTotalHyperevm: 0, tradesTotalHyperevm: 0,
+      volume24hElysium: 0, trades24hElysium: 0, volumeTotalElysium: 0, tradesTotalElysium: 0,
+      volume24hBase: 2.5, trades24hBase: 5, volumeTotalBase: 10, tradesTotalBase: 20,
+      volume24hArbitrum: 0.5, trades24hArbitrum: 2, volumeTotalArbitrum: 4, tradesTotalArbitrum: 12,
+      volume24hEthereum: 1, trades24hEthereum: 1, volumeTotalEthereum: 3, tradesTotalEthereum: 5,
+      volume24hZero: 100, trades24hZero: 2, volumeTotalZero: 500, tradesTotalZero: 10,
+      usersTotal: 300, newUsers24h: 4,
+    };
+
+    const text = buildVolumeUpdateText(stats as any, 2.5, 1.8, 0.4, 150, 30, 3000, 4);
+    expect(text).toContain('🔵 *Base — 24h*\n• Volume: `2.5 ETH` (~$7,500)\n• Trades: `5`');
+    expect(text).toContain('💙 *Arbitrum — 24h*\n• Volume: `0.5 ETH` (~$1,500)\n• Trades: `2`');
+    expect(text).toContain('💎 *Ethereum — 24h*\n• Volume: `1 ETH` (~$3,000)\n• Trades: `1`');
+    expect(text).toContain('🅾️ *Zero Network — 24h*\n• Volume: `100 ZRO` (~$400)\n• Trades: `2`');
+    expect(text).toContain('• Base volume: `10 ETH` (~$30,000)');
+    expect(text).toContain('• Arbitrum volume: `4 ETH` (~$12,000)');
+    expect(text).toContain('• Ethereum volume: `3 ETH` (~$9,000)');
+    expect(text).toContain('• Zero volume: `500 ZRO` (~$2,000)');
+    // 7,500 + 1,500 + 3,000 + 400 = 12,400
+    expect(text).toContain('• 24h volume: `$12,400`');
+    // 30,000 + 12,000 + 9,000 + 2,000 = 53,000
+    expect(text).toContain('• All-time volume: `$53,000`');
+    expect(text).toContain('• Total trades: `10` (6 buys / 4 sells)');
+    expect(text).toContain('• Total trades: `47`');
+  });
 });
