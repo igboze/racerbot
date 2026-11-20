@@ -825,8 +825,8 @@ export function buildActiveChainsMenu(user: UserRecord) {
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
 
-export async function buildMainMenu(telegramId: number, forceRefresh = false) {
-  if (!forceRefresh) {
+export async function buildMainMenu(telegramId: number, forceRefresh = false, isNewUser = false) {
+  if (!forceRefresh && !isNewUser) {
     const cached = mainMenuCache.get(telegramId);
     if (cached && Date.now() < cached.expiresAt) {
       return cached.data;
@@ -935,21 +935,22 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
       totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmTotalUsdNum + elysiumTotalUsdNum + baseTotalUsdNum + arbitrumTotalUsdNum + zeroTotalUsdNum + ethereumTotalUsdNum + usdcNearNum;
       usdcBalFormatted = b.usdcNearFormatted || '0.00';
 
-      nearUsdFormatted = rawNearUsd >= 1000 ? `${(rawNearUsd / 1000).toFixed(2)}K` : `${rawNearUsd.toFixed(2)}`;
-      suiUsdFormatted = rawSuiUsd >= 1000 ? `${(rawSuiUsd / 1000).toFixed(2)}K` : `${rawSuiUsd.toFixed(2)}`;
-      solUsdFormatted = rawSolUsd >= 1000 ? `${(rawSolUsd / 1000).toFixed(2)}K` : `${rawSolUsd.toFixed(2)}`;
-      hyperevmUsdFormatted = rawHyperevmUsd >= 1000 ? `${(rawHyperevmUsd / 1000).toFixed(2)}K` : `${rawHyperevmUsd.toFixed(2)}`;
-      elysiumUsdFormatted = rawElysiumUsd >= 1000 ? `${(rawElysiumUsd / 1000).toFixed(2)}K` : `${rawElysiumUsd.toFixed(2)}`;
-      baseUsdFormatted = rawBaseUsd >= 1000 ? `${(rawBaseUsd / 1000).toFixed(2)}K` : `${rawBaseUsd.toFixed(2)}`;
-      arbitrumUsdFormatted = rawArbitrumUsd >= 1000 ? `${(rawArbitrumUsd / 1000).toFixed(2)}K` : `${rawArbitrumUsd.toFixed(2)}`;
-      zeroUsdFormatted = rawZeroUsd >= 1000 ? `${(rawZeroUsd / 1000).toFixed(2)}K` : `${rawZeroUsd.toFixed(2)}`;
-      ethereumUsdFormatted = rawEthereumUsd >= 1000 ? `${(rawEthereumUsd / 1000).toFixed(2)}K` : `${rawEthereumUsd.toFixed(2)}`;
+      const fmtUsd = (n: number) => (n >= 1000 ? `$${(n / 1000).toFixed(2)}K` : `$${n.toFixed(2)}`);
+      nearUsdFormatted = fmtUsd(rawNearUsd);
+      suiUsdFormatted = fmtUsd(rawSuiUsd);
+      solUsdFormatted = fmtUsd(rawSolUsd);
+      hyperevmUsdFormatted = fmtUsd(rawHyperevmUsd);
+      elysiumUsdFormatted = fmtUsd(rawElysiumUsd);
+      baseUsdFormatted = fmtUsd(rawBaseUsd);
+      arbitrumUsdFormatted = fmtUsd(rawArbitrumUsd);
+      zeroUsdFormatted = fmtUsd(rawZeroUsd);
+      ethereumUsdFormatted = fmtUsd(rawEthereumUsd);
     } catch {
       nearBalFormatted = '0';
     }
   }
 
-  const totalUsdStr = totalUsdNum >= 1000 ? `${(totalUsdNum / 1000).toFixed(2)}K` : `${totalUsdNum.toFixed(2)}`;
+  const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
   const nearVisible = isChainVisible(user, 'near');
   const suiVisible = isChainVisible(user, 'sui');
@@ -962,68 +963,73 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
   const zeroVisible = isChainVisible(user, 'zero');
   const ethereumVisible = isChainVisible(user, 'ethereum');
 
-  let text = `🏎 <b>RacerBot V2.0</b> • 💼 <b>W1</b> ⭐\n`;
-  if (user?.fee_tier === 'super_ambassador') {
-    text += `👑 <b>Super Ambassador</b> • 60% Referral Share • 30% Fee Cashback\n`;
-  }
-  if (nearVisible) {
-    text += `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted}) • 💵 USDC: <b>${usdcBalFormatted}</b>\n`;
+  const hasPos = (v: string) => (parseFloat(v || '0') || 0) > 0.00001;
+  const fundedLines: string[] = [];
+
+  if (nearVisible && (hasPos(nearBalFormatted) || hasPos(usdcBalFormatted))) {
+    let line = `⬛ NEAR: <b>${nearBalFormatted}</b> Ⓝ (${nearUsdFormatted})`;
+    if (hasPos(usdcBalFormatted)) line += ` • 💵 <b>${usdcBalFormatted}</b> USDC`;
+    fundedLines.push(line);
     if (Number(wrapNearFormatted) > 0.0001) {
-      text += `   ↳ Native: ${nativeNearFormatted} Ⓝ | Wrapped: ${wrapNearFormatted} wNEAR\n`;
+      fundedLines.push(`   ↳ Native: ${nativeNearFormatted} Ⓝ | Wrapped: ${wrapNearFormatted} wNEAR`);
     }
   }
-  if (solanaVisible && solAddress) {
-    text += `🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})\n`;
+  if (solanaVisible && solAddress && hasPos(solBalFormatted)) {
+    fundedLines.push(`🟣 SOL: <b>${solBalFormatted}</b> ◎ (${solUsdFormatted})`);
   }
-  if (baseVisible && evmAddress) {
-    text += `🔵 Base: <b>${baseBalFormatted}</b> ETH (${baseUsdFormatted})\n`;
+  if (baseVisible && evmAddress && hasPos(baseBalFormatted)) {
+    fundedLines.push(`🔵 Base: <b>${baseBalFormatted}</b> ETH (${baseUsdFormatted})`);
   }
-  if (arbitrumVisible && evmAddress) {
-    text += `💙 Arbitrum: <b>${arbitrumBalFormatted}</b> ETH (${arbitrumUsdFormatted})\n`;
+  if (arbitrumVisible && evmAddress && hasPos(arbitrumBalFormatted)) {
+    fundedLines.push(`💙 Arbitrum: <b>${arbitrumBalFormatted}</b> ETH (${arbitrumUsdFormatted})`);
   }
-  if (zeroVisible && evmAddress) {
-    text += `🅾️ Zero: <b>${zeroBalFormatted}</b> ZRO (${zeroUsdFormatted})\n`;
+  if (zeroVisible && evmAddress && hasPos(zeroBalFormatted)) {
+    fundedLines.push(`🅾️ Zero: <b>${zeroBalFormatted}</b> ZRO (${zeroUsdFormatted})`);
   }
-  if (hyperevmVisible) {
-    text += `⚡ HyperEVM: <b>${hyperevmBalFormatted}</b> HYPE (${hyperevmUsdFormatted})\n`;
+  if (hyperevmVisible && hasPos(hyperevmBalFormatted)) {
+    fundedLines.push(`⚡ HyperEVM: <b>${hyperevmBalFormatted}</b> HYPE (${hyperevmUsdFormatted})`);
   }
-  if (elysiumVisible) {
-    text += `🏛️ Elysium: <b>${elysiumBalFormatted}</b> HYPE (${elysiumUsdFormatted})\n`;
+  if (elysiumVisible && hasPos(elysiumBalFormatted)) {
+    fundedLines.push(`🏛️ Elysium: <b>${elysiumBalFormatted}</b> HYPE (${elysiumUsdFormatted})`);
   }
-  if (ethereumVisible && evmAddress) {
-    text += `💎 Ethereum: <b>${ethereumBalFormatted}</b> ETH (${ethereumUsdFormatted})\n`;
+  if (ethereumVisible && evmAddress && hasPos(ethereumBalFormatted)) {
+    fundedLines.push(`💎 Ethereum: <b>${ethereumBalFormatted}</b> ETH (${ethereumUsdFormatted})`);
   }
-  if (suiVisible) {
-    text += `🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})\n`;
+  if (suiVisible && hasPos(suiBalFormatted)) {
+    fundedLines.push(`🔷 SUI: <b>${suiBalFormatted}</b> 💧 (${suiUsdFormatted})`);
   }
-  if (starknetVisible && starknetAddress) {
-    text += `✨ STRK: <b>${strkBalFormatted}</b> • ETH: <b>${ethBalFormatted}</b>\n`;
+  if (starknetVisible && starknetAddress && (hasPos(strkBalFormatted) || hasPos(ethBalFormatted))) {
+    fundedLines.push(`✨ Starknet: <b>${strkBalFormatted}</b> STRK • <b>${ethBalFormatted}</b> ETH`);
   }
-  text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
 
-  if (nearVisible && subaccount) {
-    text += `📍 NEAR: <code>${subaccount}</code>\n\n`;
+  let text = isNewUser
+    ? `🏎 <b>Welcome to RacerBot!</b>\nYour multi-chain wallets (NEAR, SOL, Base, Arbitrum, ETH, Zero, HyperEVM, Elysium, SUI &amp; Starknet) are ready.\n\n`
+    : `🏎 <b>RacerBot</b> • 💼 <b>W1</b> ⭐\n`;
+  if (user?.fee_tier === 'super_ambassador') {
+    text += `👑 <b>Super Ambassador</b> • 60% Referral • 30% Cashback\n`;
   }
-  if (solanaVisible && solAddress) {
-    text += `◎ SOL: <code>${solAddress}</code>\n\n`;
+
+  if (fundedLines.length > 0) {
+    text += fundedLines.join('\n') + `\n`;
+    text += `💰 Total: <b>${totalUsdStr}</b>\n\n`;
+    text += `💡 <i>Paste any token CA or link to trade • Tap 💳 Wallet for all addresses</i>`;
+  } else {
+    text += `💰 Balance: <b>$0.00</b>\n\n`;
+    text +=
+      `<b>Quick Start:</b>\n` +
+      `1️⃣ Tap <b>📥 Deposit</b> to fund any chain (0% direct or 37-chain swap)\n` +
+      `2️⃣ Tap <b>🛒 Buy Token</b> or paste any token CA / link to buy instantly`;
   }
-  const evmChainsVisible = hyperevmVisible || elysiumVisible || baseVisible || arbitrumVisible || zeroVisible || ethereumVisible;
-  if (evmChainsVisible && evmAddress) {
-    text += `⚡ EVM & Zero Chain: <code>${evmAddress}</code>\n\n`;
-  }
-  if (suiVisible && suiAddress) {
-    text += `💧 SUI: <code>${suiAddress}</code>\n\n`;
-  }
-  if (starknetVisible && starknetAddress) {
-    text += `✨ STRK: <code>${starknetAddress}</code>\n\n`;
-  }
-  text = text.trimEnd();
 
   const mainButtons: any[] = [
     [
+      cb('🛒 Buy Token', 'menu_buy_prompt', 'success'),
+      cb('🎒 Your Bags', 'menu_holdings', 'primary'),
+    ],
+    [
       cb('📥 Deposit', 'menu_multichain_deposit', 'success'),
+      cb('💸 Withdraw', 'wallet_withdraw_prompt', 'primary'),
       cb('💳 Wallet', 'menu_wallet', 'primary'),
-      cb('🌉 Bridge / LZ', 'menu_bridge', 'primary'),
     ],
   ];
 
@@ -1033,28 +1039,14 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
   mainButtons.push(
     [
-      cb('🎒 Your Bags', 'menu_holdings', 'primary'),
+      cb('⚡ Pro Tools', 'menu_pro_tools', 'primary'),
+      cb('📈 PnL', 'menu_pnl', 'primary'),
       cb('🔄 Refresh', 'menu_refresh', 'primary'),
     ],
     [
-      cb('🎯 Snipe', 'menu_snipe', 'primary'),
-      cb('👥 Copy Trade', 'menu_copy', 'success'),
-    ],
-    [
-      cb('🔁 DCA', 'menu_dca', 'primary'),
-      cb('📈 PnL', 'menu_pnl', 'primary'),
-    ],
-    [
-      cb('🤖 AI Swarm', 'menu_swarm', 'success'),
-      cb('🏎️ RaceFleet', 'racefleet_menu', 'primary'),
-    ],
-    [
-      cb('🛡 Private', 'menu_private', 'success'),
-      cb('🏆 Points', 'menu_points', 'success'),
-    ],
-    [
       cb('⚙️ Settings', 'menu_settings', 'primary'),
-      cb('🏁 My Racer Card', 'racer_card', 'success'),
+      cb('🏆 Points', 'menu_points', 'success'),
+      cb('🏁 Card', 'racer_card', 'primary'),
     ],
     [
       Markup.button.url('💬 Chat', 'https://t.me/racerbot_community'),
@@ -1065,7 +1057,9 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false) {
 
   const keyboard = Markup.inlineKeyboard(mainButtons);
   const res = { text, keyboard };
-  mainMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
+  if (!isNewUser) {
+    mainMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
+  }
   return res;
 }
 
@@ -1200,7 +1194,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   const solTotalUsdNum = solanaVisible ? (parseFloat(b.solBalanceFormatted || '0') || 0) * (b.solUsd || 0) : 0;
   const usdcNearNum = nearVisible ? (parseFloat(b.usdcNearFormatted || '0') || 0) : 0;
   const totalUsdNum = nearTotalUsdNum + suiTotalUsdNum + strkTotalUsdNum + ethTotalUsdNum + solTotalUsdNum + hyperevmUsdNum + elysiumUsdNum + baseUsdNum + arbitrumUsdNum + ethereumUsdNum + zeroUsdNum + usdcNearNum;
-  const totalUsdStr = totalUsdNum >= 1000 ? `${(totalUsdNum / 1000).toFixed(2)}K` : `${totalUsdNum.toFixed(2)}`;
+  const totalUsdStr = totalUsdNum >= 1000 ? `$${(totalUsdNum / 1000).toFixed(2)}K` : `$${totalUsdNum.toFixed(2)}`;
 
   const [nearWallets, suiWallets] = user
     ? await Promise.all([
@@ -1264,7 +1258,7 @@ export async function buildWalletMenu(telegramId: number, forceRefresh = false) 
   }
   if (starknetVisible && b.starknetAddress) {
     const starkUsdSum = strkTotalUsdNum + ethTotalUsdNum;
-    const starkUsdStr = starkUsdSum >= 1000 ? `${(starkUsdSum / 1000).toFixed(2)}K` : `${starkUsdSum.toFixed(2)}`;
+    const starkUsdStr = starkUsdSum >= 1000 ? `$${(starkUsdSum / 1000).toFixed(2)}K` : `$${starkUsdSum.toFixed(2)}`;
     text += `✨ STRK: <b>${b.strkBalanceFormatted || '0'}</b> • ETH: <b>${b.ethBalanceFormatted || '0'}</b> (${starkUsdStr})\n`;
   }
   if (solanaVisible && b.solanaAddress) {
@@ -4289,29 +4283,28 @@ export function evmLookupFailureMessage(address: string, err: any): string {
 // ── Multichain Deposit UI Builders (NEAR Intents 1Click) ────────────────────
 export function buildDepositDestinationPickerMenu() {
   const text =
-    `📥 <b>Deposit via NEAR Intents (1Click)</b>\n\n` +
-    `Deposit from <b>37 blockchains</b> and settle directly into any of your <b>main RacerBot trading wallets</b>.\n\n` +
-    `🎯 <b>Step 1: Choose which chain you want your deposit to go to:</b>`;
+    `📥 <b>Deposit Funds into RacerBot</b>\n\n` +
+    `<b>Option 1 — Direct Deposit (0% Fee):</b>\n` +
+    `Already have NEAR, SOL, ETH, HYPE, ZRO, SUI, or STRK? Tap <b>Direct Wallet Addresses</b> below to copy your wallet address and send directly with zero bridge fees.\n\n` +
+    `<b>Option 2 — Cross-Chain Swap via NEAR Intents (1% Fee):</b>\n` +
+    `Swap from <b>37 blockchains</b> into your chosen RacerBot trading wallet below:`;
 
   const rows: any[][] = [
+    [cb('📋 Direct Wallet Addresses (0% Fee)', 'dep_direct_addresses', 'success')],
     [
-      cb('⬛ NEAR (NEAR)', 'dep_dest:near', 'success'),
-      cb('🟣 Solana (SOL)', 'dep_dest:sol', 'primary'),
+      cb('⬛ Swap → NEAR', 'dep_dest:near', 'primary'),
+      cb('🟣 Swap → Solana', 'dep_dest:sol', 'primary'),
     ],
     [
-      cb('🔷 SUI (SUI)', 'dep_dest:sui', 'primary'),
-      cb('✨ Starknet (STRK)', 'dep_dest:starknet', 'primary'),
+      cb('🔷 Swap → SUI', 'dep_dest:sui', 'primary'),
+      cb('✨ Swap → Starknet', 'dep_dest:starknet', 'primary'),
     ],
     [
-      cb('🔵 Base (ETH)', 'dep_dest:base', 'primary'),
-      cb('💙 Arbitrum (ETH)', 'dep_dest:arb', 'primary'),
+      cb('🔵 Swap → Base', 'dep_dest:base', 'primary'),
+      cb('💙 Swap → Arbitrum', 'dep_dest:arb', 'primary'),
     ],
     [
-      cb('💎 Ethereum (ETH)', 'dep_dest:eth', 'primary'),
-    ],
-    [
-      cb('◎ Direct SOL Address', 'dep_sol_direct', 'primary'),
-      cb('⚡ Direct EVM Address', 'dep_evm_direct', 'primary'),
+      cb('💎 Swap → Ethereum', 'dep_dest:eth', 'primary'),
     ],
     [
       cb('🔙 Back to Wallet', 'menu_wallet', 'primary'),
@@ -5096,33 +5089,18 @@ export function setupRoutes(bot: Telegraf): void {
         }
       }
 
-      // If brand new user onboarding, send a dedicated welcome card showing all provisioned wallets
-      if (!result.isExisting) {
+      // If an existing user just had EVM unlocked, notify once
+      if (result.isExisting && result.justUpgraded && result.evmAddress) {
         await ctx.reply(
-          `🏎️ <b>Welcome to RacerBot!</b>\n\n` +
-          `Your high-speed multi-chain trading setup is complete.\n` +
-          `All your native trading wallets have been automatically created:\n\n` +
-          `⬛ <b>NEAR:</b> <code>${result.subaccountId}</code>\n` +
-          `🟣 <b>Solana:</b> <code>${result.solanaAddress || 'Ready'}</code>\n` +
-          `⚡ <b>EVM:</b> <code>${result.evmAddress || 'Ready'}</code> (HyperEVM & Elysium)\n` +
-          `🔷 <b>Sui:</b> <code>${result.suiAddress || 'Ready'}</code>\n` +
-          `✨ <b>Starknet:</b> <code>${result.starknetAddress || 'Ready'}</code>\n\n` +
-          `<i>Deposit funds to any address above to trade, or paste any token CA to start sniping!</i>`,
-          { parse_mode: 'HTML' }
-        ).catch(() => {});
-      } else if (result.justUpgraded && result.evmAddress) {
-        await ctx.reply(
-          `⚡ <b>New Chains Unlocked: HyperEVM & Elysium!</b>\n\n` +
+          `⚡ <b>EVM &amp; Zero Chains Unlocked!</b>\n\n` +
           `Your unified EVM wallet has been generated and linked to your account:\n` +
           `<code>${result.evmAddress}</code>\n\n` +
-          `• <b>HyperEVM:</b> 🟢 Mainnet Live — trade real tokens now!\n` +
-          `• <b>Elysium:</b> 🟢 Mainnet Live — trade Kleos, RonsPad, Ascend and Montra coins now!\n\n` +
-          `Deposit native <b>HYPE</b> to start trading!`,
+          `Trade on <b>Base, Arbitrum, Ethereum, Zero, HyperEVM &amp; Elysium</b> using this single address!`,
           { parse_mode: 'HTML' }
         ).catch(() => {});
       }
 
-      const menu = await buildMainMenu(telegramId);
+      const menu = await buildMainMenu(telegramId, false, !result.isExisting);
       await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard });
     } catch (err: any) {
       console.error('[API] Onboarding error for telegramId:', telegramId, err);
@@ -5297,6 +5275,107 @@ export function setupRoutes(bot: Telegraf): void {
       });
     } catch {
       // handled
+    }
+  });
+
+  // ── Quick Buy Prompt (Mobile-First First-Time Trader CTA) ─────────────────
+  bot.action('menu_buy_prompt', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
+    await ctx.answerCbQuery().catch(() => { });
+    const text =
+      `🛒 <b>Buy Any Token</b>\n\n` +
+      `Paste a <b>token contract address (CA)</b> or link from <b>DexScreener, Pump.fun, Ref, or Birdeye</b> straight into this chat to open the instant buy card!\n\n` +
+      `<b>Supported Networks:</b>\n` +
+      `• ⬛ <b>NEAR</b> — e.g. <code>token.near</code>\n` +
+      `• 🟣 <b>Solana</b> — mint address or Pump.fun link\n` +
+      `• ⚡ <b>EVM</b> (Base, Arbitrum, ETH, Zero, HyperEVM, Elysium) — <code>0x...</code>\n` +
+      `• 🔷 <b>SUI</b> — <code>0x...::coin::COIN</code>\n` +
+      `• ✨ <b>Starknet</b> — <code>0x0...</code>`;
+    const keyboard = Markup.inlineKeyboard([
+      [
+        cb('📥 Deposit Funds', 'menu_multichain_deposit', 'success'),
+        cb('🎒 Your Bags', 'menu_holdings', 'primary'),
+      ],
+      [cb('🔙 Main Menu', 'menu_home', 'primary')],
+    ]);
+    await (ctx as any).editMessageText(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard }).catch(() => { });
+    });
+  });
+
+  // ── Pro Tools Submenu (Keeps Main Menu Clean on Mobile) ───────────────────
+  bot.action('menu_pro_tools', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
+    await ctx.answerCbQuery().catch(() => { });
+    const text =
+      `⚡ <b>Pro Trading Tools</b>\n\n` +
+      `Choose an advanced trading module below:`;
+    const keyboard = Markup.inlineKeyboard([
+      [
+        cb('🎯 Snipe', 'menu_snipe', 'primary'),
+        cb('👥 Copy Trade', 'menu_copy', 'success'),
+      ],
+      [
+        cb('🔁 DCA', 'menu_dca', 'primary'),
+        cb('🌉 Bridge / LZ', 'menu_bridge', 'primary'),
+      ],
+      [
+        cb('🤖 AI Swarm', 'menu_swarm', 'success'),
+        cb('🏎️ RaceFleet', 'racefleet_menu', 'primary'),
+      ],
+      [
+        cb('🛡 Private', 'menu_private', 'success'),
+        cb('🏎️ RaceDrop', 'racedrop_start', 'primary'),
+      ],
+      [cb('🔙 Main Menu', 'menu_home', 'primary')],
+    ]);
+    await (ctx as any).editMessageText(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {
+      await ctx.reply(text, { parse_mode: 'HTML', ...keyboard }).catch(() => { });
+    });
+  });
+
+  // ── Direct Wallet Addresses (0% Fee Deposit View) ─────────────────────────
+  bot.action('dep_direct_addresses', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const telegramId = ctx.from!.id;
+    try {
+      let user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await onboardUser(telegramId);
+        user = await getUserByTelegramId(telegramId);
+      }
+      if (!user) throw new Error('Please send /start first.');
+      const upgraded = await ensureUserAllWallets(user).catch(() => user);
+      const u = upgraded || user;
+      markUserActiveForDeposit(telegramId);
+
+      const text =
+        `📋 <b>Direct Deposit Addresses (0% Fee)</b>\n\n` +
+        `Tap any address below to copy and send funds directly on that network:\n\n` +
+        `⬛ <b>NEAR (NEAR / USDC):</b>\n<code>${escapeHtml(u.subaccount_id)}</code>\n\n` +
+        (u.solana_address ? `🟣 <b>Solana (SOL / SPL):</b>\n<code>${escapeHtml(u.solana_address)}</code>\n\n` : '') +
+        (u.evm_address
+          ? `⚡ <b>EVM &amp; Zero</b> <i>(Base, Arbitrum, ETH, Zero, HyperEVM, Elysium)</i>:\n<code>${escapeHtml(u.evm_address)}</code>\n\n`
+          : '') +
+        (u.sui_address ? `🔷 <b>SUI:</b>\n<code>${escapeHtml(u.sui_address)}</code>\n\n` : '') +
+        (u.starknet_address ? `✨ <b>Starknet (STRK / ETH):</b>\n<code>${escapeHtml(u.starknet_address)}</code>\n\n` : '') +
+        `⚠️ <i>Only send assets on their matching network. Want to bridge from another chain? Use Cross-Chain Swap below.</i>`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [cb('🔄 Cross-Chain Swap (37 Chains)', 'menu_multichain_deposit', 'primary')],
+        [
+          cb('💳 Wallet', 'menu_wallet', 'primary'),
+          cb('🔙 Main Menu', 'menu_home', 'primary'),
+        ],
+      ]);
+
+      await (ctx as any).editMessageText(text, { parse_mode: 'HTML', ...keyboard }).catch(async () => {
+        await ctx.reply(text, { parse_mode: 'HTML', ...keyboard }).catch(() => { });
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
     }
   });
 
@@ -8763,6 +8842,8 @@ export function setupRoutes(bot: Telegraf): void {
         'Please paste the token contract address (CA) you want to import.\n\n' +
         'Supported chains:\n' +
         '• *NEAR*: `token.near` or contract account ID\n' +
+        '• *Solana*: SPL mint address\n' +
+        '• *EVM* (Base, Arbitrum, ETH, Zero, HyperEVM, Elysium): `0x...` ERC-20 address\n' +
         '• *SUI*: `0x...::coin::COIN`\n' +
         '• *Starknet*: `0x0...`\n\n' +
         '_Send the address within 2 minutes to import it into your holdings._',
