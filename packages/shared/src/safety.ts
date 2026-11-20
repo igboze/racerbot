@@ -85,6 +85,7 @@ export const VERIFIED_CORE_TOKENS = new Set([
   'token.v2.ref-finance.near',
   'usdt.tether-token.near',
   '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', // USDC
+  'inear.nearonhq.near', // Intelligent NEAR (iNEAR) — locked DAO liquid staking token
 ]);
 
 export function isCoreToken(tokenAddress: string): boolean {
@@ -194,23 +195,62 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
 }
 
 
-export async function checkEvmTokenSafety(tokenAddress: string, chain: EvmChain = 'hyperevm'): Promise<TokenSafetyReport> {
+const ALL_EVM_SAFETY_CHAINS: EvmChain[] = ['base', 'arbitrum', 'zero', 'hyperevm', 'elysium', 'ethereum'];
+
+const EVM_CHAIN_LABELS: Record<EvmChain, string> = {
+  base: 'Base',
+  arbitrum: 'Arbitrum',
+  zero: 'Zero Network',
+  hyperevm: 'HyperEVM',
+  elysium: 'Elysium',
+  ethereum: 'Ethereum',
+};
+
+export async function checkEvmTokenSafety(tokenAddress: string, chain?: EvmChain): Promise<TokenSafetyReport> {
   const normAddress = tokenAddress.toLowerCase().trim();
-  const isElysium = normAddress.endsWith('.elysium') || chain === 'elysium';
-  const targetChain: EvmChain = isElysium ? 'elysium' : 'hyperevm';
+  const explicitChain: EvmChain | undefined = chain || (normAddress.endsWith('.elysium') ? 'elysium' : undefined);
+  const chainsToCheck: EvmChain[] = explicitChain ? [explicitChain] : ALL_EVM_SAFETY_CHAINS;
 
   try {
-    const provider = getEvmProvider(targetChain, targetChain === 'elysium');
-    const code = await provider.getCode(normAddress).catch(() => '0x');
+    let foundChain: EvmChain | null = null;
+    const results = await Promise.all(
+      chainsToCheck.map(async (c) => {
+        const provider = getEvmProvider(c, false);
+        const code = await provider.getCode(normAddress).catch(() => null);
+        return { chain: c, code };
+      })
+    );
 
-    if (!code || code === '0x' || code === '0x0') {
+    const anyRpcSucceeded = results.some((r) => r.code !== null);
+    for (const r of results) {
+      if (r.code && r.code !== '0x' && r.code !== '0x0') {
+        foundChain = r.chain;
+        break;
+      }
+    }
+
+    if (!foundChain) {
+      if (!anyRpcSucceeded) {
+        return {
+          tokenAddress: normAddress,
+          isHoneypot: false,
+          safe: true,
+          risk: 'medium',
+          isAuditedLaunchpad: false,
+          warning: 'Could not verify EVM contract bytecode due to RPC timeout.',
+          reasons: [],
+          dangerousMethods: [],
+          isDrained: false,
+        };
+      }
+      const chainDesc = explicitChain ? EVM_CHAIN_LABELS[explicitChain] : 'supported EVM chains';
       const report: TokenSafetyReport = {
         tokenAddress: normAddress,
         isHoneypot: false,
         safe: false,
         risk: 'high',
         isAuditedLaunchpad: false,
-        reasons: ['No contract bytecode deployed at this address on ' + (targetChain === 'elysium' ? 'Elysium' : 'HyperEVM')],
+        reasons: [`No contract bytecode deployed at this address on ${chainDesc}`],
         dangerousMethods: [],
         isDrained: false,
       };
@@ -218,13 +258,14 @@ export async function checkEvmTokenSafety(tokenAddress: string, chain: EvmChain 
       return report;
     }
 
+    const label = EVM_CHAIN_LABELS[foundChain];
     const report: TokenSafetyReport = {
       tokenAddress: normAddress,
       isHoneypot: false,
       safe: true,
       risk: 'low',
       isAuditedLaunchpad: true,
-      launchpadName: targetChain === 'elysium' ? 'Elysium ERC-20' : 'HyperEVM ERC-20',
+      launchpadName: `${label} ERC-20`,
       reasons: [],
       dangerousMethods: [],
       lpLocked: true,
@@ -236,20 +277,21 @@ export async function checkEvmTokenSafety(tokenAddress: string, chain: EvmChain 
     safetyCache.set(normAddress, { at: Date.now(), report });
     return report;
   } catch (err: any) {
-    const report: TokenSafetyReport = {
+    const label = explicitChain ? EVM_CHAIN_LABELS[explicitChain] : 'EVM';
+    return {
       tokenAddress: normAddress,
       isHoneypot: false,
       safe: true,
       risk: 'medium',
-      isAuditedLaunchpad: true,
-      launchpadName: targetChain === 'elysium' ? 'Elysium ERC-20' : 'HyperEVM ERC-20',
+      isAuditedLaunchpad: false,
+      launchpadName: `${label} ERC-20`,
+      warning: 'Could not complete EVM contract verification due to RPC error.',
       reasons: [],
       dangerousMethods: [],
       lpLocked: true,
       isUnlockedRheaPool: false,
       isDrained: false,
     };
-    return report;
   }
 }
 
@@ -382,10 +424,20 @@ async function doCheckTokenSafety(normAddress: string): Promise<TokenSafetyRepor
       }
     }
 
+    const isStakingContract = exportedFuncs.includes('deposit_and_stake');
+    const BENIGN_METHOD_NAMES = new Set([
+      'revoke_role',
+      'revoke_allowance',
+      'freeze_metadata',
+      'sweep_dust',
+    ]);
     const dangerousFound: string[] = [];
     for (const fnName of exportedFuncs) {
       const lower = fnName.toLowerCase();
+      // Read-only view getters (e.g. get_unstake_rounds) and benign standard governance/metadata methods are not backdoors
+      if (lower.startsWith('get_') || lower.startsWith('is_') || BENIGN_METHOD_NAMES.has(lower)) continue;
       for (const pattern of DANGEROUS_METHOD_PATTERNS) {
+        if (pattern === 'unstake' && isStakingContract) continue;
         if (lower === pattern || (pattern.length > 5 && lower.includes(pattern))) {
           dangerousFound.push(fnName);
           break;
@@ -412,23 +464,25 @@ async function doCheckTokenSafety(normAddress: string): Promise<TokenSafetyRepor
       return report;
     }
 
-    // Must at least implement standard ft_transfer or ft_transfer_call
-    const hasFtTransfer = exportedFuncs.includes('ft_transfer') || exportedFuncs.includes('ft_transfer_call');
-    const hasFtBalanceOf = exportedFuncs.includes('ft_balance_of');
+    // Must at least implement standard ft_transfer or ft_transfer_call (only when WASM was actually inspected)
+    if (exportedFuncs.length > 0) {
+      const hasFtTransfer = exportedFuncs.includes('ft_transfer') || exportedFuncs.includes('ft_transfer_call');
+      const hasFtBalanceOf = exportedFuncs.includes('ft_balance_of');
 
-    if (!hasFtTransfer || !hasFtBalanceOf) {
-      const report: TokenSafetyReport = {
-        tokenAddress: normAddress,
-        isHoneypot: true,
-        safe: false,
-        risk: 'high',
-        isAuditedLaunchpad: false,
-        reasons: ['Contract does not implement standard NEP-141 transfer or balance methods'],
-        dangerousMethods: [],
-        allExportedMethods: exportedFuncs,
-      };
-      safetyCache.set(normAddress, { at: Date.now(), report });
-      return report;
+      if (!hasFtTransfer || !hasFtBalanceOf) {
+        const report: TokenSafetyReport = {
+          tokenAddress: normAddress,
+          isHoneypot: true,
+          safe: false,
+          risk: 'high',
+          isAuditedLaunchpad: false,
+          reasons: ['Contract does not implement standard NEP-141 transfer or balance methods'],
+          dangerousMethods: [],
+          allExportedMethods: exportedFuncs,
+        };
+        safetyCache.set(normAddress, { at: Date.now(), report });
+        return report;
+      }
     }
 
     // ── NEAR Tokens: Step 3 - Check Rhea / Ref Finance Liquidity & LP Locking ──
@@ -454,8 +508,9 @@ async function doCheckTokenSafety(normAddress: string): Promise<TokenSafetyRepor
           lpLocked = false;
         }
 
-        // If pool liquidity has been drained (< 2.0 NEAR, ~$10), mark as critical drained/rugged pool
-        if (rheaLiqNear < 2.0) {
+        // Only flag drained liquidity on simple AMM wrap.near pools where liquidityNear is an exact reserve read.
+        // DCL pools and non-wNEAR (USDC/USDT) pools do not report simple wrap.near reserves here.
+        if (!rhea.isDcl && rhea.pairedToken === 'wrap.near' && rheaLiqNear < 2.0) {
           isDrained = true;
         }
       }
