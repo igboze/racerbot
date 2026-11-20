@@ -427,7 +427,9 @@ async function main(): Promise<void> {
     // Set Telegram Bot Menu Commands
   await bot.telegram.setMyCommands([
     { command: 'start', description: '🏎️ Start RacerBot / Main Menu' },
-    { command: 'deposit', description: '📥 Deposit Multi-Crypto (37 Chains)' },
+    { command: 'help', description: '❓ How RacerBot works' },
+    { command: 'deposit', description: '📥 Fund your wallet' },
+    { command: 'buy', description: '🛒 Buy a token' },
     { command: 'wallet', description: '💳 Wallet & Balances' },
     { command: 'menu', description: '📊 Main Menu & Stats' },
     { command: 'snipe', description: '🎯 Token Sniper' },
@@ -445,7 +447,9 @@ async function main(): Promise<void> {
     // Set Telegram Bot Menu Commands
   await bot.telegram.setMyCommands([
     { command: 'start', description: '🏎️ Start RacerBot / Main Menu' },
-    { command: 'deposit', description: '📥 Deposit Multi-Crypto (37 Chains)' },
+    { command: 'help', description: '❓ How RacerBot works' },
+    { command: 'deposit', description: '📥 Fund your wallet' },
+    { command: 'buy', description: '🛒 Buy a token' },
     { command: 'wallet', description: '💳 Wallet & Balances' },
     { command: 'menu', description: '📊 Main Menu & Stats' },
     { command: 'snipe', description: '🎯 Token Sniper' },

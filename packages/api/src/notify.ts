@@ -503,12 +503,13 @@ async function sendNotification(telegramId: number, event: NotifyUserEvent): Pro
         `💰 <b>Deposit Confirmed!</b>\n\n` +
         `${icon} <b>+${amount} ${symbol}</b> ${tokenIcon} ${usdValue ? `(${usdValue})` : ''}\n` +
         `<u>${chainLabel}</u>: <code>${address}</code>\n\n` +
-        `Your funds are credited and ready to trade.`;
+        `Your funds are credited and ready to trade. Next: tap 🛒 Buy a token.`;
 
       await _bot.telegram.sendMessage(telegramId, msg, {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
+            [{ text: '🛒 Buy a token', callback_data: 'menu_buy_prompt' }],
             [
               { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
               { text: '💳 Wallet', callback_data: 'menu_wallet' },
@@ -756,12 +757,13 @@ export async function notifyDeposit(
     `💰 <b>Deposit Confirmed!</b>\n\n` +
     `${icon} <b>+${amount} ${symbol}</b> ${tokenIcon} ${usdValue ? `(${usdValue})` : ''}\n` +
     `<u>${chainLabel}</u>: <code>${address}</code>\n\n` +
-    `Your funds are credited and ready to trade.`;
+    `Your funds are credited and ready to trade. Next: tap 🛒 Buy a token.`;
 
   await _bot.telegram.sendMessage(telegramId, msg, {
     parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
+        [{ text: '🛒 Buy a token', callback_data: 'menu_buy_prompt' }],
         [
           { text: '🎒 Your Bags', callback_data: 'menu_holdings' },
           { text: '💳 Wallet', callback_data: 'menu_wallet' },

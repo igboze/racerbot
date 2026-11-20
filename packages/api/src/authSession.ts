@@ -818,16 +818,6 @@ export async function requestTelegramVerification(usernameInput: string): Promis
       }
     }
 
-    // Fallback search in memory or demo profiles
-    if (!user && (raw.toLowerCase() === 'cryptoracer_pro' || raw.toLowerCase() === 'alex' || raw === '182749219')) {
-      user = {
-        id: 'u-local-tester',
-        telegram_id: 182749219,
-        username: 'cryptoracer_pro',
-        subaccount_id: 'alex.racerbot.near',
-      };
-    }
-
     if (!user || !user.telegram_id) {
       return {
         success: false,
