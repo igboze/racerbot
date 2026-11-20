@@ -293,6 +293,18 @@ import { utils as nearUtils } from 'near-api-js';
 import crypto from 'crypto';
 import { MASTER_KEY, RPC_PROVIDERS, TREASURY_ACCOUNT_ID } from './config.js';
 import { checkUserDepositNow, markUserActiveForDeposit } from './depositWatcher.js';
+import {
+  buildDepositAssetPicker,
+  buildDepositAssetScreen,
+  buildHelpPage,
+  buyTokenPromptText,
+  emptyWalletMenuButtons,
+  emptyWalletMenuText,
+  fundWalletKeyboard,
+  isDepositAsset,
+  isInsufficientFundsMessage,
+  trendingRows,
+} from './newUserUx.js';
 
 export function isGroupChat(ctx: { chat?: { type?: string } }): boolean {
   const type = ctx.chat?.type;
@@ -825,8 +837,8 @@ export function buildActiveChainsMenu(user: UserRecord) {
   return { text, keyboard: Markup.inlineKeyboard(buttons) };
 }
 
-export async function buildMainMenu(telegramId: number, forceRefresh = false, isNewUser = false) {
-  if (!forceRefresh && !isNewUser) {
+export async function buildMainMenu(telegramId: number, forceRefresh = false, isNewUser = false, showAll = false) {
+  if (!forceRefresh && !isNewUser && !showAll) {
     const cached = mainMenuCache.get(telegramId);
     if (cached && Date.now() < cached.expiresAt) {
       return cached.data;
@@ -1002,8 +1014,15 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false, is
     fundedLines.push(`✨ Starknet: <b>${strkBalFormatted}</b> STRK • <b>${ethBalFormatted}</b> ETH`);
   }
 
+  // Nothing funded yet: a short welcome and fewer buttons; ☰ All features opens the full menu
+  if (fundedLines.length === 0 && !showAll) {
+    const res = { text: emptyWalletMenuText(isNewUser), keyboard: Markup.inlineKeyboard(emptyWalletMenuButtons()) };
+    if (!isNewUser) mainMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
+    return res;
+  }
+
   let text = isNewUser
-    ? `🏎 <b>Welcome to RacerBot!</b>\nYour multi-chain wallets (NEAR, SOL, Base, Arbitrum, ETH, Zero, HyperEVM, Elysium, SUI &amp; Starknet) are ready.\n\n`
+    ? `🏎 <b>Welcome to RacerBot!</b>\nYour trading wallet is ready.\n\n`
     : `🏎 <b>RacerBot</b> • 💼 <b>W1</b> ⭐\n`;
   if (user?.fee_tier === 'super_ambassador') {
     text += `👑 <b>Super Ambassador</b> • 60% Referral • 30% Cashback\n`;
@@ -1017,7 +1036,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false, is
     text += `💰 Balance: <b>$0.00</b>\n\n`;
     text +=
       `<b>Quick Start:</b>\n` +
-      `1️⃣ Tap <b>📥 Deposit</b> to fund any chain (0% direct or 37-chain swap)\n` +
+      `1️⃣ Tap <b>📥 Deposit</b> to fund your wallet with crypto you already have\n` +
       `2️⃣ Tap <b>🛒 Buy Token</b> or paste any token CA / link to buy instantly`;
   }
 
@@ -1057,7 +1076,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false, is
 
   const keyboard = Markup.inlineKeyboard(mainButtons);
   const res = { text, keyboard };
-  if (!isNewUser) {
+  if (!isNewUser && !showAll) {
     mainMenuCache.set(telegramId, { data: res, expiresAt: Date.now() + 6_000 });
   }
   return res;
@@ -1072,9 +1091,21 @@ export async function buildPointsView(telegramId: number) {
   const leaders = await getPointsLeaderboard(5).catch(() => []);
 
   const msLeft = s.seasonEnd.getTime() - Date.now();
-  const timeLeft = msLeft > 0
-    ? `${Math.floor(msLeft / 86_400_000)}d ${Math.floor((msLeft % 86_400_000) / 3_600_000)}h left`
-    : 'Season ended';
+  // After the snapshot nothing earns Season 1 points, so the page stops listing ways to earn them
+  if (msLeft <= 0) {
+    const snapshot = s.seasonEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const seasonOverText =
+      `🏆 *RacerBot Points — Season 1 is over*\n\n` +
+      `The snapshot was taken on ${snapshot}. Your points are saved.\n\n` +
+      `⭐ *Your points*: \`${s.effectivePoints.toLocaleString('en-US')}\`\n` +
+      `🎖 *Rank*: \`#${s.rank}\` of ${Math.max(s.totalUsers, 1).toLocaleString('en-US')}\n\n` +
+      `_Points convert to $RACER at TGE. Season 2 will be announced in_ @racertrading.`;
+    return {
+      text: seasonOverText,
+      keyboard: Markup.inlineKeyboard([[cb('🔙 Back', 'menu_home', 'primary')]]),
+    };
+  }
+  const timeLeft = `${Math.floor(msLeft / 86_400_000)}d ${Math.floor((msLeft % 86_400_000) / 3_600_000)}h left`;
 
   const fmt = (n: number) => n.toLocaleString('en-US');
   const bd = s.breakdown;
@@ -3068,6 +3099,13 @@ export async function buildDcaDashboard(user: UserRecord) {
 }
 
 // ── User-Friendly Error Messages ────────────────────────────────────────
+/** A buy that failed for lack of funds offers 📥 Fund my wallet instead of a dead end. */
+async function replyBuyError(ctx: Context, err: any): Promise<void> {
+  const message = getUserFriendlyError(err);
+  const extra = isInsufficientFundsMessage(message) ? fundWalletKeyboard() : {};
+  await ctx.reply(`❌ ${message}`, extra).catch(() => { });
+}
+
 export function getUserFriendlyError(error: Error | string): string {
   const errorMsg = typeof error === 'string' ? error : (error.message || String(error));
   console.error('[USER_ERROR]', errorMsg);
@@ -4283,11 +4321,9 @@ export function evmLookupFailureMessage(address: string, err: any): string {
 // ── Multichain Deposit UI Builders (NEAR Intents 1Click) ────────────────────
 export function buildDepositDestinationPickerMenu() {
   const text =
-    `📥 <b>Deposit Funds into RacerBot</b>\n\n` +
-    `<b>Option 1 — Direct Deposit (0% Fee):</b>\n` +
-    `Already have NEAR, SOL, ETH, HYPE, ZRO, SUI, or STRK? Tap <b>Direct Wallet Addresses</b> below to copy your wallet address and send directly with zero bridge fees.\n\n` +
-    `<b>Option 2 — Cross-Chain Swap via NEAR Intents (1% Fee):</b>\n` +
-    `Swap from <b>37 blockchains</b> into your chosen RacerBot trading wallet below:`;
+    `🔄 <b>Swap in from another chain</b>\n\n` +
+    `Your coin is on a chain RacerBot doesn't hold directly? Swap it in from any of <b>37 chains</b>. Fee: 1%.\n\n` +
+    `<b>Which RacerBot wallet should receive it?</b>`;
 
   const rows: any[][] = [
     [cb('📋 Direct Wallet Addresses (0% Fee)', 'dep_direct_addresses', 'success')],
@@ -4307,7 +4343,7 @@ export function buildDepositDestinationPickerMenu() {
       cb('💎 Swap → Ethereum', 'dep_dest:eth', 'primary'),
     ],
     [
-      cb('🔙 Back to Wallet', 'menu_wallet', 'primary'),
+      cb('◀ Back', 'menu_multichain_deposit', 'primary'),
       cb('🏠 Main Menu', 'menu_home', 'primary'),
     ],
   ];
@@ -4323,12 +4359,10 @@ export function buildDepositChainPickerMenu(
   const destMeta = DEPOSIT_DESTINATIONS[destChain] || DEPOSIT_DESTINATIONS.near;
 
   const text =
-    `📥 <b>Universal Multi-Chain Deposit (37 Chains)</b>\n\n` +
-    `🎯 <b>Destination Wallet:</b> ${destMeta.icon} <b>${destMeta.name} (${destMeta.symbol})</b>\n` +
-    `Powered by <b>NEAR Intents (1Click)</b> — funds settle automatically into your main ${destMeta.name} trading wallet!\n\n` +
-    `• <i>100 bps Platform Fee</i>\n` +
-    (destChain === 'near' ? `• <i>Automatic Dual-Unwrap to native NEAR on arrival</i>\n` : '') +
-    `\n🪙 <b>Step 2: Select Source Blockchain:</b>`;
+    `🔄 <b>Swap in → ${destMeta.icon} ${destMeta.name}</b>\n\n` +
+    `The swap lands in your ${destMeta.name} wallet automatically. Fee: 1%.` +
+    (destChain === 'near' ? ` It arrives as plain NEAR.` : '') +
+    `\n\n<b>Which chain are you sending from?</b>`;
 
   const rows: any[] = [];
 
@@ -4356,10 +4390,7 @@ export function buildDepositChainPickerMenu(
 
   // Navigation
   rows.push([
-    cb('🔄 Change Destination Chain', 'menu_multichain_deposit', 'primary'),
-  ]);
-  rows.push([
-    cb('🔙 Back to Wallet', 'menu_wallet', 'primary'),
+    cb('◀ Back', 'dep_swap_menu', 'primary'),
     cb('🏠 Main Menu', 'menu_home', 'primary'),
   ]);
 
@@ -5108,6 +5139,12 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  // ── /help — How it works ──────────────────────────────────────────────────
+  bot.command('help', async (ctx) => {
+    const page = buildHelpPage(0);
+    await ctx.reply(page.text, { parse_mode: 'HTML', ...page.keyboard }).catch(() => { });
+  });
+
   // ── /menu — Open main menu ────────────────────────────────────────────────
   bot.command('menu', async (ctx) => {
     const telegramId = ctx.from!.id;
@@ -5278,23 +5315,47 @@ export function setupRoutes(bot: Telegraf): void {
     }
   });
 
+  // ☰ All features: the full menu from the empty-wallet home screen
+  bot.action('menu_full', async (ctx) => {
+    const telegramId = ctx.from!.id;
+    userPendingActions.delete(telegramId);
+    await ctx.answerCbQuery().catch(() => { });
+    try {
+      const menu = await buildMainMenu(telegramId, false, false, true);
+      await ctx.editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+        await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
+      });
+    } catch {
+      // handled
+    }
+  });
+
+  // ❓ How it works: four short pages
+  bot.action(/^help:(\d+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const page = buildHelpPage(Number((ctx as any).match[1]));
+    await (ctx as any).editMessageText(page.text, { parse_mode: 'HTML', ...page.keyboard }).catch(async () => {
+      await ctx.reply(page.text, { parse_mode: 'HTML', ...page.keyboard }).catch(() => { });
+    });
+  });
+
   // ── Quick Buy Prompt (Mobile-First First-Time Trader CTA) ─────────────────
   bot.action('menu_buy_prompt', async (ctx) => {
     const telegramId = ctx.from!.id;
     userPendingActions.delete(telegramId);
     await ctx.answerCbQuery().catch(() => { });
-    const text =
-      `🛒 <b>Buy Any Token</b>\n\n` +
-      `Paste a <b>token contract address (CA)</b> or link from <b>DexScreener, Pump.fun, Ref, or Birdeye</b> straight into this chat to open the instant buy card!\n\n` +
-      `<b>Supported Networks:</b>\n` +
-      `• ⬛ <b>NEAR</b> — e.g. <code>token.near</code>\n` +
-      `• 🟣 <b>Solana</b> — mint address or Pump.fun link\n` +
-      `• ⚡ <b>EVM</b> (Base, Arbitrum, ETH, Zero, HyperEVM, Elysium) — <code>0x...</code>\n` +
-      `• 🔷 <b>SUI</b> — <code>0x...::coin::COIN</code>\n` +
-      `• ✨ <b>Starknet</b> — <code>0x0...</code>`;
+    // Trending NEAR tokens a newcomer can tap; the screen still works without them
+    const trending = await withTimeout(
+      import('./racerAlpha.js').then(m => m.listAlphaTokens({ preset: 'trending', limit: 12 })),
+      2500,
+      'trending tokens timeout'
+    ).then(r => (r?.success ? r.tokens : [])).catch(() => []);
+    const tokenRows = trendingRows(trending, getShortTokenKey);
+    const text = buyTokenPromptText(tokenRows.length > 0);
     const keyboard = Markup.inlineKeyboard([
+      ...tokenRows,
       [
-        cb('📥 Deposit Funds', 'menu_multichain_deposit', 'success'),
+        cb('📥 Fund my wallet', 'menu_multichain_deposit', 'success'),
         cb('🎒 Your Bags', 'menu_holdings', 'primary'),
       ],
       [cb('🔙 Main Menu', 'menu_home', 'primary')],
@@ -5446,7 +5507,7 @@ export function setupRoutes(bot: Telegraf): void {
     }
     const tgId = ctx.from?.id;
     const isPriv = Boolean(tgId && PRIVATE_TRADING_ENABLED && isPrivateDeposit(tgId));
-    const menu = isPriv ? depositChainPicker(tgId, 'popular') : buildDepositDestinationPickerMenu();
+    const menu = isPriv ? depositChainPicker(tgId, 'popular') : buildDepositAssetPicker();
     const canEdit = typeof (ctx as any).editMessageText === 'function';
     if (canEdit && ctx.callbackQuery) {
       await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
@@ -5535,6 +5596,39 @@ export function setupRoutes(bot: Telegraf): void {
 
   bot.command(['deposit', 'multichain'], handleMultichainDeposit);
   bot.action('menu_multichain_deposit', handleMultichainDeposit);
+
+  // Swap in from another chain (1% fee): which RacerBot wallet receives it
+  bot.action('dep_swap_menu', async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const menu = buildDepositDestinationPickerMenu();
+    await (ctx as any).editMessageText(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(async () => {
+      await ctx.reply(menu.text, { parse_mode: 'HTML', ...menu.keyboard }).catch(() => { });
+    });
+  });
+
+  // One coin's deposit address, on the network to use
+  bot.action(/^dep_have:([a-z]+)$/, async (ctx) => {
+    await ctx.answerCbQuery().catch(() => { });
+    const asset = (ctx as any).match[1];
+    if (!isDepositAsset(asset)) return;
+    const telegramId = ctx.from!.id;
+    try {
+      let user = await getUserByTelegramId(telegramId);
+      if (!user) {
+        await onboardUser(telegramId);
+        user = await getUserByTelegramId(telegramId);
+      }
+      if (!user) throw new Error('Please send /start first.');
+      const u = (await ensureUserAllWallets(user).catch(() => user)) || user;
+      markUserActiveForDeposit(telegramId);
+      const screen = buildDepositAssetScreen(asset, u);
+      await (ctx as any).editMessageText(screen.text, { parse_mode: 'HTML', ...screen.keyboard }).catch(async () => {
+        await ctx.reply(screen.text, { parse_mode: 'HTML', ...screen.keyboard }).catch(() => { });
+      });
+    } catch (err: any) {
+      await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
+    }
+  });
 
   bot.action('noop', async (ctx) => {
     await ctx.answerCbQuery().catch(() => { });
@@ -11742,7 +11836,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         } catch (err: any) {
           console.error(`[BUY_FIXED] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
           if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
+          await replyBuyError(ctx, err);
         } finally {
           await releaseInFlight(guardKey);
         }
@@ -11800,7 +11894,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
         } catch (err: any) {
           console.error(`[BUY_PCT] Failed: user=${telegramId}, token=${tokenAddress}, error=${err?.message}`, err);
           if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
-          await ctx.reply(`❌ ${getUserFriendlyError(err)}`).catch(() => { });
+          await replyBuyError(ctx, err);
         } finally {
           await releaseInFlight(guardKey);
         }
@@ -13967,7 +14061,7 @@ Account: <code>${res.subaccountId}</code>
             console.warn(`[BUY] Buy failed for ${tokenAddress}:`, err?.message || err);
             if (procMsg) await ctx.deleteMessage(procMsg.message_id).catch(() => { });
             try {
-              await ctx.reply(`❌ ${getUserFriendlyError(err)}`);
+              await replyBuyError(ctx, err);
             } catch {
               console.error(`[BUY] Failed to send error message for ${tokenAddress}:`, err?.message || err);
             }
