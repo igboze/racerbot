@@ -44,9 +44,9 @@ beforeEach(() => {
   db.createFill.mockResolvedValue({ fillId: 'f1', inserted: true });
 });
 
-/** Settles within the time limit, or rejects saying it was still waiting */
-const within = <T>(p: Promise<T>, ms = 1000) =>
-  Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`still waiting after ${ms}ms`)), ms))]);
+/** Settles within the time limit, or rejects saying it was still waiting (recordFill is private, so `any`) */
+const within = (p: Promise<any>, ms = 1000): Promise<any> =>
+  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`still waiting after ${ms}ms`)), ms))]);
 
 describe('recordFill returns once the fill is saved', () => {
   it('for a buy, without waiting for the fee ledger, referrals, points or alerts', async () => {
