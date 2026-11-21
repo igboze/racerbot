@@ -4440,8 +4440,10 @@ export class SwapExecutor {
         tx_hash: txHash,
       });
 
+      // Bookkeeping and notifications (fee ledger, referrals, points, activity, alerts) run after the
+      // result returns: the user waits only for the fill and position, which the result is built from
       // Record fee in ledger and handle referral rewards (only if fill was inserted)
-      if (fillResult.inserted) {
+      if (fillResult.inserted) void (async () => {
         await recordFee(fillResult.fillId, feePaidNear.toString());
 
         await distributeTradeFeeRewards({
@@ -4562,7 +4564,7 @@ export class SwapExecutor {
             console.warn('[EXECUTOR] Failed to send trade_confirmed notification:', err.message);
           }
         }
-      }
+      })().catch((err: any) => console.warn('[EXECUTOR] Post-fill bookkeeping error (buy):', err?.message));
 
     } else {
       if (!position) {
@@ -4587,8 +4589,10 @@ export class SwapExecutor {
         tx_hash: txHash,
       });
 
+      // Bookkeeping and notifications (fee ledger, referrals, points, activity, alerts) run after the
+      // result returns: the user waits only for the fill and position, which the result is built from
       // Record fee in ledger and handle referral rewards (only if fill was inserted)
-      if (fillResult.inserted) {
+      if (fillResult.inserted) void (async () => {
         await recordFee(fillResult.fillId, feePaidNear.toString());
 
         await distributeTradeFeeRewards({
@@ -4662,7 +4666,7 @@ export class SwapExecutor {
         } catch (err: any) {
           console.warn('[EXECUTOR] Failed to send pnl_card notification:', err.message);
         }
-      }
+      })().catch((err: any) => console.warn('[EXECUTOR] Post-fill bookkeeping error (sell):', err?.message));
     }
     if (isBuy) {
       const nearSpentHuman = parseFloat(utils.format.formatNearAmount(amountIn));

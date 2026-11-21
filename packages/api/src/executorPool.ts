@@ -68,7 +68,7 @@ const RPC_CANDIDATES = [
   process.env.NEAR_RPC_URL,
   ...(process.env.RPC_PROVIDERS || '').split(',').map(s => s.trim()),
   'https://free.rpc.fastnear.com',
-  'https://rpc.mainnet.near.org',
+  // rpc.mainnet.near.org is shut down: it answers every call with a deprecation error
   'https://near.drpc.org',
   'https://rpc.intea.rs',
 ].filter((u): u is string => Boolean(u));
@@ -133,9 +133,34 @@ const signerLanes: SignerLane[] = parseControllerKeys(
   process.env.EXECUTOR_CONTROLLER_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '',
 ).map(key => ({ key, account: null, queue: Promise.resolve(), pending: 0 }));
 
+/**
+ * When the controller account cannot pay for gas, every RPC gives the same answer. Retrying on each of
+ * them, for every executor on every sweep, burned the shared RPC rate limits that user trades need;
+ * controller transactions pause instead until it is topped up.
+ */
+const UNFUNDED_PAUSE_MS = 10 * 60_000;
+let controllerUnfundedUntil = 0;
+
+export function isControllerUnfunded(now = Date.now()): boolean {
+  return now < controllerUnfundedUntil;
+}
+
+export function isOutOfGasError(message: string): boolean {
+  return /not enough balance for/i.test(message) || /lacktransferforgas|notenoughbalance/i.test(message);
+}
+
+function pauseUnfundedController(message: string): void {
+  if (!isControllerUnfunded()) {
+    logger.error(`${EXECUTOR_CONTROLLER} cannot pay for gas (${message}). Controller transactions are paused for ` +
+      `${UNFUNDED_PAUSE_MS / 60_000} minutes: top up ${EXECUTOR_CONTROLLER}.`);
+  }
+  controllerUnfundedUntil = Date.now() + UNFUNDED_PAUSE_MS;
+}
+
 /** Sign one transaction to `receiver` as the controller, with the least busy key (one nonce at a time per key) */
 async function controllerTx(receiver: string, txActions: any[]): Promise<any> {
   if (signerLanes.length === 0) throw new Error('Executor controller key is not configured');
+  if (isControllerUnfunded()) throw new Error(`${EXECUTOR_CONTROLLER} is out of NEAR for gas; controller transactions are paused`);
   const lane = signerLanes.reduce((best, l) => (l.pending < best.pending ? l : best));
   lane.pending++;
   const run = async () => {
@@ -156,6 +181,11 @@ async function controllerTx(receiver: string, txActions: any[]): Promise<any> {
         }
         return result;
       } catch (err: any) {
+        // Out of gas is the account, not the RPC: another RPC would only say the same
+        if (isOutOfGasError(String(err?.message || ''))) {
+          pauseUnfundedController(String(err?.message));
+          throw err;
+        }
         logger.warn(`Controller transaction on ${currentRpc} failed (${err?.message}); rotating RPC`);
         activeRpcIndex++;
         lastErr = err;
@@ -1191,6 +1221,8 @@ async function workerTick(): Promise<void> {
     }
   }
   if (!EXECUTORS_ENABLED) return;
+  // Steps 2-5 all spend the controller's gas: skip them while it is out of NEAR
+  if (isControllerUnfunded()) return;
   // 2. Delete executors whose close delay has passed
   for (const e of await listExecutorsByStatus(['exited'], CLOSE_DELAY_MS / 1000, 20)) {
     await finishClose(e).catch(err => logger.warn(`finish_close ${e.account_id}: ${err?.message}`));

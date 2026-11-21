@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { describe, expect, it } from 'vitest';
-import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, executorInitArgs, exitToIntentsArgs, extractExecutorEvents, ownsExecutor, parseControllerKeys, roundedReturn } from './executorPool.js';
+import { _chooseSizesForTest as chooseSizes, _intearHopsForTest as intearHops, executorInitArgs, exitToIntentsArgs, extractExecutorEvents, isControllerUnfunded, isOutOfGasError, ownsExecutor, parseControllerKeys, roundedReturn } from './executorPool.js';
 import { generatePrivateAccount, ownerHash } from './intentsPrivate.js';
 
 const NEAR = 10n ** 24n;
@@ -130,5 +130,18 @@ describe('ownsExecutor', () => {
     expect(ownsExecutor({ owner_hash: hash }, { owner_salt: 'salt1', payout_address: 'bob.near' })).toBe(false);
     expect(ownsExecutor({}, acct)).toBe(false);
     expect(ownsExecutor(null, acct)).toBe(false);
+  });
+});
+
+describe('controller out of gas', () => {
+  it('recognises the account being unable to pay, not a broken RPC', () => {
+    // The exact error production logged for racerbot.near
+    expect(isOutOfGasError('Not enough balance for racerbot.near (balance: 141813397862363878658052, cost: 150918949501666000000000)')).toBe(true);
+    expect(isOutOfGasError('{"error":"Rate limit exceeded","code":429}')).toBe(false);
+    expect(isOutOfGasError('Unknown RPC error')).toBe(false);
+  });
+
+  it('is not paused before anything has failed', () => {
+    expect(isControllerUnfunded()).toBe(false);
   });
 });
