@@ -30,6 +30,9 @@ export const ETHEREUM_MAINNET_CHAIN_ID = 1;
 export const ETHEREUM_TESTNET_CHAIN_ID = 11155111;
 export const ZERO_CHAIN_MAINNET_CHAIN_ID = 4242;
 export const ZERO_CHAIN_TESTNET_CHAIN_ID = 40001;
+// GIWA (Upbit's OP Stack L2): only the Sepolia testnet exists so far; mainnet is "under development".
+// GIWA_CHAIN_ID / GIWA_RPC_URL point the bot at mainnet once it launches, with no code change.
+export const GIWA_SEPOLIA_CHAIN_ID = 91342;
 
 export const HYPE_SYMBOL = 'HYPE';
 export const HYPE_DECIMALS = 18;
@@ -48,6 +51,9 @@ export const ARBITRUM_MAINNET_RPC = 'https://arb1.arbitrum.io/rpc';
 // eth.llamarpc.com started failing (HTTP 403/525) in Nov 2026, so Ethereum balances and trades broke
 export const ETHEREUM_MAINNET_RPC = 'https://ethereum-rpc.publicnode.com';
 export const ZERO_MAINNET_RPC = 'https://rpc.zero.network';
+// GIWA's own endpoints are rate-limited and "should not be used in production" (use a node provider then)
+export const GIWA_SEPOLIA_RPC = 'https://sepolia-rpc.giwa.io';
+export const GIWA_SEPOLIA_FLASHBLOCKS_RPC = 'https://sepolia-rpc-flashblocks.giwa.io';
 export const KLEOS_TOKEN_URL = 'https://www.thekleos.xyz/token';
 
 // Precompiles & System Contracts
@@ -62,6 +68,7 @@ export const BASE_EXPLORER_URL = 'https://basescan.org';
 export const ARBITRUM_EXPLORER_URL = 'https://arbiscan.io';
 export const ETHEREUM_EXPLORER_URL = 'https://etherscan.io';
 export const ZERO_EXPLORER_URL = 'https://zeroscan.io';
+export const GIWA_SEPOLIA_EXPLORER_URL = 'https://sepolia-explorer.giwa.io';
 
 // Default EVM Treasury Wallet for platform fees
 export const DEFAULT_EVM_TREASURY_ADDRESS = '0xb1f9551E64e1addF18462B09f04E14DC131451b1';
@@ -71,7 +78,15 @@ export const EVM_PLATFORM_FEE_BPS = 150n;
 export const ELYSIUM_SELL_FEE_BPS = 200n;
 export const EVM_BPS_DIVISOR = 10000n;
 
-export type EvmChain = 'hyperevm' | 'elysium' | 'base' | 'arbitrum' | 'ethereum' | 'zero';
+export type EvmChain = 'hyperevm' | 'elysium' | 'base' | 'arbitrum' | 'ethereum' | 'zero' | 'giwa';
+
+/**
+ * GIWA is groundwork only: off unless GIWA_ENABLED=on. Its testnet terms forbid promotional or commercial
+ * use without Dunamu's approval, and its tokens have no value, so it stays hidden from users until mainnet.
+ */
+export function isGiwaEnabled(): boolean {
+  return process.env.GIWA_ENABLED === 'on';
+}
 
 /** Supported EVM chains for trading and balances */
 /**
@@ -89,7 +104,8 @@ export function isEvmChainName(chain: unknown): chain is EvmChain {
     chain === 'base' ||
     chain === 'arbitrum' ||
     chain === 'ethereum' ||
-    chain === 'zero'
+    chain === 'zero' ||
+    chain === 'giwa'
   );
 }
 
@@ -100,6 +116,7 @@ export function getEvmNativeSymbol(chain: EvmChain): string {
     case 'base':
     case 'arbitrum':
     case 'ethereum':
+    case 'giwa':
       return ETH_SYMBOL;
     case 'hyperevm':
     case 'elysium':
@@ -122,6 +139,9 @@ export function getEvmExplorerUrl(chain: EvmChain, txHashOrAddress?: string): st
       break;
     case 'zero':
       base = ZERO_EXPLORER_URL;
+      break;
+    case 'giwa':
+      base = process.env.GIWA_EXPLORER_URL || GIWA_SEPOLIA_EXPLORER_URL;
       break;
     case 'elysium':
       base = ELYSIUM_MAINNET_EXPLORER_URL;
@@ -221,6 +241,9 @@ export const WETH_ETHEREUM = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
 export const ZERO_DEFAULT_ROUTER = '0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24';
 export const WZRO_ZERO = '0x6985884C4392D348587B19cb9eAAf157F13271cd';
 
+/** OP Stack predeploy, the same address on every OP chain (Base, GIWA, ...) */
+export const WETH_GIWA = '0x4200000000000000000000000000000000000006';
+
 export function getDefaultRouter(chain: EvmChain): string {
   switch (chain) {
     case 'base':
@@ -231,6 +254,9 @@ export function getDefaultRouter(chain: EvmChain): string {
       return process.env.ETHEREUM_ROUTER_ADDRESS || ETHEREUM_DEFAULT_ROUTER;
     case 'zero':
       return process.env.ZERO_ROUTER_ADDRESS || ZERO_DEFAULT_ROUTER;
+    case 'giwa':
+      // No official DEX on GIWA yet: no default, so nothing trades until GIWA_ROUTER_ADDRESS is set
+      return process.env.GIWA_ROUTER_ADDRESS || '';
     case 'elysium':
       return process.env.ELYSIUM_ROUTER_ADDRESS || '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45';
     case 'hyperevm':
@@ -249,6 +275,8 @@ export function getDefaultWrappedNative(chain: EvmChain): string {
       return WETH_ETHEREUM;
     case 'zero':
       return process.env.ZERO_WZRO_ADDRESS || WZRO_ZERO;
+    case 'giwa':
+      return WETH_GIWA;
     case 'elysium':
     case 'hyperevm':
     default:
@@ -357,6 +385,9 @@ export function getEvmRpcUrl(chain: EvmChain, isTestnet = false): string {
       return isTestnet
         ? process.env.ZERO_CHAIN_TESTNET_RPC_URL || 'https://rpc-testnet.zero.network'
         : process.env.ZERO_CHAIN_RPC_URL || process.env.ZERO_RPC_URL || ZERO_MAINNET_RPC;
+    case 'giwa':
+      // Until GIWA mainnet exists, both resolve to GIWA Sepolia
+      return process.env.GIWA_RPC_URL || GIWA_SEPOLIA_RPC;
     default:
       return HYPEREVM_MAINNET_RPC;
   }
@@ -376,6 +407,8 @@ export function getEvmChainId(chain: EvmChain, isTestnet = false): number {
       return isTestnet ? ETHEREUM_TESTNET_CHAIN_ID : ETHEREUM_MAINNET_CHAIN_ID;
     case 'zero':
       return isTestnet ? ZERO_CHAIN_TESTNET_CHAIN_ID : ZERO_CHAIN_MAINNET_CHAIN_ID;
+    case 'giwa':
+      return Number(process.env.GIWA_CHAIN_ID) || GIWA_SEPOLIA_CHAIN_ID;
     default:
       return HYPEREVM_MAINNET_CHAIN_ID;
   }

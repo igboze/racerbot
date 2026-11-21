@@ -21,6 +21,7 @@ import {
   getEvmNativeSymbol,
   type EvmChain,
   isZeroChainEnabled,
+  isGiwaEnabled,
 } from '@racerbot/shared';
 import {
   getUserByTelegramId,
@@ -185,11 +186,12 @@ export async function planEvmTokenSend(
     arbitrum: getEvmProvider('arbitrum', false),
     ethereum: getEvmProvider('ethereum', false),
     zero: getEvmProvider('zero', false),
+    giwa: getEvmProvider('giwa', false),
   };
   // If a specific chain was selected, check that chain; otherwise scan all supported EVM chains
   const chainsToCheck: EvmChain[] = preferredChain
     ? [preferredChain]
-    : ['base', 'arbitrum', ...(isZeroChainEnabled() ? ['zero' as const] : []), 'hyperevm', 'elysium', 'ethereum'];
+    : ['base', 'arbitrum', ...(isZeroChainEnabled() ? ['zero' as const] : []), 'hyperevm', 'elysium', 'ethereum', ...(isGiwaEnabled() ? ['giwa' as const] : [])];
   for (const chain of chainsToCheck) {
     const provider = providers[chain];
     if (!(await isContract(provider, token))) continue;

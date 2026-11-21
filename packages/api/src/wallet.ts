@@ -70,6 +70,7 @@ import {
   type VenueName,
   type SupportedChain,
   isTradableVenue,
+  isGiwaEnabled,
   isKleosTradingEnabled,
   getStrkUsdPrice,
   getEthUsdPrice,
@@ -1202,6 +1203,36 @@ export async function lookupRonsPadToken(address: string): Promise<TokenInfoResu
  * Tradeable unless KLEOS_TRADING=off, or the coin has no HYPE route (it trades only
  * against another Kleos coin), which makes the card read-only with the reason.
  */
+/**
+ * A token on GIWA (Upbit's OP Stack L2), read-only. GIWA is testnet-only so far: its tokens have no value and
+ * its terms forbid commercial use, so nothing here trades. Only looked up while GIWA_ENABLED=on.
+ */
+export async function lookupGiwaToken(address: string): Promise<TokenInfoResult | null> {
+  if (!isGiwaEnabled()) return null;
+  const meta = await getErc20TokenInfo(address, 'giwa', false).catch(() => null);
+  if (!meta) return null;
+  return {
+    address: meta.address,
+    chain: 'giwa',
+    name: meta.name,
+    symbol: meta.symbol,
+    decimals: meta.decimals,
+    total_supply: meta.totalSupply,
+    price: '0',
+    price_usd: '0',
+    liquidity: '0',
+    liquidity_usd: '0',
+    market_cap: 0,
+    market_cap_usd: 0,
+    near_usd: 0,
+    venue: 'giwa',
+    launchpad: 'GIWA testnet',
+    tradeable: false,
+    buy_tax_pct: 0,
+    sell_tax_pct: 0,
+  } as TokenInfoResult;
+}
+
 export async function lookupKleosToken(address: string, boardCoin?: any): Promise<TokenInfoResult | null> {
   const [coin, meta, hypeUsd] = await Promise.all([
     boardCoin !== undefined ? Promise.resolve(boardCoin) : getKleosBoardCoin(address).catch(() => null),
@@ -1971,6 +2002,13 @@ export async function getTokenInfo(rawTokenAddress: string, forceRefresh = false
         : null;
 
       if (!tokenMeta && !dexscreenerData) {
+        // GIWA last, and only while switched on: a read-only card instead of "not found"
+        const giwaToken = await lookupGiwaToken(tokenAddress).catch(() => null);
+        if (giwaToken) {
+          tokenInfoCache.set(tokenAddress, { data: giwaToken, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          tokenInfoCache.set(rawTokenAddress, { data: giwaToken, expiresAt: Date.now() + TOKEN_INFO_MEM_TTL_MS });
+          return giwaToken;
+        }
         throw await explainMissingEvmToken(tokenAddress);
       }
 
@@ -3180,6 +3218,8 @@ export async function getUserEvmBalances(user: UserRecord): Promise<{
   arbitrum: { raw: bigint; formatted: string; human: number };
   ethereum: { raw: bigint; formatted: string; human: number };
   zero: { raw: bigint; formatted: string; human: number };
+  /** Zero unless GIWA_ENABLED=on: GIWA is groundwork, so it is not queried for users while switched off */
+  giwa: { raw: bigint; formatted: string; human: number };
 }> {
   const address = user.evm_address;
   const zeroBal = { raw: 0n, formatted: '0.0', human: 0 };
@@ -3192,10 +3232,11 @@ export async function getUserEvmBalances(user: UserRecord): Promise<{
       arbitrum: zeroBal,
       ethereum: zeroBal,
       zero: zeroBal,
+      giwa: zeroBal,
     };
   }
 
-  const [hyperevm, elysium, base, arbitrum, ethereum, zero] = await Promise.all([
+  const [hyperevm, elysium, base, arbitrum, ethereum, zero, giwa] = await Promise.all([
     getEvmNativeBalance(address, 'hyperevm', process.env.HYPEREVM_TESTNET === 'true').catch(() => zeroBal),
     getEvmNativeBalance(address, 'elysium', false).catch(() => zeroBal),
     getEvmNativeBalance(address, 'base', false).catch(() => zeroBal),
@@ -3203,9 +3244,10 @@ export async function getUserEvmBalances(user: UserRecord): Promise<{
     getEvmNativeBalance(address, 'ethereum', false).catch(() => zeroBal),
     // Zero is not live yet (mainnet 2026-11-30): skip its dead RPC instead of timing out on every wallet view
     isZeroChainEnabled() ? getEvmNativeBalance(address, 'zero', false).catch(() => zeroBal) : Promise.resolve(zeroBal),
+    isGiwaEnabled() ? getEvmNativeBalance(address, 'giwa', false).catch(() => zeroBal) : Promise.resolve(zeroBal),
   ]);
 
-  return { address, hyperevm, elysium, base, arbitrum, ethereum, zero };
+  return { address, hyperevm, elysium, base, arbitrum, ethereum, zero, giwa };
 }
 
 /** Gas budgeted for an Elysium HYPE transfer (the inbox path's fixed limit); unused gas is never charged */
@@ -3964,6 +4006,7 @@ export interface UserBalances {
   arbitrumBalanceFormatted?: string;
   ethereumBalanceFormatted?: string;
   zeroBalanceFormatted?: string;
+  giwaBalanceFormatted?: string;
   hypeUsd?: number;
   zroUsd?: number;
 }
@@ -4125,6 +4168,7 @@ export async function getUserBalances(
         arbitrumBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.arbitrum.formatted : '0.0000',
         ethereumBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.ethereum.formatted : '0.0000',
         zeroBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.zero.formatted : '0.0000',
+        giwaBalanceFormatted: evmBalRes.status === 'fulfilled' && evmBalRes.value ? evmBalRes.value.giwa.formatted : '0.0000',
         hypeUsd: hypePrice,
         zroUsd: zroPrice,
       };

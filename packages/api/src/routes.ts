@@ -212,6 +212,7 @@ import {
   KLEOS_TOKEN_URL,
   RONSPAD_TOKEN_URL,
   isKleosTradingEnabled,
+  isGiwaEnabled,
   isElysiumDirectSend,
   isEvmChainName,
   evmStoredAmount,
@@ -634,6 +635,7 @@ export type ResolvedChain =
   | 'arbitrum'
   | 'ethereum'
   | 'zero'
+  | 'giwa'
   | 'near';
 
 export function resolveTokenChain(tokenAddress: string, chainHint?: string): ResolvedChain {
@@ -644,11 +646,12 @@ export function resolveTokenChain(tokenAddress: string, chainHint?: string): Res
   if (chainHint === 'arbitrum') return 'arbitrum';
   if (chainHint === 'ethereum') return 'ethereum';
   if (chainHint === 'zero') return 'zero';
+  if (chainHint === 'giwa') return 'giwa';
   if (chainHint === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium')) return 'elysium';
   if (chainHint === 'hyperevm') return 'hyperevm';
   if (isValidEvmAddress(tokenAddress) && !tokenAddress.endsWith('.near')) {
     const cached = getCachedTokenInfo(tokenAddress);
-    if (cached?.chain && ['base', 'arbitrum', 'ethereum', 'zero', 'elysium', 'hyperevm'].includes(cached.chain)) {
+    if (cached?.chain && ['base', 'arbitrum', 'ethereum', 'zero', 'giwa', 'elysium', 'hyperevm'].includes(cached.chain)) {
       return cached.chain as any;
     }
     return 'hyperevm';
@@ -671,7 +674,7 @@ export function getPositionChain(pos: { chain?: string | null; token_address: st
 }
 
 export function getChainNativeUnit(tokenAddressOrChain: string, user?: UserRecord | null, chainHint?: string): string {
-  const chain = ['solana', 'starknet', 'sui', 'hyperevm', 'elysium', 'base', 'arbitrum', 'ethereum', 'zero', 'near'].includes(tokenAddressOrChain)
+  const chain = ['solana', 'starknet', 'sui', 'hyperevm', 'elysium', 'base', 'arbitrum', 'ethereum', 'zero', 'giwa', 'near'].includes(tokenAddressOrChain)
     ? tokenAddressOrChain
     : resolveTokenChain(tokenAddressOrChain, chainHint);
 
@@ -685,6 +688,7 @@ export function getChainNativeUnit(tokenAddressOrChain: string, user?: UserRecor
     case 'base':
     case 'arbitrum':
     case 'ethereum':
+    case 'giwa':
       return 'ETH';
     case 'zero':
       return 'ZRO';
@@ -713,6 +717,7 @@ export function getChainUnitBtn(tokenAddressOrChain: string, user?: UserRecord |
     case 'base':
     case 'arbitrum':
     case 'ethereum':
+    case 'giwa':
       return 'ETH';
     case 'zero':
       return 'ZRO';
@@ -737,6 +742,7 @@ export function getPositionUnitBtn(pos: { chain?: string | null; token_address: 
     case 'base':
     case 'arbitrum':
     case 'ethereum':
+    case 'giwa':
       return 'ETH';
     case 'zero':
       return 'ZRO';
@@ -880,6 +886,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false, is
   let arbitrumBalFormatted = '0.0000';
   let zeroBalFormatted = '0.0000';
   let ethereumBalFormatted = '0.0000';
+  let giwaBalFormatted = '0.0000';
   let hyperevmUsdFormatted = '$0';
   let elysiumUsdFormatted = '$0';
   let baseUsdFormatted = '$0';
@@ -916,6 +923,7 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false, is
       arbitrumBalFormatted = b.arbitrumBalanceFormatted || '0.0000';
       zeroBalFormatted = b.zeroBalanceFormatted || '0.0000';
       ethereumBalFormatted = b.ethereumBalanceFormatted || '0.0000';
+      giwaBalFormatted = b.giwaBalanceFormatted || '0.0000';
 
       const nearVisible = isChainVisible(user, 'near');
       const suiVisible = isChainVisible(user, 'sui');
@@ -1015,6 +1023,10 @@ export async function buildMainMenu(telegramId: number, forceRefresh = false, is
   }
   if (elysiumVisible && hasPos(elysiumBalFormatted)) {
     fundedLines.push(`🏛️ Elysium: <b>${elysiumBalFormatted}</b> HYPE (${elysiumUsdFormatted})`);
+  }
+  // GIWA is testnet-only so far: shown when switched on, never counted in the USD total
+  if (isGiwaEnabled() && evmAddress && hasPos(giwaBalFormatted)) {
+    fundedLines.push(`🧱 GIWA (testnet): <b>${giwaBalFormatted}</b> ETH`);
   }
   if (ethereumVisible && evmAddress && hasPos(ethereumBalFormatted)) {
     fundedLines.push(`💎 Ethereum: <b>${ethereumBalFormatted}</b> ETH (${ethereumUsdFormatted})`);
@@ -1763,6 +1775,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
   const isArbitrum = evmResolvedChain === 'arbitrum';
   const isZero = evmResolvedChain === 'zero';
   const isEthereum = evmResolvedChain === 'ethereum';
+  // GIWA (Upbit's L2) is testnet-only so far: its tokens show read-only, never tradeable
+  const isGiwa = evmResolvedChain === 'giwa';
   const isHyperEvm = evmResolvedChain === 'hyperevm';
   const isElysium = evmResolvedChain === 'elysium' || tokenAddress.toLowerCase().endsWith('.elysium');
   // Kleos and RonsPad coins live on Elysium mainnet (99901) and trade through the same executor
@@ -1783,9 +1797,11 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ? 'Zero'
         : isEthereum
           ? 'Ethereum'
-          : isHyperEvm
-            ? 'HyperEVM'
-            : 'Elysium';
+          : isGiwa
+            ? 'GIWA testnet'
+            : isHyperEvm
+              ? 'HyperEVM'
+              : 'Elysium';
   const nearModeBuyPresets = isNearUsdcMode && !userRecord?.custom_buy_amounts ? [5, 15, 50] : parseBuyAmounts(userRecord?.custom_buy_amounts);
 
   // Check if user has an active RaceFleet and whether it holds this target token
@@ -1811,7 +1827,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
         ? ((b as any)?.zeroBalanceFormatted || '0.0000')
         : isEthereum
           ? ((b as any)?.ethereumBalanceFormatted || '0.0000')
-          : isHyperEvm
+          : isGiwa
+            ? ((b as any)?.giwaBalanceFormatted || '0.0000')
+            : isHyperEvm
             ? (b?.hyperevmBalanceFormatted || '0.0000')
             : (b?.elysiumBalanceFormatted || '0.0000');
 
@@ -1927,6 +1945,8 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     venueText = `🅾️ *Venue*: Zero Network DEX (LayerZero L1)`;
   } else if (isEthereum) {
     venueText = `💎 *Venue*: Ethereum DEX (Uniswap V2 / V3)`;
+  } else if (isGiwa) {
+    venueText = `🧱 *Venue*: GIWA (testnet, read-only)`;
   } else if (isHyperEvm) {
     venueText = `⚡ *Venue*: HyperEVM DEX (Mainnet)`;
   } else if (isKleos) {
@@ -1964,6 +1984,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
           Markup.button.url('🔍 Etherscan', `https://etherscan.io/token/${tokenInfo.address}`),
           Markup.button.url('📈 DexScreener', `https://dexscreener.com/ethereum/${tokenInfo.address}`),
         ]);
+      } else if (isGiwa) {
+        // DexScreener does not list GIWA; Blockscout is its explorer
+        rows.push([Markup.button.url('🔍 GIWA Explorer', getEvmExplorerUrl('giwa', tokenInfo.address).replace('/address/', '/token/'))]);
       } else if (isHyperEvm) {
         rows.push([
           Markup.button.url('🔍 HypurrScan', `https://hypurrscan.io/token/${tokenInfo.address}`),
@@ -2449,7 +2472,9 @@ export async function buildTokenCard(tokenAddress: string, telegramId?: number, 
     } else {
       text += isKleos
         ? `🏛️ ${tokenInfo.trade_block_reason ? tokenInfo.trade_block_reason.replace(/[_*`[\]]/g, ' ') : `RacerBot can’t trade ${padName} coins right now.`} Tap *View on ${padName}* to trade there.`
-        : (tokenInfo.trade_block_reason ? `⚠️ ${tokenInfo.trade_block_reason.replace(/[_*`[\]]/g, ' ')}` : '⚠️ Trading venue is not directly supported.');
+        : isGiwa
+          ? '🧱 GIWA is still in testnet, where tokens have no value. RacerBot shows GIWA tokens read-only until GIWA mainnet launches.'
+          : (tokenInfo.trade_block_reason ? `⚠️ ${tokenInfo.trade_block_reason.replace(/[_*`[\]]/g, ' ')}` : '⚠️ Trading venue is not directly supported.');
       keyboard = Markup.inlineKeyboard([
         ...linkRows,
         ...shareButtonRow,

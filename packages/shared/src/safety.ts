@@ -205,6 +205,7 @@ const EVM_CHAIN_LABELS: Record<EvmChain, string> = {
   hyperevm: 'HyperEVM',
   elysium: 'Elysium',
   ethereum: 'Ethereum',
+  giwa: 'GIWA',
 };
 
 export async function checkEvmTokenSafety(tokenAddress: string, chain?: EvmChain): Promise<TokenSafetyReport> {

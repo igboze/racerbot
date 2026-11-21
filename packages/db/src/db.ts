@@ -27,7 +27,8 @@ export type DbChain =
   | 'base'
   | 'arbitrum'
   | 'ethereum'
-  | 'zero';
+  | 'zero'
+  | 'giwa';
 
 export interface UserRecord {
   id: string;
