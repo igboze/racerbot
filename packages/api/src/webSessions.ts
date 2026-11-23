@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import { createLogger, createRedis, type RedisClient } from '@racerbot/shared';
 import { REDIS_URL } from './config.js';
+import { clientIp } from './abuseShield.js';
 
 const logger = createLogger('web-sessions');
 
@@ -217,8 +218,7 @@ export function describeDevice(userAgent?: string): string {
   return os ? `${browser} on ${os}` : browser;
 }
 
-/** The client's IP as Railway's proxy reports it */
+/** The client's IP (Railway's X-Real-IP) and browser, for sign-in alerts and the sessions list */
 export function requestOrigin(req: any): WebSessionOrigin {
-  const forwarded = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
-  return { ip: forwarded || req?.ip || undefined, userAgent: String(req?.headers?.['user-agent'] || '') || undefined };
+  return { ip: clientIp(req), userAgent: String(req?.headers?.['user-agent'] || '') || undefined };
 }
