@@ -130,7 +130,8 @@ export type SupportedChain =
   | 'base'
   | 'arbitrum'
   | 'ethereum'
-  | 'zero';
+  | 'zero'
+  | 'giwa';
 
 export interface SwapRequest {
   user_id: string;

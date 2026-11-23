@@ -4,7 +4,7 @@
  * Plain words only: no chain IDs, bps or protocol names before the user has funded the wallet.
  */
 import { Markup } from 'telegraf';
-import { isZeroChainEnabled } from '@racerbot/shared';
+import { isZeroChainEnabled, isGiwaEnabled } from '@racerbot/shared';
 
 type Style = 'success' | 'danger' | 'primary';
 function btn(text: string, data: string, style?: Style): any {
@@ -100,7 +100,7 @@ export function buildHelpPage(index: number): { text: string; keyboard: ReturnTy
 
 // ── Deposit: what do you have? ───────────────────────────────────────────────
 
-export type DepositAsset = 'near' | 'sol' | 'eth' | 'hype' | 'sui' | 'strk' | 'zro';
+export type DepositAsset = 'near' | 'sol' | 'eth' | 'hype' | 'sui' | 'strk' | 'zro' | 'giwa';
 
 interface WalletAddresses {
   subaccount_id?: string | null;
@@ -132,10 +132,16 @@ const DEPOSIT_ASSETS: Record<DepositAsset, {
   sui: { button: '🔷 SUI', coin: 'SUI', network: 'Sui', address: u => u.sui_address, notifies: true },
   strk: { button: '✨ STRK', coin: 'STRK or ETH', network: 'Starknet', address: u => u.starknet_address, notifies: true },
   zro: { button: '🅾️ ZRO', coin: 'ZRO', network: 'Zero', address: u => u.evm_address, notifies: false },
+  // GIWA (Upbit's L2) is testnet-only so far: its ETH is free from the faucet and has no value
+  giwa: {
+    button: '🧱 GIWA testnet ETH', coin: 'testnet ETH', network: 'GIWA Sepolia', address: u => u.evm_address, notifies: false,
+    note: 'GIWA is still in testnet: its ETH has no value. Get some free at faucet.giwa.io.',
+  },
 };
 
 export function isDepositAsset(v: string): v is DepositAsset {
   if (v === 'zro' && !isZeroChainEnabled()) return false;
+  if (v === 'giwa' && !isGiwaEnabled()) return false;
   return Object.prototype.hasOwnProperty.call(DEPOSIT_ASSETS, v);
 }
 
@@ -150,6 +156,7 @@ export function buildDepositAssetPicker(): { text: string; keyboard: ReturnType<
     [btn(a.near.button, 'dep_have:near', 'success'), btn(a.sol.button, 'dep_have:sol', 'success')],
     [btn(a.eth.button, 'dep_have:eth', 'success'), btn(a.hype.button, 'dep_have:hype', 'success')],
     [btn(a.sui.button, 'dep_have:sui', 'success'), btn(a.strk.button, 'dep_have:strk', 'success'), ...(isZeroChainEnabled() ? [btn(a.zro.button, 'dep_have:zro', 'success')] : [])],
+    ...(isGiwaEnabled() ? [[btn(a.giwa.button, 'dep_have:giwa', 'primary')]] : []),
     [btn('🔄 Coin on another chain? Swap in (1% fee)', 'dep_swap_menu', 'primary')],
     [btn('🏠 Main Menu', 'menu_home', 'primary')],
   ];
