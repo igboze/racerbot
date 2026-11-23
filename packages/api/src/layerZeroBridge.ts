@@ -24,6 +24,7 @@ import {
   quoteStargateSend,
   getBridgeChains,
   isBridgeChainEnabled,
+  getBridgeFeeRecipient,
   getZroUsdPrice,
   type LayerZeroChain,
   type StargateAsset,
@@ -75,6 +76,9 @@ export interface BridgeExecutionResult {
   minAmountReceived: string;
   nativeFee: string;
   gasPaid: string;
+  /** RacerBot's fee in the bridged asset, and its transfer to the treasury (empty if it did not go through) */
+  platformFee: string;
+  platformFeeTxHash: string;
   recipient: string;
   approxDurationSec: number;
   explorerUrl: string;
@@ -341,7 +345,7 @@ export async function executeLayerZeroBridge(params: {
   const nativeBal = await wallet.provider!.getBalance(wallet.address);
   const requiredNativeGas = quote.nativeFee + quote.sourceGasEstimate;
   const totalRequiredNative = isNativeTransfer
-    ? amountLD + requiredNativeGas
+    ? quote.grossLD + requiredNativeGas
     : requiredNativeGas;
   const minReserve = sourceConfig.minNativeGasReserve;
 
@@ -406,6 +410,23 @@ export async function executeLayerZeroBridge(params: {
   const receipt = await tx.wait(1);
   const gasPaid = receipt ? ethers.formatEther(receipt.gasUsed * receipt.gasPrice) : '0';
 
+  // RacerBot's bridge fee, only once the bridge went through. Never fails the bridge: a fee that
+  // cannot be sent is logged and the user keeps it.
+  let platformFeeTxHash = '';
+  const treasury = getBridgeFeeRecipient();
+  if (quote.platformFeeLD > 0n && ethers.isAddress(treasury) && receipt?.status === 1) {
+    try {
+      const feeTx = isNativeTransfer
+        ? await wallet.sendTransaction({ to: treasury, value: quote.platformFeeLD })
+        : await (new ethers.Contract(poolInfo.tokenAddress, ['function transfer(address to, uint256 amount) returns (bool)'], wallet) as any)
+            .transfer(treasury, quote.platformFeeLD);
+      await feeTx.wait(1);
+      platformFeeTxHash = feeTx.hash;
+    } catch (err: any) {
+      logger.warn(`Bridge fee transfer failed (user ${params.userId}, ${params.sourceChain} ${params.asset}): ${err?.message}`);
+    }
+  }
+
   return {
     success: true,
     txHash: tx.hash,
@@ -417,6 +438,8 @@ export async function executeLayerZeroBridge(params: {
     minAmountReceived: ethers.formatUnits(sendParam.minAmountLD, poolInfo.decimals),
     nativeFee: quote.humanNativeFee,
     gasPaid,
+    platformFee: ethers.formatUnits(quote.platformFeeLD, poolInfo.decimals),
+    platformFeeTxHash,
     recipient,
     approxDurationSec: quote.approxDurationSec,
     explorerUrl: `${sourceConfig.explorerUrl}/tx/${tx.hash}`,

@@ -154,6 +154,18 @@ export function isBridgeChainEnabled(chain: string): chain is LayerZeroChain {
 
 export type StargateAsset = 'USDC' | 'ETH' | 'USDT' | 'ZRO';
 
+/** RacerBot's bridge fee in basis points (BRIDGE_FEE_BPS, default 50 = 0.5%, capped at 5%) */
+export function getBridgeFeeBps(): number {
+  const raw = process.env.BRIDGE_FEE_BPS;
+  const bps = raw === undefined || raw === '' ? 50 : Number(raw);
+  return Number.isFinite(bps) ? Math.min(500, Math.max(0, Math.floor(bps))) : 50;
+}
+
+/** Where bridge fees go: the EVM treasury (a plain wallet, the same address on every chain) */
+export function getBridgeFeeRecipient(): string {
+  return process.env.EVM_TREASURY_ADDRESS || process.env.TREASURY_EVM_ADDRESS || '0xb1f9551E64e1addF18462B09f04E14DC131451b1';
+}
+
 export interface StargatePoolInfo {
   poolAddress: string;
   tokenAddress: string; // underlying token address (or zero address for native ETH)
@@ -263,6 +275,11 @@ export interface LayerZeroBridgeQuote {
   recipient: string;
   /** What Stargate says arrives after its fee, before slippage */
   amountReceivedLD: bigint;
+  /** What leaves the user's wallet: the bridged amount plus RacerBot's fee */
+  grossLD: bigint;
+  /** RacerBot's bridge fee, paid to the treasury on the source chain after the bridge is sent */
+  platformFeeLD: bigint;
+  platformFeeBps: number;
   /** The exact SendParam this quote priced: send() must use it unchanged */
   sendParam: StargateSendParam;
 }
@@ -453,6 +470,8 @@ export async function quoteStargateSend(params: {
   recipientAddress: string;
   slippageBps?: number;
   provider?: ethers.Provider;
+  /** Overrides BRIDGE_FEE_BPS (tests, or 0 for internal moves) */
+  feeBps?: number;
 }): Promise<LayerZeroBridgeQuote> {
   const sourceConfig = LZ_CHAINS[params.sourceChain];
   const destConfig = LZ_CHAINS[params.destChain];
@@ -471,9 +490,14 @@ export async function quoteStargateSend(params: {
     throw new Error(`Stargate cannot deliver ${params.asset} to ${destConfig.name}. Pick another asset or chain.`);
   }
 
-  // Stargate moves amounts in 6 shared decimals and refunds nothing below that: trim the dust first
+  // The user picks what leaves their wallet; RacerBot's fee comes out of it, the rest is bridged.
+  // Stargate moves amounts in 6 shared decimals and refunds nothing below that: trim the dust off the
+  // bridged part (the trimmed dust stays with the fee, so the total never exceeds what the user picked).
+  const grossLD = ethers.parseUnits(params.humanAmount, poolInfo.decimals);
+  const platformFeeBps = params.feeBps ?? getBridgeFeeBps();
   const dustUnit = 10n ** BigInt(Math.max(0, poolInfo.decimals - poolInfo.sharedDecimals));
-  const amountLD = (ethers.parseUnits(params.humanAmount, poolInfo.decimals) / dustUnit) * dustUnit;
+  const amountLD = ((grossLD - (grossLD * BigInt(platformFeeBps)) / 10000n) / dustUnit) * dustUnit;
+  const platformFeeLD = grossLD - amountLD;
   if (amountLD <= 0n) {
     throw new Error('Bridge amount must be greater than zero');
   }
@@ -525,7 +549,7 @@ export async function quoteStargateSend(params: {
   // Total native required: messagingFee + sourceGas (+ amount if bridging native ETH)
   let totalRequiredNative = nativeFee + sourceGasEstimate;
   if (poolInfo.tokenAddress === ethers.ZeroAddress) {
-    totalRequiredNative += amountLD;
+    totalRequiredNative += grossLD;
   }
 
   return {
@@ -544,5 +568,8 @@ export async function quoteStargateSend(params: {
     poolAddress: poolInfo.poolAddress,
     recipient: params.recipientAddress,
     sendParam,
+    grossLD,
+    platformFeeLD,
+    platformFeeBps,
   };
 }

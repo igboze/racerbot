@@ -595,6 +595,8 @@ export {
   buildStargateSendParam,
   quoteStargateSend,
   ZRO_OFT_ADDRESS,
+  getBridgeFeeBps,
+  getBridgeFeeRecipient,
   getBridgeChains,
   isBridgeChainEnabled,
 } from './layerZero.js';

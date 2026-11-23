@@ -136,7 +136,9 @@ export async function buildBridgeMenu(
     });
     const decimals = STARGATE_V2_POOLS[sourceChain]?.[asset]?.decimals ?? 6;
     const receives = Number(ethers.formatUnits(q.amountReceivedLD, decimals));
+    const fee = Number(ethers.formatUnits(q.platformFeeLD, decimals));
     quoteLines =
+      `• RacerBot fee (${q.platformFeeBps / 100}%): <b>${asset === 'USDC' || asset === 'USDT' ? fee.toFixed(2) : fee.toFixed(asset === 'ETH' ? 6 : 4)} ${asset}</b>\n` +
       `• LayerZero Messaging Fee: <b>${parseFloat(q.humanNativeFee).toFixed(5)} ${sourceConfig.nativeSymbol}</b>\n` +
       `• You receive: <b>~${asset === 'ETH' ? receives.toFixed(5) : asset === 'ZRO' ? receives.toFixed(4) : receives.toFixed(2)} ${asset}</b>\n` +
       `• Est. Cross-Chain Delivery: <b>~${q.approxDurationSec}s</b>\n`;
@@ -434,6 +436,7 @@ export function registerLayerZeroRoutes(bot: Telegraf<Context>): void {
         `🛣️ <b>Route:</b> ${sourceConfig.icon} ${sourceConfig.name} ➔ ${destConfig.icon} ${destConfig.name}\n` +
         `⏱️ <b>Est. Delivery:</b> ~${result.approxDurationSec} seconds\n` +
         `💰 <b>Messaging Fee Paid:</b> ${result.nativeFee} ${sourceConfig.nativeSymbol}\n` +
+        (Number(result.platformFee) > 0 ? `🏁 <b>RacerBot fee:</b> ${result.platformFee} ${result.asset}\n` : '') +
         `🔗 <b>Source Tx:</b> <code>${result.txHash}</code>\n\n` +
         `🔒 <b>Destination Sovereign EOA:</b>\n` +
         `<code>${escapeHtml(result.recipient)}</code>\n` +

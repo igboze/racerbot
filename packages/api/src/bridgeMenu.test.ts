@@ -27,7 +27,7 @@ const { buildBridgeMenu } = await import('./layerZeroRoutes.js');
 
 const buttons = (menu: any): { text: string; data: string }[] =>
   menu.keyboard.reply_markup.inline_keyboard.flat().map((b: any) => ({ text: b.text, data: b.callback_data }));
-const goodQuote = { humanNativeFee: '0.000745', amountReceivedLD: 24_990_000n, approxDurationSec: 45 };
+const goodQuote = { humanNativeFee: '0.000745', amountReceivedLD: 24_870_000n, approxDurationSec: 45, platformFeeLD: 125_000n, platformFeeBps: 50 };
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -41,7 +41,8 @@ describe('bridge menu', () => {
     const data = buttons(menu).map((b) => b.data);
     expect(data).toContain('lz_confirm:base:arbitrum:USDC:25.0');
     expect(data.some((d) => d.includes('zero'))).toBe(false);
-    expect(menu.text).toContain('You receive: <b>~24.99 USDC</b>');
+    expect(menu.text).toContain('RacerBot fee (0.5%): <b>0.13 USDC</b>');
+    expect(menu.text).toContain('You receive: <b>~24.87 USDC</b>');
   });
 
   it('falls back from a Zero route someone still has in an old message', async () => {
@@ -51,7 +52,7 @@ describe('bridge menu', () => {
   });
 
   it('offers ETH amounts in ETH, never "$10" that would send 10 ETH', async () => {
-    quoteStargateSend.mockResolvedValue({ ...goodQuote, amountReceivedLD: 9_990_000_000_000_000n });
+    quoteStargateSend.mockResolvedValue({ ...goodQuote, amountReceivedLD: 9_940_000_000_000_000n, platformFeeLD: 50_000_000_000_000n });
     const menu = await buildBridgeMenu(1, { sourceChain: 'base', destChain: 'arbitrum', asset: 'ETH', amount: '10.0' });
     const amountButtons = buttons(menu).filter((b) => b.data.startsWith('lz_amt:'));
     expect(amountButtons.map((b) => b.text)).toEqual(['0.005 ETH', '✅ 0.01 ETH', '0.025 ETH', '0.05 ETH']);
@@ -74,13 +75,14 @@ describe('bridge menu', () => {
   });
 
   it('bridges ZRO between any two chains, with ZRO amounts', async () => {
-    quoteStargateSend.mockResolvedValue({ humanNativeFee: '0.000149', amountReceivedLD: 10n * 10n ** 18n, approxDurationSec: 45 });
+    quoteStargateSend.mockResolvedValue({ humanNativeFee: '0.000149', amountReceivedLD: 995n * 10n ** 16n, approxDurationSec: 45, platformFeeLD: 5n * 10n ** 16n, platformFeeBps: 50 });
     const menu = await buildBridgeMenu(1, { sourceChain: 'arbitrum', destChain: 'bsc', asset: 'ZRO', amount: '10.0' });
     const all = buttons(menu);
     expect(all.find((b) => b.data === 'lz_asset:arbitrum:bsc:ZRO')?.text).toContain('✅');
     expect(all.filter((b) => b.data.startsWith('lz_amt:')).map((b) => b.text)).toEqual(['5 ZRO', '✅ 10 ZRO', '25 ZRO', '50 ZRO']);
     expect(all.map((b) => b.data)).toContain('lz_confirm:arbitrum:bsc:ZRO:10.0');
-    expect(menu.text).toContain('You receive: <b>~10.0000 ZRO</b>');
+    expect(menu.text).toContain('RacerBot fee (0.5%): <b>0.0500 ZRO</b>');
+    expect(menu.text).toContain('You receive: <b>~9.9500 ZRO</b>');
   });
 
   it('moves a route the asset cannot take to one it can (USDT is not on Base)', async () => {
