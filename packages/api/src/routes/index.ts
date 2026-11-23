@@ -1080,21 +1080,9 @@ router.post('/alpha/trade/intent-quote', async (req, res) => {
 // ── Private DEX Trading & Intent Execution Endpoint ────────────────────────
 router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
   try {
-    let user = await resolveAlphaUser(req);
-    if (!user) {
-      const walletClaim = req.headers?.['x-wallet-address'] || req.body?.walletAddress;
-      if (walletClaim && typeof walletClaim === 'string') {
-        const { getUserBySubaccount, getUserByEvmAddress, getUserBySolanaAddress } = await import('@racerbot/db');
-        const candidate = (await getUserBySubaccount(walletClaim).catch(() => null)) ||
-                          (await getUserByEvmAddress(walletClaim).catch(() => null)) ||
-                          (await getUserBySolanaAddress(walletClaim).catch(() => null));
-        // A private SELL on an executor closes the position and returns NEAR directly on-chain
-        // to the executor's owner payout address, so user funds can never be misdirected
-        if (candidate && req.body?.isPrivateTrade && req.body?.side === 'SELL') {
-          user = candidate;
-        }
-      }
-    }
+    // Only the signed-in owner trades. A named wallet address used to be enough for a private SELL,
+    // which let anyone close another user's private positions whenever they liked.
+    const user = await resolveAlphaUser(req);
     if (!user) {
       res.status(401).json({ error: 'Please connect your NEAR wallet or Telegram to trade.' });
       return;

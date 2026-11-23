@@ -20,7 +20,7 @@ import {
   withdrawPrivate,
   WalletNeedsNearError,
 } from '../executorPool.js';
-import { verifiedUser, unprovenWalletClaim, fundsOutAllowed, FUNDS_OUT_NEEDS_TELEGRAM } from './verifiedUser.js';
+import { verifiedUser, fundsOutAllowed, FUNDS_OUT_NEEDS_TELEGRAM } from './verifiedUser.js';
 import { buildRecoveryKit } from '../recoveryKit.js';
 import { generateQrBuffer, generateWalletDeepLink, getTokenByKey, SUPPORTED_CHAINS, unitsToRaw } from '../multichainDeposit.js';
 import { listWithdrawDestinations, quoteWithdrawToChain, withdrawToChain, type WithdrawRequest } from '../crossChainWithdraw.js';
@@ -36,17 +36,8 @@ const toNear = (y: bigint) => Number(y / 10n ** 18n) / 1e6;
 const NEAR_ACCOUNT = /^(([a-z\d]+[-_])*[a-z\d]+\.)+([a-z\d]+[-_])*[a-z\d]+$|^[0-9a-f]{64}$|^0x[0-9a-f]{40}$/i;
 
 export function registerConfidentialRoutes(router: Router): void {
-  const authed = async (req: any, res: any, allowClaimForRead = false): Promise<UserRecord | null> => {
-    let user = await verifiedUser(req).catch(() => null);
-    if (!user?.id && allowClaimForRead && (req.method === 'GET' || req.method === 'HEAD')) {
-      const claim = unprovenWalletClaim(req);
-      if (claim) {
-        const { getUserBySubaccount, getUserBySolanaAddress, getUserByEvmAddress } = await import('@racerbot/db');
-        user = (await getUserBySubaccount(claim).catch(() => null)) ||
-               (await getUserByEvmAddress(claim).catch(() => null)) ||
-               (await getUserBySolanaAddress(claim).catch(() => null));
-      }
-    }
+  const authed = async (req: any, res: any): Promise<UserRecord | null> => {
+    const user = await verifiedUser(req).catch(() => null);
     if (!user?.id) {
       res.status(401).json({ error: 'Sign in with Telegram, or connect your wallet and approve the sign-in message, to use private trading.' });
       return null;
@@ -77,9 +68,12 @@ export function registerConfidentialRoutes(router: Router): void {
     return user;
   };
 
+  // Private balance, executor accounts, positions and withdrawal history: only for the signed-in owner.
+  // (It used to answer anyone naming a wallet address, which is public, so anyone could see who owns
+  // which executors and what they hold.)
   router.get('/alpha/confidential', async (req, res) => {
     try {
-      const user = await authed(req, res, true);
+      const user = await authed(req, res);
       if (!user) return;
       res.json({ success: true, ...(await confidentialOverview(user)) });
     } catch (err: any) {
