@@ -71,10 +71,9 @@ async function call(route: string, headers: Record<string, string>, body: any = 
 describe('private trading routes', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('serves read-only overview for a connected wallet address', async () => {
+  it('does not show the private overview to someone who only names the wallet address', async () => {
     const res = await call('GET /alpha/confidential', { 'x-wallet-address': managed.subaccount_id });
-    expect(res.statusCode).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.statusCode).toBe(401);
   });
 
   it('refuses mutations with only a bare wallet-address header', async () => {
