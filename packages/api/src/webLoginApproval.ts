@@ -29,7 +29,7 @@ export async function askWebLoginApproval(ctx: Context, sessionId: string): Prom
   const who = ctx.from?.username ? `@${ctx.from.username}` : String(ctx.from?.id ?? '');
   await ctx.reply(
     `🔐 <b>Log in to the RacerBot web app?</b>\n\n`
-    + `This gives a browser full access to your RacerBot account <code>${esc(who)}</code>, including trading and withdrawals.\n\n`
+    + `This gives a browser full access to your RacerBot account <code>${esc(who)}</code>, so it can trade with your wallet. Withdrawals still need this chat.\n\n`
     + `<b>Only approve if you just tapped "Connect Telegram" on the RacerBot web app yourself.</b> `
     + `If someone sent you this link, tap Deny.`,
     {

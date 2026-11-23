@@ -16,6 +16,7 @@ import {
 import { REDIS_URL, MASTER_KEY, PUBLIC_URL, TELEGRAM_BOT_TOKEN } from './config.js';
 import { getBotInstance } from './notify.js';
 import { createSubaccount } from './wallet.js';
+import { issueWebSession, verifyWebSession, describeDevice, type WebSessionMethod, type WebSessionOrigin } from './webSessions.js';
 
 const logger = createLogger('auth-session');
 
@@ -32,11 +33,12 @@ export interface AuthSessionData {
   firstName?: string;
   authToken?: string;
   linkedAt?: number;
+  /** The browser that asked to sign in, shown to the owner before they approve */
+  origin?: WebSessionOrigin;
 }
 
 // In-memory fallback if Redis is temporarily unreachable
 const inMemorySessions = new Map<string, AuthSessionData>();
-const inMemoryTokens = new Map<string, { userId: string; telegramId: number; expiresAt: number }>();
 const inMemoryWalletChallenges = new Map<string, WalletAuthChallenge>();
 
 export interface WalletAuthChallenge {
@@ -128,18 +130,36 @@ function getAuthRedis(): RedisClient | null {
 }
 
 const SESSION_TTL_SECONDS = 600; // 10 minutes
-const TOKEN_TTL_SECONDS = 30 * 24 * 3600; // 30 days
+
+/** Starts a web session and messages the owner about it (with a button to log it out) */
+async function startWebSession(
+  user: { id: string; telegramId: number },
+  method: WebSessionMethod,
+  origin: WebSessionOrigin | undefined,
+  label: string,
+  prefix?: string,
+  silent = false,
+): Promise<string> {
+  const { token, session } = await issueWebSession({ userId: user.id, telegramId: user.telegramId, method, origin, prefix });
+  if (silent) return token;
+  const { sendSecurityAlert } = await import('./securityAlerts.js');
+  void sendSecurityAlert({ userId: user.id, telegramId: user.telegramId }, {
+    kind: 'web_login', method: label, sid: session.sid, ip: session.ip, device: describeDevice(session.userAgent),
+  });
+  return token;
+}
 
 /**
  * 1. Create a new auth session requested by the WebApp
  */
-export async function createAuthSession(): Promise<{ sessionId: string; deepLink: string }> {
+export async function createAuthSession(origin?: WebSessionOrigin): Promise<{ sessionId: string; deepLink: string }> {
   const sessionId = 'sess_' + crypto.randomBytes(16).toString('hex');
   const now = Date.now();
   const sessionData: AuthSessionData = {
     sessionId,
     status: 'pending',
     createdAt: now,
+    origin: origin ? { ip: origin.ip?.slice(0, 64), userAgent: origin.userAgent?.slice(0, 160) } : undefined,
   };
 
   const redis = getAuthRedis();
@@ -160,7 +180,9 @@ export async function createAuthSession(): Promise<{ sessionId: string; deepLink
  */
 export async function linkAuthSession(
   sessionId: string,
-  telegramUser: { id: number; username?: string; first_name?: string }
+  telegramUser: { id: number; username?: string; first_name?: string },
+  /** inMiniApp: proven by Telegram's own initData inside the user's Telegram, so no sign-in alert */
+  opts: { inMiniApp?: boolean; origin?: WebSessionOrigin } = {},
 ): Promise<{ success: boolean; session?: AuthSessionData; user?: UserRecord; reason?: string }> {
   const redis = getAuthRedis();
   let sessionData: AuthSessionData | null = null;
@@ -195,8 +217,10 @@ export async function linkAuthSession(
     return { success: false, reason: 'Failed to find or create user profile' };
   }
 
-  // Generate long-lived WebApp auth token (bearer token)
-  const authToken = 'racer_tok_' + crypto.randomBytes(24).toString('hex');
+  const authToken = await startWebSession(
+    { id: user.id, telegramId: telegramUser.id }, opts.inMiniApp ? 'miniapp' : 'telegram', opts.origin ?? sessionData.origin,
+    opts.inMiniApp ? 'Telegram mini app' : 'Telegram link approved in this chat', undefined, opts.inMiniApp === true,
+  );
 
   sessionData.status = 'linked';
   sessionData.userId = user.id;
@@ -206,18 +230,10 @@ export async function linkAuthSession(
   sessionData.authToken = authToken;
   sessionData.linkedAt = Date.now();
 
-  const tokenPayload = {
-    userId: user.id,
-    telegramId: telegramUser.id,
-    expiresAt: Date.now() + TOKEN_TTL_SECONDS * 1000,
-  };
-
   if (redis) {
     await redis.set(`auth:session:${sessionId}`, JSON.stringify(sessionData), SESSION_TTL_SECONDS);
-    await redis.set(`auth:token:${authToken}`, JSON.stringify(tokenPayload), TOKEN_TTL_SECONDS);
   } else {
     inMemorySessions.set(sessionId, sessionData);
-    inMemoryTokens.set(authToken, tokenPayload);
   }
 
   return { success: true, session: sessionData, user };
@@ -294,33 +310,8 @@ export async function claimAuthSession(sessionId: string): Promise<AuthSessionDa
  * 4. Verify an auth token sent in the Authorization: Bearer header
  */
 export async function verifyAuthToken(token: string): Promise<{ userId: string; telegramId: number } | null> {
-  if (!token) return null;
-  const redis = getAuthRedis();
-
-  if (redis) {
-    try {
-      const raw = await redis.get(`auth:token:${token}`);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed.expiresAt && Date.now() <= parsed.expiresAt) {
-          return { userId: parsed.userId, telegramId: parsed.telegramId };
-        }
-      }
-    } catch (err: any) {
-      logger.warn('Redis auth token lookup failed; checking process-local session:', err?.message);
-    }
-  }
-
-  const mem = inMemoryTokens.get(token);
-  if (mem) {
-    if (Date.now() > mem.expiresAt) {
-      inMemoryTokens.delete(token);
-      return null;
-    }
-    return { userId: mem.userId, telegramId: mem.telegramId };
-  }
-
-  return null;
+  const session = await verifyWebSession(token);
+  return session ? { userId: session.userId, telegramId: session.telegramId } : null;
 }
 
 export async function createWalletAuthChallenge(accountIdInput: string, chainInput?: string): Promise<{
@@ -546,6 +537,8 @@ export async function authenticateWalletUser(params: {
   chain?: WalletAuthChain;
   walletName?: string;
   proof: WalletAuthProof;
+  /** The browser signing in, shown in the owner's sign-in alert */
+  origin?: WebSessionOrigin;
 }): Promise<{
   success: boolean;
   authToken?: string;
@@ -652,27 +645,11 @@ export async function authenticateWalletUser(params: {
       logger.warn(`Could not provision inner intent wallet for user ${user.id}:`, confErr?.message);
     }
 
-    const authToken = 'racer_tok_wallet_' + crypto.randomBytes(20).toString('hex');
-    const tokenPayload = {
-      userId: user.id,
-      telegramId: Number(user.telegram_id || 0),
-      expiresAt: Date.now() + TOKEN_TTL_SECONDS * 1000,
-    };
-
-    const redis = getAuthRedis();
-    if (redis) {
-      await redis.set(`auth:token:${authToken}`, JSON.stringify(tokenPayload), TOKEN_TTL_SECONDS);
-    } else {
-      inMemoryTokens.set(authToken, tokenPayload);
-    }
-
-    {
-      const { sendSecurityAlert } = await import('./securityAlerts.js');
-      const short = accountId.length > 16 ? `${accountId.slice(0, 8)}…${accountId.slice(-6)}` : accountId;
-      void sendSecurityAlert({ userId: user.id, telegramId: user.telegram_id }, {
-        kind: 'web_login', method: `${chain.toUpperCase()} wallet ${short}`,
-      });
-    }
+    const short = accountId.length > 16 ? `${accountId.slice(0, 8)}…${accountId.slice(-6)}` : accountId;
+    const authToken = await startWebSession(
+      { id: user.id, telegramId: Number(user.telegram_id || 0) }, 'wallet', params.origin,
+      `${chain.toUpperCase()} wallet ${short}`, 'racer_tok_wallet_',
+    );
 
     return {
       success: true,
@@ -773,6 +750,7 @@ export interface TelegramVerificationRequest {
   expiresAt: number;
   /** Wrong codes entered so far; the request locks at MAX_CODE_ATTEMPTS */
   attempts?: number;
+  origin?: WebSessionOrigin;
 }
 
 const inMemoryVerifications = new Map<string, TelegramVerificationRequest>();
@@ -922,6 +900,7 @@ export async function requestTelegramVerification(usernameInput: string, origin:
         status: 'pending',
         createdAt: now,
         expiresAt,
+        origin: { ip: origin.ip?.slice(0, 64), userAgent: origin.userAgent?.slice(0, 160) },
       };
 
       inMemoryVerifications.set(requestId, vreq);
@@ -1027,37 +1006,17 @@ export async function verifyTelegramCode(requestId: string, codeInput: string): 
   }
 
   // Generate auth token
-  const authToken = 'racer_tok_' + crypto.randomBytes(24).toString('hex');
+  const authToken = await startWebSession(
+    { id: vreq.userId, telegramId: vreq.telegramId }, 'code', vreq.origin, 'sign-in code',
+  );
   vreq.status = 'approved';
   vreq.authToken = authToken;
 
-  const tokenPayload = {
-    userId: vreq.userId,
-    telegramId: vreq.telegramId,
-    expiresAt: Date.now() + TOKEN_TTL_SECONDS * 1000,
-  };
-
   const redis = getAuthRedis();
   if (redis) {
-    await redis.set(`auth:token:${authToken}`, JSON.stringify(tokenPayload), TOKEN_TTL_SECONDS).catch(() => {});
     await redis.set(`auth:vreq:${requestId}`, JSON.stringify(vreq), 300).catch(() => {});
   }
-  inMemoryTokens.set(authToken, tokenPayload);
   inMemoryVerifications.set(requestId, vreq);
-
-  // Notify user in Telegram that connection was successful
-  try {
-    const bot = getBotInstance();
-    if (bot && vreq.telegramId) {
-      bot.telegram.sendMessage(
-        vreq.telegramId,
-        `✅ <b>WebApp Connection Approved!</b>\n\n` +
-        `Your Telegram account is now securely linked to the RacerBot WebApp.\n` +
-        `You can now execute trades and view your confidential alpha keys on the web.`,
-        { parse_mode: 'HTML' }
-      ).catch(() => {});
-    }
-  } catch {}
 
   return {
     success: true,
@@ -1074,22 +1033,16 @@ export async function approveTelegramVerification(requestId: string, telegramId:
   if (!vreq) return false;
   if (vreq.telegramId !== telegramId) return false;
 
-  const authToken = 'racer_tok_' + crypto.randomBytes(24).toString('hex');
+  const authToken = await startWebSession(
+    { id: vreq.userId, telegramId: vreq.telegramId }, 'code', vreq.origin, 'sign-in code',
+  );
   vreq.status = 'approved';
   vreq.authToken = authToken;
 
-  const tokenPayload = {
-    userId: vreq.userId,
-    telegramId: vreq.telegramId,
-    expiresAt: Date.now() + TOKEN_TTL_SECONDS * 1000,
-  };
-
   const redis = getAuthRedis();
   if (redis) {
-    await redis.set(`auth:token:${authToken}`, JSON.stringify(tokenPayload), TOKEN_TTL_SECONDS).catch(() => {});
     await redis.set(`auth:vreq:${requestId}`, JSON.stringify(vreq), 300).catch(() => {});
   }
-  inMemoryTokens.set(authToken, tokenPayload);
   inMemoryVerifications.set(requestId, vreq);
   return true;
 }

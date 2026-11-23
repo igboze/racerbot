@@ -53,10 +53,11 @@ router.get('/health', (_req, res) => {
 // ── WebApp <-> Telegram Auth Session & Wallet Selector Bridge ───────────────
 
 // 1. Create a pairing session for the WebApp
-router.post('/auth/session/create', async (_req, res) => {
+router.post('/auth/session/create', async (req, res) => {
   try {
     const { createAuthSession } = await import('../authSession.js');
-    const session = await createAuthSession();
+    const { requestOrigin } = await import('../webSessions.js');
+    const session = await createAuthSession(requestOrigin(req));
     res.json({ success: true, ...session });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to create auth session' });
@@ -91,11 +92,8 @@ router.post('/auth/telegram/request-verification', codeLoginLimit, async (req, r
     }
     const { username } = req.body;
     const { requestTelegramVerification } = await import('../authSession.js');
-    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-    const result = await requestTelegramVerification(username, {
-      ip: forwarded || req.ip,
-      userAgent: String(req.headers['user-agent'] || ''),
-    });
+    const { requestOrigin } = await import('../webSessions.js');
+    const result = await requestTelegramVerification(username, requestOrigin(req));
     if (!result.success) {
       res.status(400).json({ error: result.reason });
       return;
@@ -179,8 +177,9 @@ router.post('/auth/tma', async (req, res) => {
       return;
     }
     const { linkAuthSession, createAuthSession } = await import('../authSession.js');
-    const { sessionId } = await createAuthSession();
-    const linked = await linkAuthSession(sessionId, { id: userId });
+    const { requestOrigin } = await import('../webSessions.js');
+    const { sessionId } = await createAuthSession(requestOrigin(req));
+    const linked = await linkAuthSession(sessionId, { id: userId }, { inMiniApp: true });
     res.json({
       success: true,
       token: linked.session?.authToken,
@@ -312,6 +311,7 @@ router.post('/auth/wallet-login', async (req, res) => {
       chain,
       walletName: walletName || (chain ? `${String(chain).toUpperCase()} Wallet` : 'Connected Wallet'),
       proof,
+      origin: (await import('../webSessions.js')).requestOrigin(req),
     });
 
     if (!result.success) {
@@ -1600,10 +1600,11 @@ router.post('/alpha/creator/signal', async (req, res) => {
     }
     if (!effectiveTraderId) {
       const { updateCreatorProfile } = await import('../racerAlpha.js');
-      const fallbackHandle = (user.username || ('trader_' + user.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10))).toLowerCase();
+      // Never publish the Telegram username: the trader picks a public handle in their profile
+      const fallbackHandle = ('trader_' + user.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)).toLowerCase();
       await updateCreatorProfile(user.id, {
         handle: fallbackHandle,
-        displayName: user.username || 'Alpha Trader',
+        displayName: 'Alpha Trader',
         walletAddress: user.subaccount_id || user.id,
       });
       const db = await (await import('@racerbot/db')).getDb();

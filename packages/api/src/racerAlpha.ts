@@ -2800,13 +2800,8 @@ export async function updateCreatorProfile(userId: string, data: {
       );
     }
 
-    // Firmly bind the username to this wallet address in users table (1 username per wallet)
-    await db.query(
-      `UPDATE users
-       SET username = $1
-       WHERE id::text = $2 OR subaccount_id = $3`,
-      [handle, canonicalUserId, wallet]
-    ).catch(() => {});
+    // The handle lives on the trader profile only: users.username stays the real Telegram username
+    // (the bot keeps it in sync), so a public handle never becomes a way to reach or sign in to an account.
 
     return { success: true, handle };
   } else {

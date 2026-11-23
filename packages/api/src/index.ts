@@ -438,6 +438,7 @@ async function main(): Promise<void> {
     { command: 'racedrop', description: '🎁 RaceDrop Red Packet' },
     { command: 'card', description: '🏁 My NEAR Racer Card' },
     { command: 'settings', description: '⚙️ Settings' },
+    { command: 'websessions', description: '🖥 Web app sign-ins' },
   ]).catch((err) => logger.warn('Failed to set Telegram commands', { error: err?.message }));
 
   
@@ -458,6 +459,7 @@ async function main(): Promise<void> {
     { command: 'racedrop', description: '🎁 RaceDrop Red Packet' },
     { command: 'card', description: '🏁 My NEAR Racer Card' },
     { command: 'settings', description: '⚙️ Settings' },
+    { command: 'websessions', description: '🖥 Web app sign-ins' },
   ]).catch((err) => logger.warn('Failed to set Telegram commands', { error: err?.message }));
 
   
