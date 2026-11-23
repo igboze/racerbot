@@ -777,8 +777,76 @@ export interface TelegramVerificationRequest {
 
 const inMemoryVerifications = new Map<string, TelegramVerificationRequest>();
 
+/**
+ * Username + code sign-in is off unless CODE_LOGIN_ENABLED=on. Anyone can type anyone's username,
+ * so it let strangers (a script, in Nov 2026) DM users codes and Approve buttons for their own browser.
+ * The WebApp signs in with the Telegram link instead, which the account owner opens and approves in their own chat.
+ */
+export function isCodeLoginEnabled(): boolean {
+  return process.env.CODE_LOGIN_ENABLED === 'on';
+}
+
 /** A 6-digit code allows a million guesses: lock the request after a few wrong ones. */
 export const MAX_CODE_ATTEMPTS = 5;
+
+/**
+ * Code DMs one account can receive per hour. Anyone can type any username into the WebApp, so without
+ * this a script could flood a user with codes (hoping for a mistaken Approve tap) and get 5 fresh guesses
+ * per request. With it: at most 3 DMs and 15 guesses an hour per account, wherever the requests come from.
+ */
+export const MAX_CODE_DMS_PER_HOUR = 3;
+const CODE_DM_WINDOW_MS = 60 * 60 * 1000;
+const inMemoryDmLog = new Map<string, number[]>();
+const inMemoryPendingByUser = new Map<string, string>();
+
+/** Where a code request came from, shown to the account owner so they can tell it is not them */
+export interface VerificationOrigin {
+  ip?: string;
+  userAgent?: string;
+}
+
+async function recentCodeDms(userId: string): Promise<number[]> {
+  const redis = getAuthRedis();
+  let log: number[] | null = null;
+  if (redis) {
+    const raw = await redis.get(`auth:vreq_dms:${userId}`).catch(() => null);
+    if (raw) {
+      try { log = JSON.parse(raw); } catch { log = null; }
+    }
+  }
+  if (!log) log = inMemoryDmLog.get(userId) ?? [];
+  const since = Date.now() - CODE_DM_WINDOW_MS;
+  return log.filter((ts) => ts > since);
+}
+
+async function recordCodeDm(userId: string, log: number[]): Promise<void> {
+  const next = [...log, Date.now()];
+  inMemoryDmLog.set(userId, next);
+  const redis = getAuthRedis();
+  if (redis) await redis.set(`auth:vreq_dms:${userId}`, JSON.stringify(next), CODE_DM_WINDOW_MS / 1000).catch(() => {});
+}
+
+async function pendingRequestFor(userId: string): Promise<TelegramVerificationRequest | null> {
+  const redis = getAuthRedis();
+  const id = (redis ? await redis.get(`auth:vreq_pending:${userId}`).catch(() => null) : null) ?? inMemoryPendingByUser.get(userId);
+  if (!id) return null;
+  const vreq = await getTelegramVerification(id);
+  if (!vreq || vreq.status !== 'pending' || Date.now() > vreq.expiresAt || (vreq.attempts ?? 0) >= MAX_CODE_ATTEMPTS) return null;
+  return vreq;
+}
+
+/** Runs one code request per account at a time, so a burst cannot slip several DMs past the checks */
+const userLocks = new Map<string, Promise<unknown>>();
+function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = userLocks.get(userId) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  userLocks.set(userId, tail);
+  tail.then(() => { if (userLocks.get(userId) === tail) userLocks.delete(userId); });
+  return run;
+}
+
+const clip = (s: string | undefined, n: number) => (s || '').replace(/[<>&]/g, '').slice(0, n);
 
 async function saveTelegramVerification(vreq: TelegramVerificationRequest): Promise<void> {
   const ttl = Math.max(1, Math.ceil((vreq.expiresAt - Date.now()) / 1000));
@@ -791,7 +859,7 @@ async function saveTelegramVerification(vreq: TelegramVerificationRequest): Prom
  * 6. Initiate a safe Telegram username verification request.
  * Checks the DB for the user, creates a 6-digit code, and pings their DM.
  */
-export async function requestTelegramVerification(usernameInput: string): Promise<{
+export async function requestTelegramVerification(usernameInput: string, origin: VerificationOrigin = {}): Promise<{
   success: boolean;
   requestId?: string;
   maskedHandle?: string;
@@ -825,63 +893,82 @@ export async function requestTelegramVerification(usernameInput: string): Promis
       };
     }
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const requestId = 'vreq_' + crypto.randomBytes(12).toString('hex');
-    const now = Date.now();
-    const expiresAt = now + 5 * 60 * 1000; // 5 minutes
-
-    const vreq: TelegramVerificationRequest = {
-      requestId,
-      userId: user.id,
-      telegramId: Number(user.telegram_id),
-      username: user.username || raw,
-      subaccountId: user.subaccount_id,
-      code,
-      status: 'pending',
-      createdAt: now,
-      expiresAt,
-    };
-
-    inMemoryVerifications.set(requestId, vreq);
-    const redis = getAuthRedis();
-    if (redis) {
-      await redis.set(`auth:vreq:${requestId}`, JSON.stringify(vreq), 300).catch(() => {});
-    }
-
-    // Trigger Telegram Bot Security DM
-    try {
-      const bot = getBotInstance();
-      if (bot && user.telegram_id) {
-        await bot.telegram.sendMessage(
-          Number(user.telegram_id),
-          `🔐 <b>RacerBot WebApp Connection Request</b>\n\n` +
-          `A browser session is requesting to connect your account: <b>@${user.username || raw}</b>\n\n` +
-          `🔢 <b>Your 6-Digit Verification Code:</b>\n` +
-          `👉 <code>${code}</code> 👈\n\n` +
-          `<i>Enter this code in your browser, or tap Approve below.</i>\n\n` +
-          `⚠️ <i>If you did not request this, tap Reject to protect your account. Never share your verification code.</i>`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '✅ Approve Connection', callback_data: `tgauth_approve:${requestId}` },
-                  { text: '⛔ Reject / Deny', callback_data: `tgauth_deny:${requestId}` },
-                ],
-              ],
-            },
-          }
-        ).catch((err: any) => logger.warn('Failed to dispatch verification DM:', err?.message));
+    return await withUserLock(user.id, async () => {
+      // One open request per account: asking again returns it instead of sending another DM
+      const open = await pendingRequestFor(user.id);
+      if (open) {
+        logger.warn(`[AUTH] Code request for user ${user.id} (@${user.username || raw}) from ${origin.ip || '?'}: reusing pending ${open.requestId}`);
+        return { success: true, requestId: open.requestId, maskedHandle: `@${user.username || raw}` };
       }
-    } catch (err: any) {
-      logger.warn('Error triggering bot verification:', err?.message);
-    }
+      const dms = await recentCodeDms(user.id);
+      if (dms.length >= MAX_CODE_DMS_PER_HOUR) {
+        logger.warn(`[AUTH] Code request for user ${user.id} (@${user.username || raw}) from ${origin.ip || '?'} refused: ${dms.length} code DMs in the last hour`);
+        return { success: false, reason: 'Too many sign-in codes were requested for this account. Try again in an hour.' };
+      }
+      logger.info(`[AUTH] Sending sign-in code DM to user ${user.id} (@${user.username || raw}) for ${origin.ip || '?'} (${clip(origin.userAgent, 60)})`);
 
-    return {
-      success: true,
-      requestId,
-      maskedHandle: `@${user.username || raw}`,
-    };
+      const code = crypto.randomInt(100000, 1000000).toString();
+      const requestId = 'vreq_' + crypto.randomBytes(12).toString('hex');
+      const now = Date.now();
+      const expiresAt = now + 5 * 60 * 1000; // 5 minutes
+
+      const vreq: TelegramVerificationRequest = {
+        requestId,
+        userId: user.id,
+        telegramId: Number(user.telegram_id),
+        username: user.username || raw,
+        subaccountId: user.subaccount_id,
+        code,
+        status: 'pending',
+        createdAt: now,
+        expiresAt,
+      };
+
+      inMemoryVerifications.set(requestId, vreq);
+      inMemoryPendingByUser.set(user.id, requestId);
+      const redis = getAuthRedis();
+      if (redis) {
+        await redis.set(`auth:vreq:${requestId}`, JSON.stringify(vreq), 300).catch(() => {});
+        await redis.set(`auth:vreq_pending:${user.id}`, requestId, 300).catch(() => {});
+      }
+      await recordCodeDm(user.id, dms);
+
+      // Trigger Telegram Bot Security DM
+      try {
+        const bot = getBotInstance();
+        if (bot && user.telegram_id) {
+          await bot.telegram.sendMessage(
+            Number(user.telegram_id),
+            `🔐 <b>RacerBot WebApp sign-in request</b>\n\n` +
+            `Someone is trying to sign in to your account (<b>@${user.username || raw}</b>) on the RacerBot WebApp.\n` +
+            `🌐 From: <code>${clip(origin.ip, 45) || 'unknown'}</code>${origin.userAgent ? ` · ${clip(origin.userAgent, 60)}` : ''}\n\n` +
+            `🔢 <b>Your 6-Digit Verification Code:</b>\n` +
+            `👉 <code>${code}</code> 👈\n\n` +
+            `⚠️ <b>Only approve if you are signing in yourself right now.</b> Approving lets that browser trade with your wallet for 30 days.\n` +
+            `<i>Not you? Tap Reject. Never share this code.</i>`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '✅ Approve Connection', callback_data: `tgauth_approve:${requestId}` },
+                    { text: '⛔ Reject / Deny', callback_data: `tgauth_deny:${requestId}` },
+                  ],
+                ],
+              },
+            }
+          ).catch((err: any) => logger.warn('Failed to dispatch verification DM:', err?.message));
+        }
+      } catch (err: any) {
+        logger.warn('Error triggering bot verification:', err?.message);
+      }
+
+      return {
+        success: true,
+        requestId,
+        maskedHandle: `@${user.username || raw}`,
+      };
+    });
   } catch (err: any) {
     logger.error('Failed to request Telegram verification:', err);
     return { success: false, reason: err?.message || 'Verification service error' };
