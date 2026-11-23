@@ -1,4 +1,4 @@
-import { isValidEvmAddress, getEvmProvider, EvmChain } from './evm.js';
+import { isValidEvmAddress, getEvmProvider, EvmChain, isZeroChainEnabled } from './evm.js';
 import { isSolanaAddress, getSolanaTokenInfo } from './solana.js';
 import { getNear } from './near.js';
 import { getStarknetProvider, getStarknetReadProvider, STRK_TOKEN_ADDRESS, ETH_TOKEN_ADDRESS, detectStarknetLaunchpad } from './starknet.js';
@@ -195,7 +195,8 @@ export async function checkTokenSafety(tokenAddress: string, forceFresh = false)
 }
 
 
-const ALL_EVM_SAFETY_CHAINS: EvmChain[] = ['base', 'arbitrum', 'zero', 'hyperevm', 'elysium', 'ethereum'];
+const ALL_EVM_SAFETY_CHAINS = (): EvmChain[] =>
+  ['base', 'arbitrum', ...(isZeroChainEnabled() ? ['zero' as const] : []), 'hyperevm', 'elysium', 'ethereum'];
 
 const EVM_CHAIN_LABELS: Record<EvmChain, string> = {
   base: 'Base',
@@ -209,7 +210,7 @@ const EVM_CHAIN_LABELS: Record<EvmChain, string> = {
 export async function checkEvmTokenSafety(tokenAddress: string, chain?: EvmChain): Promise<TokenSafetyReport> {
   const normAddress = tokenAddress.toLowerCase().trim();
   const explicitChain: EvmChain | undefined = chain || (normAddress.endsWith('.elysium') ? 'elysium' : undefined);
-  const chainsToCheck: EvmChain[] = explicitChain ? [explicitChain] : ALL_EVM_SAFETY_CHAINS;
+  const chainsToCheck: EvmChain[] = explicitChain ? [explicitChain] : ALL_EVM_SAFETY_CHAINS();
 
   try {
     let foundChain: EvmChain | null = null;

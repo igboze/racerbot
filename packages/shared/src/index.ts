@@ -394,6 +394,9 @@ export {
   toTokenUnits,
   simulateEvmTrade,
   resolveV2Router,
+  isZeroChainEnabled,
+  routerTakesReferrer,
+  HYPERSWAP_V2_ROUTER_ABI,
   HYPERSWAP_V2_ROUTER,
   WHYPE_ADDRESS,
   BASE_DEFAULT_ROUTER,
@@ -585,6 +588,8 @@ export {
   verifySovereignEvmWallet,
   buildStargateSendParam,
   quoteStargateSend,
+  getBridgeChains,
+  isBridgeChainEnabled,
 } from './layerZero.js';
 export type {
   LayerZeroChain,

@@ -222,6 +222,7 @@ import {
   runAsTrade,
   HYPEREVM_EXPLORER_URL,
   type EvmChain,
+  isZeroChainEnabled,
 } from '@racerbot/shared';
 export { getShortTokenKey, resolveTokenAddressFromKey };
 import { registerLayerZeroRoutes, buildBridgeMenu } from './layerZeroRoutes.js';
@@ -591,11 +592,18 @@ export const ALL_SUPPORTED_CHAINS = [
 
 export type SupportedChainId = typeof ALL_SUPPORTED_CHAINS[number]['id'];
 
+/** Chains users can see and pick: Zero only once it is live and switched on (ZERO_CHAIN_ENABLED=on) */
+export function offeredChains(): (typeof ALL_SUPPORTED_CHAINS)[number][] {
+  return ALL_SUPPORTED_CHAINS.filter(c => c.id !== 'zero' || isZeroChainEnabled());
+}
+
 export function isChainVisible(user: { hidden_chains?: string[] } | null | undefined, chain: string): boolean {
+  // Zero is not live yet (mainnet 2026-11-30): hidden for everyone until ZERO_CHAIN_ENABLED=on
+  if (chain === 'zero' && !isZeroChainEnabled()) return false;
   if (!user || !user.hidden_chains || !Array.isArray(user.hidden_chains) || user.hidden_chains.length === 0) {
     return true;
   }
-  const visibleCount = ALL_SUPPORTED_CHAINS.filter(c => !user.hidden_chains!.includes(c.id)).length;
+  const visibleCount = offeredChains().filter(c => !user.hidden_chains!.includes(c.id)).length;
   if (visibleCount === 0) {
     return true;
   }
@@ -604,12 +612,12 @@ export function isChainVisible(user: { hidden_chains?: string[] } | null | undef
 
 export function getVisibleChains(user: { hidden_chains?: string[] } | null | undefined): string[] {
   const hidden = new Set(user?.hidden_chains || []);
-  return ALL_SUPPORTED_CHAINS.map(c => c.id).filter(id => !hidden.has(id));
+  return offeredChains().map(c => c.id).filter(id => !hidden.has(id));
 }
 
 export function formatActiveChainsSummary(user: { hidden_chains?: string[] } | null | undefined): string {
   const visible = getVisibleChains(user);
-  if (visible.length === ALL_SUPPORTED_CHAINS.length) return '🌐 All Chains';
+  if (visible.length === offeredChains().length) return '🌐 All Chains';
   return visible.map(id => {
     const c = ALL_SUPPORTED_CHAINS.find(item => item.id === id);
     return c ? `${c.icon} ${c.symbol}` : id;
@@ -750,7 +758,7 @@ export function buildActiveChainsMenu(user: UserRecord) {
     'Hiding a chain keeps your wallet & funds 100% safe while giving you a clean, dedicated single-chain or customized multi-chain experience.\n\n' +
     '*Current Status:*\n';
 
-  for (const c of ALL_SUPPORTED_CHAINS) {
+  for (const c of offeredChains()) {
     const isVis = !hidden.has(c.id);
     text += `${c.icon} *${c.name}* (${c.symbol}): ${isVis ? '🟢 *Visible*' : '🔴 *Hidden*'}\n`;
   }
@@ -783,11 +791,15 @@ export function buildActiveChainsMenu(user: UserRecord) {
       ),
     ],
     [
-      cb(
-        `${!hidden.has('zero') ? '🟢' : '🔴'} 🅾️ Zero`,
-        'toggle_chain_vis:zero',
-        !hidden.has('zero') ? 'success' : 'primary'
-      ),
+      ...(isZeroChainEnabled()
+        ? [
+          cb(
+            `${!hidden.has('zero') ? '🟢' : '🔴'} 🅾️ Zero`,
+            'toggle_chain_vis:zero',
+            !hidden.has('zero') ? 'success' : 'primary'
+          ),
+          ]
+        : []),
       cb(
         `${!hidden.has('ethereum') ? '🟢' : '🔴'} 💎 Ethereum`,
         'toggle_chain_vis:ethereum',
@@ -824,7 +836,7 @@ export function buildActiveChainsMenu(user: UserRecord) {
       cb('🟣 Solana Only', 'preset_chain_vis:solana', 'primary'),
     ],
     [
-      cb('🅾️ Zero Only', 'preset_chain_vis:zero', 'primary'),
+      ...(isZeroChainEnabled() ? [cb('🅾️ Zero Only', 'preset_chain_vis:zero', 'primary')] : []),
       cb('⚡ HyperEVM Only', 'preset_chain_vis:hyperevm', 'primary'),
       cb('🌐 Show All Chains', 'preset_chain_vis:all', 'primary'),
     ],
@@ -5536,7 +5548,7 @@ export function setupRoutes(bot: Telegraf): void {
         `<code>${escapeHtml(evmUser.evm_address || '')}</code>\n\n` +
         `• 🔵 <b>Base (Chain ID 8453):</b> Send ETH to trade Base meme tokens\n` +
         `• 💙 <b>Arbitrum One (Chain ID 42161):</b> Send ETH to trade Arbitrum tokens\n` +
-        `• 🅾️ <b>Zero Network (Chain ID 4242):</b> Send ZRO to trade Zero tokens\n` +
+        (isZeroChainEnabled() ? `• 🅾️ <b>Zero Network:</b> Send ZRO to trade Zero tokens\n` : '') +
         `• ⚡ <b>HyperEVM (Chain ID 999):</b> Send HYPE to trade HyperEVM tokens\n` +
         `• 🏛️ <b>Elysium (Chain ID 99901):</b> Send HYPE to trade Elysium tokens\n` +
         `• 💎 <b>Ethereum Mainnet (Chain ID 1):</b> Send ETH\n\n` +
@@ -10720,7 +10732,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       if (b.ethereumBalanceFormatted && Number(b.ethereumBalanceFormatted) > 0) {
         balSummary += `• 💎 Ethereum: \`${b.ethereumBalanceFormatted} ETH\`\n`;
       }
-      if (b.zeroBalanceFormatted && Number(b.zeroBalanceFormatted) > 0) {
+      if (isZeroChainEnabled() && b.zeroBalanceFormatted && Number(b.zeroBalanceFormatted) > 0) {
         balSummary += `• 🅾️ Zero: \`${b.zeroBalanceFormatted} ZRO\`\n`;
       }
       if (b.hyperevmBalanceFormatted && Number(b.hyperevmBalanceFormatted) > 0) {
@@ -10763,7 +10775,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
       ],
       [
         cb(`💎 Ethereum (${ethBal} ETH)`, 'wd_chain:ethereum', 'primary'),
-        cb(`🅾️ Zero (${zroBal} ZRO)`, 'wd_chain:zero', 'primary'),
+        ...(isZeroChainEnabled() ? [cb(`🅾️ Zero (${zroBal} ZRO)`, 'wd_chain:zero', 'primary')] : []),
       ],
       [
         cb(`⚡ HyperEVM (${hypeBal} HYPE)`, 'wd_chain:hyperevm', 'primary'),
@@ -11342,7 +11354,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
 
       if (!isCurrentlyHidden) {
         // Trying to hide this chain: verify at least one visible chain remains
-        const visibleCount = ALL_SUPPORTED_CHAINS.filter(c => !hiddenList.includes(c.id)).length;
+        const visibleCount = offeredChains().filter(c => !hiddenList.includes(c.id)).length;
         if (visibleCount <= 1) {
           await ctx.answerCbQuery('⚠️ At least one chain must remain visible!', { show_alert: true }).catch(() => { });
           return;
@@ -11385,7 +11397,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
 
       if (preset === 'all') {
         newHidden = [];
-      } else if (ALL_SUPPORTED_CHAINS.some(c => c.id === preset)) {
+      } else if (offeredChains().some(c => c.id === preset)) {
         newHidden = ALL_SUPPORTED_CHAINS.map(c => c.id).filter(id => id !== preset);
       } else {
         return;
@@ -12007,7 +12019,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
                 const kb = Markup.inlineKeyboard([
                   [
                     cb(
-                      `⚡ 1-Click Cross-Chain Buy from ${plan.fundingChain} ($${plan.fundingAmount} ${plan.fundingAsset})`,
+                      `⚡ 1-Click Cross-Chain Buy from ${plan.fundingChain} (${plan.fundingAmount} ${plan.fundingAsset})`,
                       `bridge_1click:${plan.fundingChain}:${plan.destChain}:${plan.fundingAsset}:${plan.fundingAmount}`
                     ),
                   ],
@@ -12016,7 +12028,7 @@ Explore active token launchpads running on HyperEVM and Elysium L2 (both on main
                 await ctx.reply(
                   `❌ ${friendlyErr}\n\n` +
                   `⚡ <b>1-Click Cross-Chain Buy Available!</b>\n` +
-                  `You have <b>$${plan.fundingAmount} ${plan.fundingAsset}</b> on <b>${plan.fundingChain}</b> ready to bridge via Stargate V2 (~${plan.bridgeDurationSec}s).\n` +
+                  `You have <b>${plan.fundingAmount} ${plan.fundingAsset}</b> on <b>${plan.fundingChain}</b> ready to bridge via Stargate V2 (~${plan.bridgeDurationSec}s).\n` +
                   `<i>Funds settle directly into your sovereign EOA with LayerZero Scan tracking.</i>`,
                   { parse_mode: 'HTML', ...kb }
                 ).catch(() => { });

@@ -45,23 +45,9 @@ describe('LayerZero Routes & UI Module', () => {
     const routeBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:base:arbitrum'));
     expect(routeBtn).toBeDefined();
 
-    // Zero bridge buttons present for all supported chains
-    const baseToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:base:zero'));
-    expect(baseToZeroBtn).toBeDefined();
-    const arbToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:arbitrum:zero'));
-    expect(arbToZeroBtn).toBeDefined();
-    const ethToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:ethereum:zero'));
-    expect(ethToZeroBtn).toBeDefined();
-    const opToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:optimism:zero'));
-    expect(opToZeroBtn).toBeDefined();
-    const bscToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:bsc:zero'));
-    expect(bscToZeroBtn).toBeDefined();
-    const polyToZeroBtn = flattened.find((b: any) => b.callback_data?.includes('lz_route:polygon:zero'));
-    expect(polyToZeroBtn).toBeDefined();
-
-    // Confirm button present
-    const confirmBtn = flattened.find((b: any) => b.callback_data?.includes('lz_confirm:base:arbitrum:USDC:50.0'));
-    expect(confirmBtn).toBeDefined();
+    // Zero is not live yet (mainnet 2026-11-30): no Zero routes are offered
+    expect(flattened.some((b: any) => /:zero[:$]|lz_route:zero/.test(b.callback_data || ''))).toBe(false);
+    expect(menu.text).not.toContain('ZRO');
   });
 
   it('registers commands and action handlers onto Telegraf bot', () => {

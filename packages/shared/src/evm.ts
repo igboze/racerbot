@@ -45,7 +45,8 @@ export const ELYSIUM_TESTNET_RPC = 'https://testnet-rpc.elysium.kinetiq.xyz';
 export const ELYSIUM_MAINNET_RPC = 'https://rpc.elysium.kinetiq.xyz';
 export const BASE_MAINNET_RPC = 'https://mainnet.base.org';
 export const ARBITRUM_MAINNET_RPC = 'https://arb1.arbitrum.io/rpc';
-export const ETHEREUM_MAINNET_RPC = 'https://eth.llamarpc.com';
+// eth.llamarpc.com started failing (HTTP 403/525) in Nov 2026, so Ethereum balances and trades broke
+export const ETHEREUM_MAINNET_RPC = 'https://ethereum-rpc.publicnode.com';
 export const ZERO_MAINNET_RPC = 'https://rpc.zero.network';
 export const KLEOS_TOKEN_URL = 'https://www.thekleos.xyz/token';
 
@@ -73,6 +74,14 @@ export const EVM_BPS_DIVISOR = 10000n;
 export type EvmChain = 'hyperevm' | 'elysium' | 'base' | 'arbitrum' | 'ethereum' | 'zero';
 
 /** Supported EVM chains for trading and balances */
+/**
+ * Zero (LayerZero's own L1) mainnet launches 2026-11-30; until its real chain ID, RPC and DEX are
+ * published and set here, nothing on it works (rpc.zero.network does not answer). Off by default.
+ */
+export function isZeroChainEnabled(): boolean {
+  return process.env.ZERO_CHAIN_ENABLED === 'on';
+}
+
 export function isEvmChainName(chain: unknown): chain is EvmChain {
   return (
     chain === 'hyperevm' ||
@@ -179,8 +188,24 @@ export const UNISWAP_V2_ROUTER_ABI = [
   'function factory() view returns (address)',
 ];
 
+/**
+ * HyperSwap's V2 router takes a `referrer` before the deadline on its swap functions and has
+ * none of the standard Uniswap ones, so the standard calls always revert there.
+ */
+export const HYPERSWAP_V2_ROUTER_ABI = [
+  'function getAmountsOut(uint256 amountIn, address[] calldata path) view returns (uint256[] memory amounts)',
+  'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] calldata path, address to, address referrer, uint256 deadline) payable',
+  'function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, address referrer, uint256 deadline)',
+  'function WETH() view returns (address)',
+  'function factory() view returns (address)',
+];
+
 /** HyperSwap V2 Router02 on HyperEVM mainnet (factory 0x724412c0...1c48, where HyperEVM meme pools live) */
 export const HYPERSWAP_V2_ROUTER = '0xb4a9C4e6Ea8E2191d2FA5B380452a634Fb21240A';
+/** True for HyperSwap's router, whose swaps take a referrer argument */
+export function routerTakesReferrer(routerAddress: string): boolean {
+  return routerAddress.toLowerCase() === HYPERSWAP_V2_ROUTER.toLowerCase();
+}
 /** Wrapped HYPE on HyperEVM mainnet */
 export const WHYPE_ADDRESS = '0x5555555555555555555555555555555555555555';
 

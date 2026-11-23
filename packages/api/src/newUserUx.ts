@@ -4,6 +4,7 @@
  * Plain words only: no chain IDs, bps or protocol names before the user has funded the wallet.
  */
 import { Markup } from 'telegraf';
+import { isZeroChainEnabled } from '@racerbot/shared';
 
 type Style = 'success' | 'danger' | 'primary';
 function btn(text: string, data: string, style?: Style): any {
@@ -134,6 +135,7 @@ const DEPOSIT_ASSETS: Record<DepositAsset, {
 };
 
 export function isDepositAsset(v: string): v is DepositAsset {
+  if (v === 'zro' && !isZeroChainEnabled()) return false;
   return Object.prototype.hasOwnProperty.call(DEPOSIT_ASSETS, v);
 }
 
@@ -147,7 +149,7 @@ export function buildDepositAssetPicker(): { text: string; keyboard: ReturnType<
   const rows: any[][] = [
     [btn(a.near.button, 'dep_have:near', 'success'), btn(a.sol.button, 'dep_have:sol', 'success')],
     [btn(a.eth.button, 'dep_have:eth', 'success'), btn(a.hype.button, 'dep_have:hype', 'success')],
-    [btn(a.sui.button, 'dep_have:sui', 'success'), btn(a.strk.button, 'dep_have:strk', 'success'), btn(a.zro.button, 'dep_have:zro', 'success')],
+    [btn(a.sui.button, 'dep_have:sui', 'success'), btn(a.strk.button, 'dep_have:strk', 'success'), ...(isZeroChainEnabled() ? [btn(a.zro.button, 'dep_have:zro', 'success')] : [])],
     [btn('🔄 Coin on another chain? Swap in (1% fee)', 'dep_swap_menu', 'primary')],
     [btn('🏠 Main Menu', 'menu_home', 'primary')],
   ];

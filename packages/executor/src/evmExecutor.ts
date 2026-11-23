@@ -12,6 +12,9 @@ import {
   simulateEvmTrade,
   ERC20_ABI,
   UNISWAP_V2_ROUTER_ABI,
+  HYPERSWAP_V2_ROUTER_ABI,
+  routerTakesReferrer,
+  isZeroChainEnabled,
   HYPEREVM_EXPLORER_URL,
   HYPE_SYMBOL,
   HYPERSWAP_V2_ROUTER,
@@ -72,6 +75,9 @@ export async function executeEvmSwap(
   // Non-Kleos Elysium tokens only exist on the Kinetiq testnet, which RacerBot does not trade
   if (chain === 'elysium') {
     throw new Error('RacerBot trades Kleos, RonsPad, Ascend and Montra coins on Elysium. This token is not one of them.');
+  }
+  if (chain === 'zero' && !isZeroChainEnabled()) {
+    throw new Error("Zero (LayerZero's chain) is not live yet: its mainnet launches November 30. Nothing was spent.");
   }
   const isTestnet = chain === 'hyperevm' ? process.env.HYPEREVM_TESTNET === 'true' : false;
   const { user_id, token_in, token_out, amount_in, slippage_pct = 2 } = event;
@@ -168,7 +174,8 @@ export async function executeEvmSwap(
     const { feeAmount, netTradeAmount } = calculateEvmTradeFee(actualHypeIn);
 
     onProgress?.('executing_swap');
-    const router = new ethers.Contract(routerAddress, UNISWAP_V2_ROUTER_ABI, signer);
+    const withReferrer = routerTakesReferrer(routerAddress);
+    const router = new ethers.Contract(routerAddress, withReferrer ? HYPERSWAP_V2_ROUTER_ABI : UNISWAP_V2_ROUTER_ABI, signer);
     const path = [wethAddress, targetTokenAddress];
 
     // Quote before anything is sent: no pool means no trade (and no fee)
@@ -186,13 +193,13 @@ export async function executeEvmSwap(
     const before = await getErc20Balance(targetTokenAddress, userAddress, chain, isTestnet);
 
     // Fee-on-transfer variant: also works for meme tokens that tax transfers
-    const tx = await router.swapExactETHForTokensSupportingFeeOnTransferTokens(
-      minTokensOut,
-      path,
-      userAddress,
-      deadline,
-      { value: netTradeAmount }
-    );
+    const tx = withReferrer
+      ? await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minTokensOut, path, userAddress, ethers.ZeroAddress, deadline, {
+          value: netTradeAmount,
+        })
+      : await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minTokensOut, path, userAddress, deadline, {
+          value: netTradeAmount,
+        });
 
     const receipt = await tx.wait(1);
     const txHash = receipt?.hash || tx.hash;
@@ -291,7 +298,8 @@ export async function executeEvmSwap(
     }
     const soldQty = ethers.formatUnits(sellQtyRaw, tokenDec);
 
-    const router = new ethers.Contract(routerAddress, UNISWAP_V2_ROUTER_ABI, signer);
+    const withReferrer = routerTakesReferrer(routerAddress);
+    const router = new ethers.Contract(routerAddress, withReferrer ? HYPERSWAP_V2_ROUTER_ABI : UNISWAP_V2_ROUTER_ABI, signer);
     const path = [targetTokenAddress, wethAddress];
 
     // Quote before approving or sending anything
@@ -318,13 +326,9 @@ export async function executeEvmSwap(
     const hypeBefore = await provider.getBalance(userAddress);
 
     // Fee-on-transfer variant: also works for meme tokens that tax transfers
-    const tx = await router.swapExactTokensForETHSupportingFeeOnTransferTokens(
-      sellQtyRaw,
-      minHypeOut,
-      path,
-      userAddress,
-      deadline
-    );
+    const tx = withReferrer
+      ? await router.swapExactTokensForETHSupportingFeeOnTransferTokens(sellQtyRaw, minHypeOut, path, userAddress, ethers.ZeroAddress, deadline)
+      : await router.swapExactTokensForETHSupportingFeeOnTransferTokens(sellQtyRaw, minHypeOut, path, userAddress, deadline);
 
     const receipt = await tx.wait(1);
     const txHash = receipt?.hash || tx.hash;
