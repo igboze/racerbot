@@ -234,6 +234,7 @@ import { generateTokenInfoCardImage } from './tokenInfoCardImageGenerator.js';
 import { toTokenInfoCardData } from './tokenInfoCardData.js';
 import { askWebLoginApproval, registerWebLoginApproval } from './webLoginApproval.js';
 import { registerWebSessionsBot } from './webSessionsBot.js';
+import { registerAbuseShieldBot } from './abuseShieldBot.js';
 import { registerUsernameSync } from './usernameSync.js';
 import { swarmPlanText, SWARM_INTRO } from './swarmMessages.js';
 import { registerRacerCard } from './racerCard.js';
@@ -5299,6 +5300,7 @@ export function setupRoutes(bot: Telegraf): void {
   // ── WebApp Connection Approval & Denial Handlers ───────────────────────────
   registerWebLoginApproval(bot);
   registerWebSessionsBot(bot);
+  registerAbuseShieldBot(bot);
 
   bot.action(/^tgauth_approve:(.+)$/, async (ctx) => {
     const requestId = ctx.match[1];

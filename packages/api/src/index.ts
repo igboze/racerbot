@@ -161,6 +161,16 @@ async function main(): Promise<void> {
   app.use(express.json({ limit: '64kb' }));
   app.use(metricsMiddleware);
 
+  // Blocks attacking IPs and rate-limits sign-in, trading and withdrawals (Railway has no firewall)
+  {
+    const { AbuseShield, DEFAULT_SHIELD_CONFIG, setAbuseShield } = await import('./abuseShield.js');
+    const { sendAdminAlert } = await import('./securityAlerts.js');
+    const shield = new AbuseShield(DEFAULT_SHIELD_CONFIG, sendAdminAlert, process.env.REDIS_URL);
+    await shield.load().catch(() => {});
+    setAbuseShield(shield);
+    app.use(shield.middleware());
+  }
+
   // Mount Telegram webhook handler on the existing Express app.
   // Responds 200 OK immediately so Telegram never hits "Read timeout expired" or blocks the queue,
   // then dispatches the update asynchronously into Telegraf's pipeline.

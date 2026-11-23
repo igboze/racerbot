@@ -6,9 +6,16 @@
 import { getUserById, getUserByTelegramId, type UserRecord } from '@racerbot/db';
 import { verifyAuthToken } from '../authSession.js';
 import { verifyWebSession } from '../webSessions.js';
+import { getAbuseShield, clientIp } from '../abuseShield.js';
 import { validateTelegramInitData } from '../middleware.js';
 
 export async function verifiedUser(req: any): Promise<UserRecord | null> {
+  const user = await proveUser(req);
+  if (user?.id) getAbuseShield()?.noteAccount(clientIp(req), user.id);
+  return user;
+}
+
+async function proveUser(req: any): Promise<UserRecord | null> {
   const auth = String(req.headers.authorization || '');
   if (auth.startsWith('tma ')) {
     const { valid, userId } = validateTelegramInitData(auth.slice(4));

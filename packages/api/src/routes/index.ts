@@ -420,6 +420,15 @@ async function verifyClientTx(txHash: string, signerId: string): Promise<{ ok: t
 }
 
 export async function resolveAlphaUser(req: any) {
+  const user = await resolveAlphaUserInner(req);
+  if (user?.id) {
+    const { getAbuseShield, clientIp } = await import('../abuseShield.js');
+    getAbuseShield()?.noteAccount(clientIp(req), user.id);
+  }
+  return user;
+}
+
+async function resolveAlphaUserInner(req: any) {
   const { getUserById, getUserByTelegramId } = await import('@racerbot/db');
 
   if (req.userId) {
