@@ -20,6 +20,7 @@ import {
   sendElysiumTransaction,
   getEvmNativeSymbol,
   type EvmChain,
+  isZeroChainEnabled,
 } from '@racerbot/shared';
 import {
   getUserByTelegramId,
@@ -188,7 +189,7 @@ export async function planEvmTokenSend(
   // If a specific chain was selected, check that chain; otherwise scan all supported EVM chains
   const chainsToCheck: EvmChain[] = preferredChain
     ? [preferredChain]
-    : ['base', 'arbitrum', 'zero', 'hyperevm', 'elysium', 'ethereum'];
+    : ['base', 'arbitrum', ...(isZeroChainEnabled() ? ['zero' as const] : []), 'hyperevm', 'elysium', 'ethereum'];
   for (const chain of chainsToCheck) {
     const provider = providers[chain];
     if (!(await isContract(provider, token))) continue;

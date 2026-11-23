@@ -9,10 +9,13 @@
  *    EOAs exportable to MetaMask/Rabby at any time, requiring no on-chain contract deployments.
  */
 import { Telegraf, Markup, Context } from 'telegraf';
+import { ethers } from 'ethers';
 import {
   createLogger,
   LZ_CHAINS,
   quoteStargateSend,
+  getBridgeChains,
+  isBridgeChainEnabled,
   getLayerZeroScanUrl,
   type LayerZeroChain,
   type StargateAsset,
@@ -45,6 +48,16 @@ export interface BridgeMenuState {
   amount: string;
 }
 
+/** Amount choices per asset, in that asset's own units (an ETH button must never read "$10" and send 10 ETH) */
+export const BRIDGE_AMOUNTS: Record<StargateAsset, string[]> = {
+  USDC: ['10.0', '25.0', '50.0', '100.0'],
+  USDT: ['10.0', '25.0', '50.0', '100.0'],
+  ETH: ['0.005', '0.01', '0.025', '0.05'],
+};
+const DEFAULT_AMOUNT: Record<StargateAsset, string> = { USDC: '25.0', USDT: '25.0', ETH: '0.01' };
+const amountLabel = (asset: StargateAsset, amount: string) =>
+  asset === 'ETH' ? `${Number(amount)} ETH` : `$${Number(amount)}`;
+
 export async function buildBridgeMenu(
   telegramId: number,
   state?: Partial<BridgeMenuState>
@@ -57,10 +70,17 @@ export async function buildBridgeMenu(
   const evmUser = await ensureUserEvmWallet(user);
   const evmAddress = evmUser.evm_address!;
 
-  const sourceChain: LayerZeroChain = state?.sourceChain || 'base';
-  const destChain: LayerZeroChain = state?.destChain || 'zero';
-  const asset: StargateAsset = state?.asset || 'USDC';
-  const amount: string = state?.amount || '25.0';
+  const chains = getBridgeChains();
+  const zeroOn = chains.includes('zero');
+  // A route to or from a chain that is switched off (Zero before its launch) falls back to Base -> Arbitrum
+  const sourceChain: LayerZeroChain =
+    state?.sourceChain && isBridgeChainEnabled(state.sourceChain) ? state.sourceChain : 'base';
+  let destChain: LayerZeroChain =
+    state?.destChain && isBridgeChainEnabled(state.destChain) ? state.destChain : 'arbitrum';
+  if (destChain === sourceChain) destChain = sourceChain === 'arbitrum' ? 'base' : 'arbitrum';
+  const asset: StargateAsset = state?.asset && state.asset in BRIDGE_AMOUNTS ? state.asset : 'USDC';
+  const amount: string =
+    state?.amount && BRIDGE_AMOUNTS[asset].includes(state.amount) ? state.amount : DEFAULT_AMOUNT[asset];
 
   const sourceConfig = LZ_CHAINS[sourceChain];
   const destConfig = LZ_CHAINS[destChain];
@@ -86,11 +106,9 @@ export async function buildBridgeMenu(
   const bBsc = balances.balances.bsc;
   const bPoly = balances.balances.polygon;
 
-  // Pre-calculate quote
-  let quoteText = '';
-  let nativeFeeStr = '~0.0004 ETH (~$1.25)';
-  let estDuration = 45;
-
+  // Live quote from the Stargate pool itself: no quote, no Bridge button
+  let quoteLines: string;
+  let canBridge = false;
   try {
     const q = await quoteStargateSend({
       sourceChain,
@@ -99,27 +117,35 @@ export async function buildBridgeMenu(
       humanAmount: amount,
       recipientAddress: evmAddress,
     });
-    nativeFeeStr = `${parseFloat(q.humanNativeFee).toFixed(5)} ${sourceConfig.nativeSymbol}`;
-    estDuration = q.approxDurationSec;
+    const decimals = asset === 'ETH' ? 18 : 6;
+    const receives = Number(ethers.formatUnits(q.amountReceivedLD, decimals));
+    quoteLines =
+      `• LayerZero Messaging Fee: <b>${parseFloat(q.humanNativeFee).toFixed(5)} ${sourceConfig.nativeSymbol}</b>\n` +
+      `• You receive: <b>~${asset === 'ETH' ? receives.toFixed(5) : receives.toFixed(2)} ${asset}</b>\n` +
+      `• Est. Cross-Chain Delivery: <b>~${q.approxDurationSec}s</b>\n`;
+    canBridge = true;
   } catch (err: any) {
     logger.warn(`Quote estimation in menu: ${err.message}`);
+    quoteLines = `⚠️ <i>${escapeHtml(err.message)}</i>\n`;
   }
 
-  quoteText =
+  const quoteText =
     `⚙️ <b>Active Transfer Route:</b>\n` +
     `• From: <b>${sourceConfig.icon} ${sourceConfig.name}</b>\n` +
     `• To: <b>${destConfig.icon} ${destConfig.name}</b>\n` +
     `• Asset: <b>${amount} ${asset}</b>\n` +
-    `• LayerZero Messaging Fee: <b>${nativeFeeStr}</b>\n` +
-    `• Est. Cross-Chain Delivery: <b>~${estDuration}s</b>\n`;
+    quoteLines;
 
+  const chainNames = chains.map((c) => LZ_CHAINS[c].name.replace(' Mainnet', '').replace(' One', '')).join(', ');
   const text =
     `🌉 <b>LayerZero & Stargate V2 Bridge</b> ⚡\n\n` +
     `🔒 <b>Universal Sovereign EVM Wallet:</b>\n` +
     `<code>${escapeHtml(evmAddress)}</code>\n` +
-    `<i>🛡️ One sovereign secp256k1 EOA across Zero Network, Base, Arbitrum, Ethereum, Optimism, BSC & Polygon. Private key is 100% exportable to MetaMask/Rabby at any time. Zero smart contract account lockup — funds cannot be trapped.</i>\n\n` +
+    `<i>🛡️ One sovereign secp256k1 EOA across ${escapeHtml(chainNames)}. Private key is 100% exportable to MetaMask/Rabby at any time. Zero smart contract account lockup — funds cannot be trapped.</i>\n\n` +
     `💰 <b>Your EVM Balances:</b>\n` +
-    `🅾️ <b>Zero:</b> <code>${parseFloat(bZero?.nativeBalance || '0').toFixed(3)} ZRO</code> • <code>${bZero?.usdcBalance || '0.00'} USDC</code>\n` +
+    (zeroOn
+      ? `🅾️ <b>Zero:</b> <code>${parseFloat(bZero?.nativeBalance || '0').toFixed(3)} ZRO</code> • <code>${bZero?.usdcBalance || '0.00'} USDC</code>\n`
+      : '') +
     `🔷 <b>Base:</b> <code>${parseFloat(bBase?.nativeBalance || '0').toFixed(4)} ETH</code> • <code>${bBase?.usdcBalance || '0.00'} USDC</code>\n` +
     `🔵 <b>Arbitrum:</b> <code>${parseFloat(bArb?.nativeBalance || '0').toFixed(4)} ETH</code> • <code>${bArb?.usdcBalance || '0.00'} USDC</code>\n` +
     `⟠ <b>Ethereum:</b> <code>${parseFloat(bEth?.nativeBalance || '0').toFixed(4)} ETH</code> • <code>${bEth?.usdcBalance || '0.00'} USDC</code>\n` +
@@ -128,32 +154,23 @@ export async function buildBridgeMenu(
     `🟣 <b>Polygon:</b> <code>${parseFloat(bPoly?.nativeBalance || '0').toFixed(4)} POL</code> • <code>${bPoly?.usdcBalance || '0.00'} USDC</code>\n` +
     `💼 <i>Total EVM Portfolio: $${balances.totalPortfolioUsd.toFixed(2)}</i>\n\n` +
     `${quoteText}\n` +
-    `<i>Select route and asset below, then tap Confirm to bridge instantly:</i>`;
+    `<i>Select route and asset below, then tap Bridge to send:</i>`;
+
+  const route = (src: LayerZeroChain, dst: LayerZeroChain, label: string) =>
+    cb(sourceChain === src && destChain === dst ? `✅ ${label}` : label, `lz_route:${src}:${dst}:${asset}:${amount}`);
 
   // Buttons
   const buttons: any[] = [
-    // ── 1-Click Bridge to Zero Network (All supported chains -> Zero) ──
-    [
-      cb(sourceChain === 'base' && destChain === 'zero' ? '✅ 🔷 Base ➔ 🅾️ Zero' : '🔷 Base ➔ 🅾️ Zero', `lz_route:base:zero:${asset}:${amount}`),
-      cb(sourceChain === 'arbitrum' && destChain === 'zero' ? '✅ 🔵 Arb ➔ 🅾️ Zero' : '🔵 Arb ➔ 🅾️ Zero', `lz_route:arbitrum:zero:${asset}:${amount}`),
-    ],
-    [
-      cb(sourceChain === 'ethereum' && destChain === 'zero' ? '✅ ⟠ Eth ➔ 🅾️ Zero' : '⟠ Eth ➔ 🅾️ Zero', `lz_route:ethereum:zero:${asset}:${amount}`),
-      cb(sourceChain === 'optimism' && destChain === 'zero' ? '✅ 🔴 OP ➔ 🅾️ Zero' : '🔴 OP ➔ 🅾️ Zero', `lz_route:optimism:zero:${asset}:${amount}`),
-    ],
-    [
-      cb(sourceChain === 'bsc' && destChain === 'zero' ? '✅ 🟡 BSC ➔ 🅾️ Zero' : '🟡 BSC ➔ 🅾️ Zero', `lz_route:bsc:zero:${asset}:${amount}`),
-      cb(sourceChain === 'polygon' && destChain === 'zero' ? '✅ 🟣 Polygon ➔ 🅾️ Zero' : '🟣 Polygon ➔ 🅾️ Zero', `lz_route:polygon:zero:${asset}:${amount}`),
-    ],
-    // ── Bridge from Zero Network or L2 Cross-Chain ──
-    [
-      cb(sourceChain === 'zero' && destChain === 'base' ? '✅ 🅾️ Zero ➔ 🔷 Base' : '🅾️ Zero ➔ 🔷 Base', `lz_route:zero:base:${asset}:${amount}`),
-      cb(sourceChain === 'zero' && destChain === 'arbitrum' ? '✅ 🅾️ Zero ➔ 🔵 Arb' : '🅾️ Zero ➔ 🔵 Arb', `lz_route:zero:arbitrum:${asset}:${amount}`),
-    ],
-    [
-      cb(sourceChain === 'base' && destChain === 'arbitrum' ? '✅ 🔷 Base ➔ 🔵 Arb' : '🔷 Base ➔ 🔵 Arb', `lz_route:base:arbitrum:${asset}:${amount}`),
-      cb(sourceChain === 'arbitrum' && destChain === 'base' ? '✅ 🔵 Arb ➔ 🔷 Base' : '🔵 Arb ➔ 🔷 Base', `lz_route:arbitrum:base:${asset}:${amount}`),
-    ],
+    ...(zeroOn
+      ? [
+          // ── 1-Click Bridge to Zero Network (only once Zero is live) ──
+          [route('base', 'zero', '🔷 Base ➔ 🅾️ Zero'), route('arbitrum', 'zero', '🔵 Arb ➔ 🅾️ Zero')],
+          [route('zero', 'base', '🅾️ Zero ➔ 🔷 Base'), route('zero', 'arbitrum', '🅾️ Zero ➔ 🔵 Arb')],
+        ]
+      : []),
+    // ── Popular L2 routes ──
+    [route('base', 'arbitrum', '🔷 Base ➔ 🔵 Arb'), route('arbitrum', 'base', '🔵 Arb ➔ 🔷 Base')],
+    [route('ethereum', 'base', '⟠ Eth ➔ 🔷 Base'), route('base', 'optimism', '🔷 Base ➔ 🔴 OP')],
     // ── Interactive Custom Chain Selectors ──
     [
       cb(`🛫 From: ${sourceConfig.icon} ${sourceConfig.name}`, `lz_pick_src:${sourceChain}:${destChain}:${asset}:${amount}`),
@@ -168,17 +185,12 @@ export async function buildBridgeMenu(
       cb(asset === 'ETH' ? '✅ ⟠ ETH' : '⟠ ETH', `lz_asset:${sourceChain}:${destChain}:ETH`),
       cb(asset === 'USDT' ? '✅ 🟢 USDT' : '🟢 USDT', `lz_asset:${sourceChain}:${destChain}:USDT`),
     ],
-    // ── Amount Buttons ──
-    [
-      cb(amount === '10.0' ? '✅ $10' : '$10', `lz_amt:${sourceChain}:${destChain}:${asset}:10.0`),
-      cb(amount === '25.0' ? '✅ $25' : '$25', `lz_amt:${sourceChain}:${destChain}:${asset}:25.0`),
-      cb(amount === '50.0' ? '✅ $50' : '$50', `lz_amt:${sourceChain}:${destChain}:${asset}:50.0`),
-      cb(amount === '100.0' ? '✅ $100' : '$100', `lz_amt:${sourceChain}:${destChain}:${asset}:100.0`),
-    ],
-    // ── Action Confirmation ──
-    [
-      cb(`⚡ Bridge ${amount} ${asset} Now`, `lz_confirm:${sourceChain}:${destChain}:${asset}:${amount}`),
-    ],
+    // ── Amount Buttons (in the asset's own units) ──
+    BRIDGE_AMOUNTS[asset].map((a) =>
+      cb(`${amount === a ? '✅ ' : ''}${amountLabel(asset, a)}`, `lz_amt:${sourceChain}:${destChain}:${asset}:${a}`)
+    ),
+    // ── Action Confirmation: only with a live Stargate quote ──
+    ...(canBridge ? [[cb(`⚡ Bridge ${amount} ${asset} Now`, `lz_confirm:${sourceChain}:${destChain}:${asset}:${amount}`)]] : []),
     // ── Navigation ──
     [
       cb('🔄 Refresh Balances', `lz_refresh:${sourceChain}:${destChain}:${asset}:${amount}`),
@@ -248,7 +260,7 @@ export function registerLayerZeroRoutes(bot: Telegraf<Context>): void {
     const asset = (ctx as any).match[3] as StargateAsset;
     const amount = (ctx as any).match[4];
 
-    const allChains: LayerZeroChain[] = ['zero', 'base', 'arbitrum', 'ethereum', 'optimism', 'bsc', 'polygon'];
+    const allChains: LayerZeroChain[] = getBridgeChains();
     const buttons: any[] = [];
     const chainButtons = allChains
       .filter((c) => c !== currentDest)
@@ -277,7 +289,7 @@ export function registerLayerZeroRoutes(bot: Telegraf<Context>): void {
     const asset = (ctx as any).match[3] as StargateAsset;
     const amount = (ctx as any).match[4];
 
-    const allChains: LayerZeroChain[] = ['zero', 'base', 'arbitrum', 'ethereum', 'optimism', 'bsc', 'polygon'];
+    const allChains: LayerZeroChain[] = getBridgeChains();
     const buttons: any[] = [];
     const chainButtons = allChains
       .filter((c) => c !== currentSrc)

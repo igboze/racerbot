@@ -111,6 +111,7 @@ import {
   nearSignerFor,
   remoteSigningEnabled,
   type NearKeyLike,
+  isZeroChainEnabled,
 } from '@racerbot/shared';
 import { ethers } from 'ethers';
 import { isStockQuote } from './intentsRoute.js';
@@ -3200,7 +3201,8 @@ export async function getUserEvmBalances(user: UserRecord): Promise<{
     getEvmNativeBalance(address, 'base', false).catch(() => zeroBal),
     getEvmNativeBalance(address, 'arbitrum', false).catch(() => zeroBal),
     getEvmNativeBalance(address, 'ethereum', false).catch(() => zeroBal),
-    getEvmNativeBalance(address, 'zero', false).catch(() => zeroBal),
+    // Zero is not live yet (mainnet 2026-11-30): skip its dead RPC instead of timing out on every wallet view
+    isZeroChainEnabled() ? getEvmNativeBalance(address, 'zero', false).catch(() => zeroBal) : Promise.resolve(zeroBal),
   ]);
 
   return { address, hyperevm, elysium, base, arbitrum, ethereum, zero };

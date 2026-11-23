@@ -82,7 +82,10 @@ describe('deposit', () => {
     expect(picker.text).toContain('Which coin do you want to send?');
     expect(picker.text).not.toMatch(/bps|Intents|Dual-Unwrap/);
     const data = buttons(picker.keyboard).map(x => x.data);
-    expect(data.slice(0, 7)).toEqual(['dep_have:near', 'dep_have:sol', 'dep_have:eth', 'dep_have:hype', 'dep_have:sui', 'dep_have:strk', 'dep_have:zro']);
+    // No ZRO while Zero is switched off (its mainnet launches 2026-11-30)
+    expect(data.slice(0, 6)).toEqual(['dep_have:near', 'dep_have:sol', 'dep_have:eth', 'dep_have:hype', 'dep_have:sui', 'dep_have:strk']);
+    expect(data).not.toContain('dep_have:zro');
+    expect(isDepositAsset('zro')).toBe(false);
     expect(data).toContain('dep_swap_menu');
     expect(isDepositAsset('eth')).toBe(true);
     expect(isDepositAsset('__proto__')).toBe(false);

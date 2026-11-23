@@ -21,8 +21,9 @@ import {
   ERC20_ABI,
   getLayerZeroScanUrl,
   verifySovereignEvmWallet,
-  buildStargateSendParam,
   quoteStargateSend,
+  getBridgeChains,
+  isBridgeChainEnabled,
   getZroUsdPrice,
   type LayerZeroChain,
   type StargateAsset,
@@ -151,7 +152,7 @@ export async function scanCrossChainEvmBalances(
   const cleanAddr = check.address;
   const zroUsdPrice = await getZroUsdPrice().catch(() => 3.85);
 
-  const chains: LayerZeroChain[] = ['zero', 'base', 'arbitrum', 'optimism', 'ethereum', 'bsc', 'polygon'];
+  const chains: LayerZeroChain[] = getBridgeChains();
   const balances: Partial<Record<LayerZeroChain, EvmChainBalance>> = {};
   let totalPortfolioUsd = 0;
 
@@ -262,6 +263,9 @@ export async function executeLayerZeroBridge(params: {
   recipientAddress?: string;
   slippageBps?: number;
 }): Promise<BridgeExecutionResult> {
+  if (!isBridgeChainEnabled(params.sourceChain) || !isBridgeChainEnabled(params.destChain)) {
+    throw new Error('That bridge route is not available. Nothing was sent.');
+  }
   const { wallet, user } = await getUserEvmSigner(params.userId, params.sourceChain);
   const sourceConfig = LZ_CHAINS[params.sourceChain];
   const destConfig = LZ_CHAINS[params.destChain];
@@ -345,18 +349,14 @@ export async function executeLayerZeroBridge(params: {
   }
 
   // Step 4: Execute Stargate V2 send()
-  const sendParam = buildStargateSendParam({
-    destChain: params.destChain,
-    recipientAddress: recipient,
-    amountLD,
-    slippageBps: params.slippageBps,
-  });
+  // Send exactly what Stargate quoted: its amount (dust trimmed) and its minimum received
+  const sendParam = quote.sendParam;
 
   const poolContract = new ethers.Contract(poolInfo.poolAddress, STARGATE_V2_POOL_ABI, wallet);
 
   // Stargate send value: nativeFee (or nativeFee + amount if sending native token)
   const sendValue = isNativeTransfer
-    ? quote.nativeFee + amountLD
+    ? quote.nativeFee + quote.amountLD
     : quote.nativeFee;
 
   logger.info(`Broadcasting Stargate V2 send on ${params.sourceChain} to ${params.destChain}...`, {
@@ -393,7 +393,7 @@ export async function executeLayerZeroBridge(params: {
     sourceChain: params.sourceChain,
     destChain: params.destChain,
     asset: params.asset,
-    amount: params.humanAmount,
+    amount: quote.humanAmount,
     minAmountReceived: ethers.formatUnits(sendParam.minAmountLD, poolInfo.decimals),
     nativeFee: quote.humanNativeFee,
     gasPaid,
@@ -432,7 +432,7 @@ export async function planCrossChain1ClickBuy(params: {
   }
 
   const portfolio = await scanCrossChainEvmBalances(user.evm_address);
-  const candidateChains: LayerZeroChain[] = (['base', 'arbitrum', 'zero', 'optimism', 'ethereum', 'bsc', 'polygon'] as LayerZeroChain[]).filter(
+  const candidateChains: LayerZeroChain[] = getBridgeChains().filter(
     (c) => c !== params.destChain
   );
 
@@ -449,13 +449,15 @@ export async function planCrossChain1ClickBuy(params: {
     const bal = portfolio.balances[chain];
     if (bal && bal.usdcUsd >= params.requiredAmountUsd + 1.5 && STARGATE_V2_POOLS[chain]?.USDC) {
       // Found funding!
+      // A route Stargate cannot quote is skipped, never guessed
       const quote = await quoteStargateSend({
         sourceChain: chain,
         destChain: params.destChain,
         asset: 'USDC',
         humanAmount: params.requiredAmountUsd.toFixed(2),
         recipientAddress: user.evm_address,
-      });
+      }).catch(() => null);
+      if (!quote) continue;
 
       return {
         available: true,
@@ -479,13 +481,15 @@ export async function planCrossChain1ClickBuy(params: {
     const bal = portfolio.balances[chain];
     if (bal && bal.nativeUsd >= params.requiredAmountUsd + 5.0) {
       const ethAmount = (params.requiredAmountUsd / 3200).toFixed(4);
+      // A route Stargate cannot quote is skipped, never guessed
       const quote = await quoteStargateSend({
         sourceChain: chain,
         destChain: params.destChain,
         asset: 'ETH',
         humanAmount: ethAmount,
         recipientAddress: user.evm_address,
-      });
+      }).catch(() => null);
+      if (!quote) continue;
 
       return {
         available: true,

@@ -14,6 +14,7 @@
 import { ethers } from 'ethers';
 import { createLogger } from './logger.js';
 import { decrypt } from './crypto.js';
+import { isZeroChainEnabled } from './evm.js';
 
 const logger = createLogger('layerzero-shared');
 
@@ -42,6 +43,8 @@ export interface LayerZeroChainConfig {
   icon: string;
 }
 
+// rpcUrls[0] is the one used: each was checked to answer on 2026-11-22 (the llamarpc, ankr and
+// polygon-rpc.com endpoints did not)
 export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
   zero: {
     chain: 'zero',
@@ -66,11 +69,7 @@ export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
     chainId: 42161,
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
-    rpcUrls: [
-      'https://arb1.arbitrum.io/rpc',
-      'https://arbitrum.llamarpc.com',
-      'https://rpc.ankr.com/arbitrum',
-    ],
+    rpcUrls: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com'],
     explorerUrl: 'https://arbiscan.io',
     minNativeGasReserve: 500_000_000_000_000n, // 0.0005 ETH (~$1.50)
     approxBridgeTimeSec: 45,
@@ -83,11 +82,7 @@ export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
     chainId: 8453,
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
-    rpcUrls: [
-      'https://mainnet.base.org',
-      'https://base.llamarpc.com',
-      'https://rpc.ankr.com/base',
-    ],
+    rpcUrls: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com'],
     explorerUrl: 'https://basescan.org',
     minNativeGasReserve: 500_000_000_000_000n, // 0.0005 ETH (~$1.50)
     approxBridgeTimeSec: 45,
@@ -100,11 +95,7 @@ export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
     chainId: 1,
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
-    rpcUrls: [
-      'https://eth.llamarpc.com',
-      'https://cloudflare-eth.com',
-      'https://rpc.ankr.com/eth',
-    ],
+    rpcUrls: ['https://ethereum-rpc.publicnode.com', 'https://cloudflare-eth.com'],
     explorerUrl: 'https://etherscan.io',
     minNativeGasReserve: 5_000_000_000_000_000n, // 0.005 ETH (~$15.00)
     approxBridgeTimeSec: 900, // ~15 mins for L1 finality
@@ -117,11 +108,7 @@ export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
     chainId: 10,
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
-    rpcUrls: [
-      'https://mainnet.optimism.io',
-      'https://optimism.llamarpc.com',
-      'https://rpc.ankr.com/optimism',
-    ],
+    rpcUrls: ['https://mainnet.optimism.io', 'https://optimism-rpc.publicnode.com'],
     explorerUrl: 'https://optimistic.etherscan.io',
     minNativeGasReserve: 500_000_000_000_000n, // 0.0005 ETH (~$1.50)
     approxBridgeTimeSec: 45,
@@ -134,7 +121,7 @@ export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
     chainId: 137,
     nativeSymbol: 'POL',
     nativeDecimals: 18,
-    rpcUrls: ['https://polygon-rpc.com', 'https://polygon.llamarpc.com'],
+    rpcUrls: ['https://polygon-bor-rpc.publicnode.com'],
     explorerUrl: 'https://polygonscan.com',
     minNativeGasReserve: 1_000_000_000_000_000_000n, // 1 POL (~$0.40)
     approxBridgeTimeSec: 120,
@@ -147,13 +134,23 @@ export const LZ_CHAINS: Record<LayerZeroChain, LayerZeroChainConfig> = {
     chainId: 56,
     nativeSymbol: 'BNB',
     nativeDecimals: 18,
-    rpcUrls: ['https://binance.llamarpc.com', 'https://bsc-dataseed.binance.org'],
+    rpcUrls: ['https://bsc-dataseed.binance.org', 'https://bsc-rpc.publicnode.com'],
     explorerUrl: 'https://bscscan.com',
     minNativeGasReserve: 2_000_000_000_000_000n, // 0.002 BNB (~$1.20)
     approxBridgeTimeSec: 60,
     icon: '🟡',
   },
 };
+
+/** Chains the bridge offers: Zero only once its mainnet is live and switched on (ZERO_CHAIN_ENABLED=on) */
+export function getBridgeChains(): LayerZeroChain[] {
+  const chains: LayerZeroChain[] = ['base', 'arbitrum', 'ethereum', 'optimism', 'bsc', 'polygon'];
+  return isZeroChainEnabled() ? ['zero', ...chains] : chains;
+}
+
+export function isBridgeChainEnabled(chain: string): chain is LayerZeroChain {
+  return (getBridgeChains() as string[]).includes(chain);
+}
 
 export type StargateAsset = 'USDC' | 'ETH' | 'USDT';
 
@@ -164,111 +161,44 @@ export interface StargatePoolInfo {
   sharedDecimals: number;
 }
 
+// Stargate V2 pools from Stargate's "Mainnet Contracts" page, each checked on-chain (2026-11-22):
+// token() returns the listed token, sharedDecimals() is 6 for every pool, and quoteSend answers.
+// Zero (LayerZero's own chain) is not listed: its mainnet launches 2026-11-30.
+const pool = (poolAddress: string, tokenAddress: string, decimals: number): StargatePoolInfo => ({
+  poolAddress,
+  tokenAddress,
+  decimals,
+  sharedDecimals: 6,
+});
+
 /** Canonical Stargate V2 Pool and Token Addresses */
 export const STARGATE_V2_POOLS: Partial<Record<LayerZeroChain, Partial<Record<StargateAsset, StargatePoolInfo>>>> = {
   arbitrum: {
-    USDC: {
-      poolAddress: '0xe8CDF27AcD73a434D661C84887215F7598e7d0d3',
-      tokenAddress: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
-    ETH: {
-      poolAddress: '0xc20092c457314545089307779774dbca3c415e9a',
-      tokenAddress: ethers.ZeroAddress,
-      decimals: 18,
-      sharedDecimals: 18,
-    },
-    USDT: {
-      poolAddress: '0xcE8CcA271Ebc053242945f2ddB84533F7220547c',
-      tokenAddress: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
+    ETH: pool('0xA45B5130f36CDcA45667738e2a258AB09f4A5f7F', ethers.ZeroAddress, 18),
+    USDC: pool('0xe8CDF27AcD73a434D661C84887215F7598e7d0d3', '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', 6),
+    USDT: pool('0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0', '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', 6),
   },
   base: {
-    USDC: {
-      poolAddress: '0x27a16dc3771391a403d6d5ef62cfb37624522906',
-      tokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
-    ETH: {
-      poolAddress: '0x3ffb1b11b52a1eb54b423c4a452ef29b8a3e7284',
-      tokenAddress: ethers.ZeroAddress,
-      decimals: 18,
-      sharedDecimals: 18,
-    },
+    ETH: pool('0xdc181Bd607330aeeBEF6ea62e03e5e1Fb4B6F7C7', ethers.ZeroAddress, 18),
+    USDC: pool('0x27a16dc786820B16E5c9028b75B99F6f604b5d26', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 6),
   },
   ethereum: {
-    USDC: {
-      poolAddress: '0xc026395860Db3505327ac1b6DCAfde1b140709d6',
-      tokenAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
-    ETH: {
-      poolAddress: '0x77b2043768d28E9C9aB44E1aBfC95944bcE57931',
-      tokenAddress: ethers.ZeroAddress,
-      decimals: 18,
-      sharedDecimals: 18,
-    },
+    ETH: pool('0x77b2043768d28E9C9aB44E1aBfC95944bcE57931', ethers.ZeroAddress, 18),
+    USDC: pool('0xc026395860Db2d07ee33e05fE50ed7bD583189C7', '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 6),
+    USDT: pool('0x933597a323Eb81cAe705C5bC29985172fd5A3973', '0xdAC17F958D2ee523a2206206994597C13D831ec7', 6),
   },
   optimism: {
-    USDC: {
-      poolAddress: '0xcE8CcA271Ebc053242945f2ddB84533F7220547c',
-      tokenAddress: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
-    ETH: {
-      poolAddress: '0x266854e488B87e81057E88aAb74C97818A57BE9D',
-      tokenAddress: ethers.ZeroAddress,
-      decimals: 18,
-      sharedDecimals: 18,
-    },
-  },
-  zero: {
-    USDC: {
-      poolAddress: '0x27a16dc3771391a403d6d5ef62cfb37624522906',
-      tokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
-    ETH: {
-      poolAddress: '0x3ffb1b11b52a1eb54b423c4a452ef29b8a3e7284',
-      tokenAddress: ethers.ZeroAddress,
-      decimals: 18,
-      sharedDecimals: 18,
-    },
+    ETH: pool('0xe8CDF27AcD73a434D661C84887215F7598e7d0d3', ethers.ZeroAddress, 18),
+    USDC: pool('0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0', '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', 6),
+    USDT: pool('0x19cFCE47eD54a88614648DC3f19A5980097007dD', '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', 6),
   },
   bsc: {
-    USDC: {
-      poolAddress: '0x160345fc359604fc6e70e3c5facbde5f7a9342d8',
-      tokenAddress: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
-      decimals: 18,
-      sharedDecimals: 6,
-    },
-    USDT: {
-      poolAddress: '0x160345fc359604fc6e70e3c5facbde5f7a9342d8',
-      tokenAddress: '0x55d398326f99059fF775485246999027B3197955',
-      decimals: 18,
-      sharedDecimals: 6,
-    },
+    USDC: pool('0x962Bd449E630b0d928f308Ce63f1A21F02576057', '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', 18),
+    USDT: pool('0x138EB30f73BC423c6455C53df6D89CB01d9eBc63', '0x55d398326f99059fF775485246999027B3197955', 18),
   },
   polygon: {
-    USDC: {
-      poolAddress: '0x9aa83081aa06af0208d066624ac9677579f60532',
-      tokenAddress: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
-    USDT: {
-      poolAddress: '0x160345fc359604fc6e70e3c5facbde5f7a9342d8',
-      tokenAddress: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
-      decimals: 6,
-      sharedDecimals: 6,
-    },
+    USDC: pool('0x9Aa02D4Fae7F58b8E8f34c66E756cC734DAc7fe4', '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', 6),
+    USDT: pool('0xd47b03ee6d86Cf251ee7860FB2ACf9f91B9fD4d7', '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', 6),
   },
 };
 
@@ -317,6 +247,10 @@ export interface LayerZeroBridgeQuote {
   approxDurationSec: number;
   poolAddress: string;
   recipient: string;
+  /** What Stargate says arrives after its fee, before slippage */
+  amountReceivedLD: bigint;
+  /** The exact SendParam this quote priced: send() must use it unchanged */
+  sendParam: StargateSendParam;
 }
 
 // ── LayerZero Address & Option Helpers ──────────────────────────────────────
@@ -477,7 +411,8 @@ export function buildStargateSendParam(params: {
   const toBytes32 = addressToBytes32(params.recipientAddress);
   const slippageBps = params.slippageBps ?? 50;
   const minAmountLD = (params.amountLD * BigInt(10000 - slippageBps)) / 10000n;
-  const extraOptions = params.extraOptions || encodeLzReceiveOptions(200_000n, 0n);
+  // Plain token transfers need no executor options (Stargate's own "taxi" mode)
+  const extraOptions = params.extraOptions || '0x';
   const composeMsg = params.composeMsg || '0x';
 
   return {
@@ -492,8 +427,9 @@ export function buildStargateSendParam(params: {
 }
 
 /**
- * Quotes a Stargate V2 cross-chain bridge transfer.
- * Performs live RPC queries to the Stargate pool contract with graceful fallback.
+ * Quotes a Stargate V2 cross-chain bridge transfer from the pool itself.
+ * Never guesses: if the pool cannot quote the route (wrong pool, unsupported
+ * route, RPC down) this throws, so nothing is ever sent on an invented fee.
  */
 export async function quoteStargateSend(params: {
   sourceChain: LayerZeroChain;
@@ -507,80 +443,74 @@ export async function quoteStargateSend(params: {
   const sourceConfig = LZ_CHAINS[params.sourceChain];
   const destConfig = LZ_CHAINS[params.destChain];
 
-  if (!sourceConfig) throw new Error(`Unsupported source chain: ${params.sourceChain}`);
-  if (!destConfig) throw new Error(`Unsupported destination chain: ${params.destChain}`);
+  if (!sourceConfig || !isBridgeChainEnabled(params.sourceChain)) throw new Error(`Unsupported source chain: ${params.sourceChain}`);
+  if (!destConfig || !isBridgeChainEnabled(params.destChain)) throw new Error(`Unsupported destination chain: ${params.destChain}`);
   if (params.sourceChain === params.destChain) {
     throw new Error('Source and destination chains must be different for LayerZero bridging');
   }
 
-  const poolMap = STARGATE_V2_POOLS[params.sourceChain];
-  const poolInfo = poolMap ? poolMap[params.asset] : undefined;
+  const poolInfo = STARGATE_V2_POOLS[params.sourceChain]?.[params.asset];
   if (!poolInfo) {
-    throw new Error(`Stargate V2 does not have a registered pool for ${params.asset} on ${params.sourceChain}`);
+    throw new Error(`Stargate has no ${params.asset} pool on ${sourceConfig.name}. Pick another asset or chain.`);
+  }
+  if (!STARGATE_V2_POOLS[params.destChain]?.[params.asset]) {
+    throw new Error(`Stargate cannot deliver ${params.asset} to ${destConfig.name}. Pick another asset or chain.`);
   }
 
-  const amountLD = ethers.parseUnits(params.humanAmount, poolInfo.decimals);
+  // Stargate moves amounts in 6 shared decimals and refunds nothing below that: trim the dust first
+  const dustUnit = 10n ** BigInt(Math.max(0, poolInfo.decimals - poolInfo.sharedDecimals));
+  const amountLD = (ethers.parseUnits(params.humanAmount, poolInfo.decimals) / dustUnit) * dustUnit;
   if (amountLD <= 0n) {
     throw new Error('Bridge amount must be greater than zero');
   }
 
-  const sendParam = buildStargateSendParam({
+  const provider = params.provider || new ethers.JsonRpcProvider(sourceConfig.rpcUrls[0]);
+  const pool = new ethers.Contract(poolInfo.poolAddress, STARGATE_V2_POOL_ABI, provider);
+  const unquotable = (err: any) =>
+    new Error(
+      `Stargate could not quote ${params.asset} from ${sourceConfig.name} to ${destConfig.name} right now ` +
+        `(${err?.shortMessage || err?.message || 'no answer'}). Nothing was sent.`
+    );
+  const asTuple = (p: StargateSendParam) => [p.dstEid, p.to, p.amountLD, p.minAmountLD, p.extraOptions, p.composeMsg, p.oftCmd];
+
+  const draft = buildStargateSendParam({
     destChain: params.destChain,
     recipientAddress: params.recipientAddress,
     amountLD,
     slippageBps: params.slippageBps,
   });
 
-  let nativeFee = 0n;
-  let lzTokenFee = 0n;
-
-  // Attempt live RPC query
-  const rpcUrl = sourceConfig.rpcUrls[0];
-  const rpcProvider = params.provider || new ethers.JsonRpcProvider(rpcUrl);
-
+  // What actually arrives after Stargate's own fee: slippage protection applies to that, not to the amount sent
+  let amountReceivedLD: bigint;
   try {
-    const poolContract = new ethers.Contract(poolInfo.poolAddress, STARGATE_V2_POOL_ABI, rpcProvider);
-    const feeResult = await poolContract.quoteSend(
-      [
-        sendParam.dstEid,
-        sendParam.to,
-        sendParam.amountLD,
-        sendParam.minAmountLD,
-        sendParam.extraOptions,
-        sendParam.composeMsg,
-        sendParam.oftCmd,
-      ],
-      false
-    );
-    nativeFee = BigInt(feeResult[0] || feeResult.nativeFee || 0);
-    lzTokenFee = BigInt(feeResult[1] || feeResult.lzTokenFee || 0);
+    const [, , receipt] = await pool.quoteOFT(asTuple({ ...draft, minAmountLD: 0n }));
+    amountReceivedLD = BigInt(receipt[1]);
   } catch (err: any) {
-    logger.warn(`RPC quoteSend failed on ${params.sourceChain}, using resilient fallback estimate: ${err.message}`);
-    // Standard L2-to-L2 LayerZero native messaging fee estimate: ~0.0003 - 0.0008 ETH
-    if (params.sourceChain === 'ethereum') {
-      nativeFee = 2_500_000_000_000_000n; // ~0.0025 ETH on L1
-    } else if (params.sourceChain === 'bsc') {
-      nativeFee = 2_000_000_000_000_000n; // ~0.002 BNB
-    } else if (params.sourceChain === 'polygon') {
-      nativeFee = 1_000_000_000_000_000_000n; // ~1 POL
-    } else if (params.sourceChain === 'zero') {
-      nativeFee = 50_000_000_000_000_000n; // ~0.05 ZRO (~$0.20)
-    } else {
-      nativeFee = 400_000_000_000_000n; // ~0.0004 ETH on Arbitrum/Base/OP (~$1.20)
-    }
+    throw unquotable(err);
   }
+  if (amountReceivedLD <= 0n) throw unquotable(new Error('nothing would arrive'));
+
+  const slippageBps = params.slippageBps ?? 50;
+  const sendParam: StargateSendParam = {
+    ...draft,
+    minAmountLD: (amountReceivedLD * BigInt(10000 - slippageBps)) / 10000n,
+  };
+
+  let nativeFee: bigint;
+  try {
+    const fee = await pool.quoteSend(asTuple(sendParam), false);
+    nativeFee = BigInt(fee[0]);
+  } catch (err: any) {
+    throw unquotable(err);
+  }
+  if (nativeFee <= 0n) throw unquotable(new Error('zero messaging fee'));
 
   // Estimated source transaction gas (approval + send)
-  const sourceGasEstimate =
-    params.sourceChain === 'ethereum'
-      ? 800_000_000_000_000n
-      : params.sourceChain === 'zero'
-        ? 10_000_000_000_000_000n
-        : 100_000_000_000_000n;
+  const sourceGasEstimate = params.sourceChain === 'ethereum' ? 800_000_000_000_000n : 100_000_000_000_000n;
 
   // Total native required: messagingFee + sourceGas (+ amount if bridging native ETH)
   let totalRequiredNative = nativeFee + sourceGasEstimate;
-  if (params.asset === 'ETH' && sourceConfig.nativeSymbol === 'ETH') {
+  if (poolInfo.tokenAddress === ethers.ZeroAddress) {
     totalRequiredNative += amountLD;
   }
 
@@ -590,7 +520,8 @@ export async function quoteStargateSend(params: {
     asset: params.asset,
     amountLD,
     minAmountLD: sendParam.minAmountLD,
-    humanAmount: params.humanAmount,
+    amountReceivedLD,
+    humanAmount: ethers.formatUnits(amountLD, poolInfo.decimals),
     nativeFee,
     humanNativeFee: ethers.formatEther(nativeFee),
     sourceGasEstimate,
@@ -598,5 +529,6 @@ export async function quoteStargateSend(params: {
     approxDurationSec: Math.max(sourceConfig.approxBridgeTimeSec, destConfig.approxBridgeTimeSec),
     poolAddress: poolInfo.poolAddress,
     recipient: params.recipientAddress,
+    sendParam,
   };
 }

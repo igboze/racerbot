@@ -13,6 +13,9 @@ import {
   verifySovereignEvmWallet,
   buildStargateSendParam,
   quoteStargateSend,
+  getBridgeChains,
+  STARGATE_V2_POOLS,
+  STARGATE_V2_POOL_ABI,
 } from './layerZero.js';
 import { encrypt } from './crypto.js';
 
@@ -111,23 +114,80 @@ describe('LayerZero & Stargate V2 Shared Module', () => {
       expect(param.to).toBe(addressToBytes32(TEST_EVM_ADDRESS));
     });
 
-    it('quotes Stargate bridge with fallback estimation when RPC is mock/unreachable', async () => {
+    it('quotes from the pool: minimum received comes from quoteOFT, fee from quoteSend', async () => {
+      const iface = new ethers.Interface(STARGATE_V2_POOL_ABI);
+      const sent: any[] = [];
+      const provider: any = {
+        call: async (tx: any) => {
+          const parsed = iface.parseTransaction({ data: tx.data })!;
+          sent.push({ to: tx.to, fn: parsed.name, param: parsed.args[0] });
+          if (parsed.name === 'quoteOFT') {
+            return iface.encodeFunctionResult('quoteOFT', [[0n, 10n ** 30n], [], [50_000_000n, 49_970_000n]]);
+          }
+          return iface.encodeFunctionResult('quoteSend', [[123_000_000_000_000n, 0n]]);
+        },
+      };
       const quote = await quoteStargateSend({
         sourceChain: 'base',
         destChain: 'arbitrum',
         asset: 'USDC',
         humanAmount: '50.0',
         recipientAddress: TEST_EVM_ADDRESS,
+        provider,
       });
 
-      expect(quote.sourceChain).toBe('base');
-      expect(quote.destChain).toBe('arbitrum');
-      expect(quote.asset).toBe('USDC');
+      expect(sent.map((s) => s.fn)).toEqual(['quoteOFT', 'quoteSend']);
+      expect(sent[0].to.toLowerCase()).toBe(STARGATE_V2_POOLS.base!.USDC!.poolAddress.toLowerCase());
       expect(quote.amountLD).toBe(50_000_000n);
-      expect(quote.minAmountLD).toBe(49_750_000n); // 50 * 0.995 = 49.75
-      expect(quote.nativeFee > 0n).toBe(true);
+      expect(quote.amountReceivedLD).toBe(49_970_000n);
+      expect(quote.minAmountLD).toBe((49_970_000n * 9950n) / 10000n); // 0.5% below what Stargate delivers
+      expect(quote.sendParam.minAmountLD).toBe(quote.minAmountLD);
+      expect(quote.sendParam.extraOptions).toBe('0x');
+      expect(quote.nativeFee).toBe(123_000_000_000_000n);
       expect(quote.totalRequiredNative > quote.nativeFee).toBe(true);
-      expect(quote.approxDurationSec).toBe(45);
+    });
+
+    it('refuses instead of guessing a fee when the pool cannot quote', async () => {
+      const provider: any = { call: async () => '0x' };
+      await expect(
+        quoteStargateSend({
+          sourceChain: 'base',
+          destChain: 'arbitrum',
+          asset: 'ETH',
+          humanAmount: '0.01',
+          recipientAddress: TEST_EVM_ADDRESS,
+          provider,
+        })
+      ).rejects.toThrow(/could not quote .*Nothing was sent/);
+    });
+
+    it('trims ETH to the 6 shared decimals Stargate moves', async () => {
+      const iface = new ethers.Interface(STARGATE_V2_POOL_ABI);
+      let amountSent = 0n;
+      const provider: any = {
+        call: async (tx: any) => {
+          const parsed = iface.parseTransaction({ data: tx.data })!;
+          amountSent = parsed.args[0][2];
+          return parsed.name === 'quoteOFT'
+            ? iface.encodeFunctionResult('quoteOFT', [[0n, 10n ** 30n], [], [amountSent, amountSent]])
+            : iface.encodeFunctionResult('quoteSend', [[1n, 0n]]);
+        },
+      };
+      const quote = await quoteStargateSend({
+        sourceChain: 'arbitrum', destChain: 'base', asset: 'ETH', humanAmount: '0.0123456789', recipientAddress: TEST_EVM_ADDRESS, provider,
+      });
+      expect(quote.amountLD).toBe(12_345_000_000_000_000n);
+      expect(amountSent).toBe(12_345_000_000_000_000n);
+    });
+
+    it('knows no pool Stargate does not list, and no Zero route while Zero is off', async () => {
+      await expect(
+        quoteStargateSend({ sourceChain: 'base', destChain: 'arbitrum', asset: 'USDT', humanAmount: '10', recipientAddress: TEST_EVM_ADDRESS })
+      ).rejects.toThrow(/no USDT pool on Base/);
+      await expect(
+        quoteStargateSend({ sourceChain: 'base', destChain: 'zero', asset: 'USDC', humanAmount: '10', recipientAddress: TEST_EVM_ADDRESS })
+      ).rejects.toThrow(/Unsupported destination chain: zero/);
+      expect(getBridgeChains()).not.toContain('zero');
     });
   });
 });

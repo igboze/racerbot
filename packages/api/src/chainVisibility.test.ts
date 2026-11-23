@@ -30,10 +30,11 @@ describe('Chain Visibility Settings', () => {
   it('safely recovers if all chains are somehow marked hidden', () => {
     const allChains = ALL_SUPPORTED_CHAINS.map(c => c.id);
     const user = { hidden_chains: allChains };
-    // Safety guard ensures at least fallback to visible
-    for (const chain of allChains) {
+    // Safety guard ensures at least fallback to visible (Zero stays hidden until it is live)
+    for (const chain of allChains.filter(c => c !== 'zero')) {
       expect(isChainVisible(user, chain)).toBe(true);
     }
+    expect(isChainVisible(user, 'zero')).toBe(false);
   });
 
   it('getVisibleChains returns only active chains', () => {
@@ -75,7 +76,7 @@ describe('Chain Visibility Settings', () => {
     expect(callbackDataList).toContain('toggle_chain_vis:solana');
     expect(callbackDataList).toContain('toggle_chain_vis:base');
     expect(callbackDataList).toContain('toggle_chain_vis:arbitrum');
-    expect(callbackDataList).toContain('toggle_chain_vis:zero');
+    expect(callbackDataList).not.toContain('toggle_chain_vis:zero'); // not live until 2026-11-30
     expect(callbackDataList).toContain('toggle_chain_vis:ethereum');
     expect(callbackDataList).toContain('toggle_chain_vis:hyperevm');
     expect(callbackDataList).toContain('toggle_chain_vis:elysium');
@@ -85,7 +86,7 @@ describe('Chain Visibility Settings', () => {
     expect(callbackDataList).toContain('preset_chain_vis:near');
     expect(callbackDataList).toContain('preset_chain_vis:base');
     expect(callbackDataList).toContain('preset_chain_vis:solana');
-    expect(callbackDataList).toContain('preset_chain_vis:zero');
+    expect(callbackDataList).not.toContain('preset_chain_vis:zero');
     expect(callbackDataList).toContain('preset_chain_vis:hyperevm');
     expect(callbackDataList).toContain('preset_chain_vis:all');
   });
