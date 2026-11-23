@@ -81,9 +81,18 @@ const codeLoginLimit = rateLimit(10 * 60 * 1000, 20);
 
 router.post('/auth/telegram/request-verification', codeLoginLimit, async (req, res) => {
   try {
+    const { isCodeLoginEnabled } = await import('../authSession.js');
+    if (!isCodeLoginEnabled()) {
+      res.status(410).json({ error: 'Sign in with the Telegram button: it opens RacerBot in your Telegram, where you approve the sign-in.' });
+      return;
+    }
     const { username } = req.body;
     const { requestTelegramVerification } = await import('../authSession.js');
-    const result = await requestTelegramVerification(username);
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    const result = await requestTelegramVerification(username, {
+      ip: forwarded || req.ip,
+      userAgent: String(req.headers['user-agent'] || ''),
+    });
     if (!result.success) {
       res.status(400).json({ error: result.reason });
       return;
@@ -97,6 +106,11 @@ router.post('/auth/telegram/request-verification', codeLoginLimit, async (req, r
 // 2c. Verify 6-digit code entered on WebApp
 router.post('/auth/telegram/verify-code', codeLoginLimit, async (req, res) => {
   try {
+    const { isCodeLoginEnabled } = await import('../authSession.js');
+    if (!isCodeLoginEnabled()) {
+      res.status(410).json({ error: 'Sign in with the Telegram button: it opens RacerBot in your Telegram, where you approve the sign-in.' });
+      return;
+    }
     const { requestId, code } = req.body;
     if (!requestId || !code) {
       res.status(400).json({ error: 'requestId and code are required' });
