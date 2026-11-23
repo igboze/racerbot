@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { getUserByTelegramId } from '@racerbot/db';
 import { isTradableVenue } from '@racerbot/shared';
+import { clientIp } from './abuseShield.js';
 
 /** Reject initData older than this (replay window). 24h per Telegram guidance. */
 const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
@@ -142,7 +143,7 @@ export function rateLimit(windowMs: number, maxRequests: number) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (windows.size > 10_000) windows.clear(); // hard memory cap
 
-    const key = req.ip ?? 'unknown';
+    const key = clientIp(req);
     const now = Date.now();
     const hits = (windows.get(key) ?? []).filter(t => now - t < windowMs);
 

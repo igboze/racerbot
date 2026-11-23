@@ -106,8 +106,16 @@ const sessionKey = (req: Request) => {
   return auth ? crypto.createHash('sha256').update(auth).digest('hex').slice(0, 24) : '';
 };
 
-export function clientIp(req: Request): string {
-  return req.ip || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown';
+/** On Railway, the edge sets X-Real-IP to the client's address (and overwrites anything a client sends) */
+const ON_RAILWAY = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_PROJECT_ID);
+
+/**
+ * The client's IP. Behind Railway, req.ip (last X-Forwarded-For hop) can be one of several edge
+ * proxies, which spread one client over a few "IPs" and let it slip past per-IP limits.
+ */
+export function clientIp(req: Request | any, onRailway = ON_RAILWAY): string {
+  const real = onRailway ? String(req?.headers?.['x-real-ip'] || '').trim() : '';
+  return real || req?.ip || 'unknown';
 }
 
 type Alert = (html: string) => Promise<void> | void;

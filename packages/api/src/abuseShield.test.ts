@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { EventEmitter } from 'events';
-import { AbuseShield, DEFAULT_SHIELD_CONFIG, isStrike, normalizePath } from './abuseShield.js';
+import { AbuseShield, DEFAULT_SHIELD_CONFIG, isStrike, normalizePath, clientIp } from './abuseShield.js';
 
 /** A fake request through the middleware; `status` is what the route would answer */
 function makeShield() {
@@ -90,6 +90,13 @@ describe('abuse shield', () => {
     const { shield, alerts } = makeShield();
     for (const u of ['stellar', 'quick', 'treasury', 'badguy']) shield.noteAccount(ATTACKER, u);
     expect(alerts.join('\n')).toContain('One IP, many accounts');
+  });
+
+  it('takes the client IP from Railway\'s X-Real-IP, not the edge proxy hop', () => {
+    const req = { ip: '100.64.0.7', headers: { 'x-real-ip': '102.89.68.154' } };
+    expect(clientIp(req, true)).toBe('102.89.68.154');
+    // Off Railway nothing sets the header, so a client could fake it: ignore it there
+    expect(clientIp(req, false)).toBe('100.64.0.7');
   });
 
   it('counts the right things', () => {
