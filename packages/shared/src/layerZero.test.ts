@@ -14,6 +14,7 @@ import {
   buildStargateSendParam,
   quoteStargateSend,
   getBridgeChains,
+  getBridgeFeeBps,
   STARGATE_V2_POOLS,
   STARGATE_V2_POOL_ABI,
 } from './layerZero.js';
@@ -134,6 +135,7 @@ describe('LayerZero & Stargate V2 Shared Module', () => {
         humanAmount: '50.0',
         recipientAddress: TEST_EVM_ADDRESS,
         provider,
+        feeBps: 0,
       });
 
       expect(sent.map((s) => s.fn)).toEqual(['quoteOFT', 'quoteSend']);
@@ -174,10 +176,48 @@ describe('LayerZero & Stargate V2 Shared Module', () => {
         },
       };
       const quote = await quoteStargateSend({
-        sourceChain: 'arbitrum', destChain: 'base', asset: 'ETH', humanAmount: '0.0123456789', recipientAddress: TEST_EVM_ADDRESS, provider,
+        sourceChain: 'arbitrum', destChain: 'base', asset: 'ETH', humanAmount: '0.0123456789', recipientAddress: TEST_EVM_ADDRESS, provider, feeBps: 0,
       });
       expect(quote.amountLD).toBe(12_345_000_000_000_000n);
       expect(amountSent).toBe(12_345_000_000_000_000n);
+    });
+
+    it("takes RacerBot's bridge fee out of the amount, bridges the rest, and never exceeds what the user picked", async () => {
+      const iface = new ethers.Interface(STARGATE_V2_POOL_ABI);
+      let bridged = 0n;
+      const provider: any = {
+        call: async (tx: any) => {
+          const parsed = iface.parseTransaction({ data: tx.data })!;
+          bridged = parsed.args[0][2];
+          return parsed.name === 'quoteOFT'
+            ? iface.encodeFunctionResult('quoteOFT', [[0n, 10n ** 30n], [], [bridged, bridged]])
+            : iface.encodeFunctionResult('quoteSend', [[1n, 0n]]);
+        },
+      };
+      // 100 USDC at the default 0.5%: 99.5 bridged, 0.5 to the treasury
+      const usdc = await quoteStargateSend({ sourceChain: 'base', destChain: 'arbitrum', asset: 'USDC', humanAmount: '100', recipientAddress: TEST_EVM_ADDRESS, provider });
+      expect(usdc.platformFeeBps).toBe(50);
+      expect(usdc.grossLD).toBe(100_000_000n);
+      expect(usdc.amountLD).toBe(99_500_000n);
+      expect(usdc.platformFeeLD).toBe(500_000n);
+      expect(bridged).toBe(99_500_000n);
+
+      // ETH: the dust Stargate cannot move stays with the fee; bridged + fee = exactly what was picked
+      const eth = await quoteStargateSend({ sourceChain: 'base', destChain: 'arbitrum', asset: 'ETH', humanAmount: '0.0123456789', recipientAddress: TEST_EVM_ADDRESS, provider });
+      expect(eth.amountLD + eth.platformFeeLD).toBe(eth.grossLD);
+      expect(eth.amountLD % 10n ** 12n).toBe(0n);
+      expect(eth.totalRequiredNative).toBe(eth.grossLD + eth.nativeFee + eth.sourceGasEstimate);
+    });
+
+    it('reads the fee from BRIDGE_FEE_BPS, capped at 5%', () => {
+      const before = process.env.BRIDGE_FEE_BPS;
+      process.env.BRIDGE_FEE_BPS = '25';
+      expect(getBridgeFeeBps()).toBe(25);
+      process.env.BRIDGE_FEE_BPS = '9000';
+      expect(getBridgeFeeBps()).toBe(500);
+      process.env.BRIDGE_FEE_BPS = '0';
+      expect(getBridgeFeeBps()).toBe(0);
+      if (before === undefined) delete process.env.BRIDGE_FEE_BPS; else process.env.BRIDGE_FEE_BPS = before;
     });
 
     it('knows no pool Stargate does not list, and no Zero route while Zero is off', async () => {

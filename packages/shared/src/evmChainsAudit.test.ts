@@ -39,6 +39,9 @@ describe('Stargate pools', () => {
     polygon: { USDC: '0x9Aa02D4Fae7F58b8E8f34c66E756cC734DAc7fe4', USDT: '0xd47b03ee6d86Cf251ee7860FB2ACf9f91B9fD4d7' },
   };
 
+  const ZRO = '0x6985884C4392D348587B19cb9eAAf157F13271cd';
+  for (const c of Object.keys(VERIFIED)) VERIFIED[c].ZRO = ZRO; // the ZRO OFT, verified on-chain 2026-11-23
+
   it('are exactly the verified Stargate pools, all with 6 shared decimals', () => {
     const actual = Object.fromEntries(
       Object.entries(STARGATE_V2_POOLS).map(([chain, pools]) => [

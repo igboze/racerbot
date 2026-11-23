@@ -24,6 +24,7 @@ import {
   quoteStargateSend,
   getBridgeChains,
   isBridgeChainEnabled,
+  getBridgeFeeRecipient,
   getZroUsdPrice,
   type LayerZeroChain,
   type StargateAsset,
@@ -52,6 +53,9 @@ export interface EvmChainBalance {
   usdtBalance: string;
   usdtBalanceRaw: bigint;
   usdtUsd: number;
+  zroBalance: string;
+  zroBalanceRaw: bigint;
+  zroUsd: number;
   totalUsd: number;
 }
 
@@ -72,6 +76,9 @@ export interface BridgeExecutionResult {
   minAmountReceived: string;
   nativeFee: string;
   gasPaid: string;
+  /** RacerBot's fee in the bridged asset, and its transfer to the treasury (empty if it did not go through) */
+  platformFee: string;
+  platformFeeTxHash: string;
   recipient: string;
   approxDurationSec: number;
   explorerUrl: string;
@@ -197,7 +204,16 @@ export async function scanCrossChainEvmBalances(
         const usdtHuman = ethers.formatUnits(usdtRaw, usdtDecimals);
         const usdtUsd = parseFloat(usdtHuman);
 
-        const totalChainUsd = nativeUsd + usdcUsd + usdtUsd;
+        let zroRaw = 0n;
+        const zroPool = STARGATE_V2_POOLS[chain]?.ZRO;
+        if (zroPool) {
+          const zroContract = new ethers.Contract(zroPool.tokenAddress, ERC20_ABI, provider);
+          zroRaw = await zroContract.balanceOf(cleanAddr).catch(() => 0n);
+        }
+        const zroHuman = ethers.formatUnits(zroRaw, 18);
+        const zroUsd = parseFloat(zroHuman) * zroUsdPrice;
+
+        const totalChainUsd = nativeUsd + usdcUsd + usdtUsd + zroUsd;
         totalPortfolioUsd += totalChainUsd;
 
         balances[chain] = {
@@ -213,6 +229,9 @@ export async function scanCrossChainEvmBalances(
           usdtBalance: usdtHuman,
           usdtBalanceRaw: usdtRaw,
           usdtUsd,
+          zroBalance: zroHuman,
+          zroBalanceRaw: zroRaw,
+          zroUsd,
           totalUsd: totalChainUsd,
         };
       } catch (err: any) {
@@ -230,6 +249,9 @@ export async function scanCrossChainEvmBalances(
           usdtBalance: '0.0',
           usdtBalanceRaw: 0n,
           usdtUsd: 0,
+          zroBalance: '0.0',
+          zroBalanceRaw: 0n,
+          zroUsd: 0,
           totalUsd: 0,
         };
       }
@@ -323,7 +345,7 @@ export async function executeLayerZeroBridge(params: {
   const nativeBal = await wallet.provider!.getBalance(wallet.address);
   const requiredNativeGas = quote.nativeFee + quote.sourceGasEstimate;
   const totalRequiredNative = isNativeTransfer
-    ? amountLD + requiredNativeGas
+    ? quote.grossLD + requiredNativeGas
     : requiredNativeGas;
   const minReserve = sourceConfig.minNativeGasReserve;
 
@@ -338,7 +360,9 @@ export async function executeLayerZeroBridge(params: {
   }
 
   // Step 3: Handle ERC20 Approval if needed
-  if (!isNativeTransfer) {
+  // An OFT that is its own token (ZRO) burns from the sender directly: nothing to approve
+  const selfOft = poolInfo.poolAddress.toLowerCase() === poolInfo.tokenAddress.toLowerCase();
+  if (!isNativeTransfer && !selfOft) {
     const tokenContract = new ethers.Contract(poolInfo.tokenAddress, ERC20_ABI, wallet);
     const currentAllowance: bigint = await tokenContract.allowance(wallet.address, poolInfo.poolAddress);
     if (currentAllowance < amountLD) {
@@ -386,6 +410,23 @@ export async function executeLayerZeroBridge(params: {
   const receipt = await tx.wait(1);
   const gasPaid = receipt ? ethers.formatEther(receipt.gasUsed * receipt.gasPrice) : '0';
 
+  // RacerBot's bridge fee, only once the bridge went through. Never fails the bridge: a fee that
+  // cannot be sent is logged and the user keeps it.
+  let platformFeeTxHash = '';
+  const treasury = getBridgeFeeRecipient();
+  if (quote.platformFeeLD > 0n && ethers.isAddress(treasury) && receipt?.status === 1) {
+    try {
+      const feeTx = isNativeTransfer
+        ? await wallet.sendTransaction({ to: treasury, value: quote.platformFeeLD })
+        : await (new ethers.Contract(poolInfo.tokenAddress, ['function transfer(address to, uint256 amount) returns (bool)'], wallet) as any)
+            .transfer(treasury, quote.platformFeeLD);
+      await feeTx.wait(1);
+      platformFeeTxHash = feeTx.hash;
+    } catch (err: any) {
+      logger.warn(`Bridge fee transfer failed (user ${params.userId}, ${params.sourceChain} ${params.asset}): ${err?.message}`);
+    }
+  }
+
   return {
     success: true,
     txHash: tx.hash,
@@ -397,6 +438,8 @@ export async function executeLayerZeroBridge(params: {
     minAmountReceived: ethers.formatUnits(sendParam.minAmountLD, poolInfo.decimals),
     nativeFee: quote.humanNativeFee,
     gasPaid,
+    platformFee: ethers.formatUnits(quote.platformFeeLD, poolInfo.decimals),
+    platformFeeTxHash,
     recipient,
     approxDurationSec: quote.approxDurationSec,
     explorerUrl: `${sourceConfig.explorerUrl}/tx/${tx.hash}`,
