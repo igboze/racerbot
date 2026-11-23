@@ -233,6 +233,8 @@ import { generatePNLCard } from './pnlCardGenerator.js';
 import { generateTokenInfoCardImage } from './tokenInfoCardImageGenerator.js';
 import { toTokenInfoCardData } from './tokenInfoCardData.js';
 import { askWebLoginApproval, registerWebLoginApproval } from './webLoginApproval.js';
+import { registerWebSessionsBot } from './webSessionsBot.js';
+import { registerUsernameSync } from './usernameSync.js';
 import { swarmPlanText, SWARM_INTRO } from './swarmMessages.js';
 import { registerRacerCard } from './racerCard.js';
 import { handleBuyBotCommand, handleTestAlertCommand, handleBuyAlertAction, handleBuyAlertMediaUpload, buildAlertSettingsCard, escapeHtml } from './buyAlerts.js';
@@ -2871,6 +2873,9 @@ export function buildSettingsDashboard(user: UserRecord) {
     ],
     [
       cb('🔄 Rotate Key', 'rotate_prompt', 'primary'),
+      cb('🖥 Web sessions', 'websess_list', 'primary'),
+    ],
+    [
       cb('🔙 Main Menu', 'menu_home', 'primary'),
     ],
     [
@@ -4657,6 +4662,8 @@ export async function renderDepositQuoteCard(ctx: any, telegramId: number, token
 }
 
 export function setupRoutes(bot: Telegraf): void {
+  // First, so every private message keeps the stored Telegram username current
+  registerUsernameSync(bot);
   // ── Register RaceDrop commands, actions, and wizards ───────────────────────
   setupRaceDropRoutes(bot, userPendingActions);
 
@@ -5291,6 +5298,7 @@ export function setupRoutes(bot: Telegraf): void {
 
   // ── WebApp Connection Approval & Denial Handlers ───────────────────────────
   registerWebLoginApproval(bot);
+  registerWebSessionsBot(bot);
 
   bot.action(/^tgauth_approve:(.+)$/, async (ctx) => {
     const requestId = ctx.match[1];

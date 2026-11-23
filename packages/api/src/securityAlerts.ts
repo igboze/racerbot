@@ -69,7 +69,7 @@ export type SecurityEvent =
     }
   | { kind: 'key_export'; chains: string[] }
   | { kind: 'wallet_import'; chain: string; address: string; active: boolean }
-  | { kind: 'web_login'; method: string };
+  | { kind: 'web_login'; method: string; sid?: string; ip?: string; device?: string };
 
 export interface AlertTarget {
   userId?: string | null;
@@ -132,7 +132,12 @@ export function formatSecurityAlert(event: SecurityEvent, firstSendToAddress: bo
     case 'web_login':
       return (
         `🔐 <b>Security alert: new web sign-in</b>\n\n` +
-        `Your account was just signed in on the Racer web app (${esc(event.method)}).` + NOT_YOU
+        `Your account was just signed in on the Racer web app (${esc(event.method)}).` +
+        (event.device ? `\n💻 Device: ${esc(event.device)}` : '') +
+        (event.ip ? `\n🌐 IP: <code>${esc(event.ip)}</code>` : '') +
+        (event.sid
+          ? `\n\n<b>Not you?</b> Tap <b>Log it out</b> below, then check /websessions for anything you don't recognise.`
+          : NOT_YOU)
       );
   }
 }
@@ -165,6 +170,9 @@ export async function sendSecurityAlert(target: AlertTarget, event: SecurityEven
     await client.sendMessage(telegramId, formatSecurityAlert(event, firstSend), {
       parse_mode: 'HTML',
       link_preview_options: { is_disabled: true },
+      ...(event.kind === 'web_login' && event.sid
+        ? { reply_markup: { inline_keyboard: [[{ text: '🚫 Not me: log it out', callback_data: `websess_out:${event.sid}` }]] } }
+        : {}),
     } as any);
   } catch (err: any) {
     logger.warn(`Security alert (${event.kind}) not sent: ${err?.message}`);

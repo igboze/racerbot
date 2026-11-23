@@ -20,7 +20,7 @@ import {
   withdrawPrivate,
   WalletNeedsNearError,
 } from '../executorPool.js';
-import { verifiedUser, unprovenWalletClaim } from './verifiedUser.js';
+import { verifiedUser, unprovenWalletClaim, fundsOutAllowed, FUNDS_OUT_NEEDS_TELEGRAM } from './verifiedUser.js';
 import { buildRecoveryKit } from '../recoveryKit.js';
 import { generateQrBuffer, generateWalletDeepLink, getTokenByKey, SUPPORTED_CHAINS, unitsToRaw } from '../multichainDeposit.js';
 import { listWithdrawDestinations, quoteWithdrawToChain, withdrawToChain, type WithdrawRequest } from '../crossChainWithdraw.js';
@@ -242,6 +242,11 @@ export function registerConfidentialRoutes(router: Router): void {
         res.status(400).json({ error: 'That is not a valid NEAR account.' });
         return;
       }
+      // Back to the user's own RacerBot wallet is always fine; anywhere else needs Telegram
+      if (destination && destination !== user.subaccount_id && !(await fundsOutAllowed(req, user))) {
+        res.status(403).json({ error: FUNDS_OUT_NEEDS_TELEGRAM, code: 'TELEGRAM_REQUIRED' });
+        return;
+      }
       const result = await withdrawPrivate(user, amount, destination);
       res.json({ success: true, ...result, amountNear: toNear(amount), message: 'Withdrawal sent. It arrives in about 15 seconds.' });
     } catch (err: any) {
@@ -293,6 +298,10 @@ export function registerConfidentialRoutes(router: Router): void {
     try {
       const user = await authed(req, res);
       if (!user) return;
+      if (!(await fundsOutAllowed(req, user))) {
+        res.status(403).json({ error: FUNDS_OUT_NEEDS_TELEGRAM, code: 'TELEGRAM_REQUIRED' });
+        return;
+      }
       const r = withdrawRequest(req.body);
       if (!r) {
         res.status(400).json({ error: 'Enter an amount to withdraw.' });
