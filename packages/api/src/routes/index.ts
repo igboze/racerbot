@@ -37,6 +37,9 @@ import { createRacerCardRouter } from './racerCardRoutes.js';
 import { verifiedUser } from './verifiedUser.js';
 import { EXECUTORS_ENABLED, confidentialBuy, confidentialSell, positionBalance } from '../executorPool.js';
 
+/** Thrown to leave a pre-swap check early without logging it as a problem */
+class SkipPreCheck extends Error {}
+
 const logger = createLogger('api-routes');
 
 const router = Router();
@@ -1258,6 +1261,9 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
           try {
             const { getNear } = await import('@racerbot/shared');
             const near = getNear();
+            // The user's key only loads when their trade reaches the executor, which registers storage
+            // itself: before that, signing as them fails with "No signing key", so skip instead of failing
+            if (!(await near.hasKey(user.subaccount_id).catch(() => false))) throw new SkipPreCheck();
             // Register token storage for every NEP-141 token
             if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
               await near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch((err: any) => {
@@ -1278,7 +1284,7 @@ router.post(['/alpha/trade/execute', '/alpha/trade'], async (req, res) => {
               await ensureRefTokenRegistered(tokenAddress, user.subaccount_id).catch(() => {});
             }
           } catch (preErr: any) {
-            logger.warn(`Pre-swap registration warning: ${preErr?.message}`);
+            if (!(preErr instanceof SkipPreCheck)) logger.warn(`Pre-swap registration warning: ${preErr?.message}`);
           }
         }
 
@@ -1625,6 +1631,8 @@ router.post('/alpha/creator/signal', async (req, res) => {
           try {
             const { getNear } = await import('@racerbot/shared');
             const near = getNear();
+            // Same as above: the executor registers storage once it has the user's key
+            if (!(await near.hasKey(user.subaccount_id).catch(() => false))) throw new SkipPreCheck();
             if (tokenAddress && tokenAddress !== 'near' && tokenAddress !== 'wrap.near') {
               await near.ensureStorageDeposit(user.subaccount_id, tokenAddress).catch((err: any) => {
                 logger.warn(`Storage deposit pre-check warning for ${user.subaccount_id} on ${tokenAddress}: ${err?.message}`);
@@ -1637,7 +1645,7 @@ router.post('/alpha/creator/signal', async (req, res) => {
               await ensureRefTokenRegistered(tokenAddress, user.subaccount_id).catch(() => {});
             }
           } catch (preErr: any) {
-            logger.warn(`Pre-swap registration warning: ${preErr?.message}`);
+            if (!(preErr instanceof SkipPreCheck)) logger.warn(`Pre-swap registration warning: ${preErr?.message}`);
           }
         }
 
