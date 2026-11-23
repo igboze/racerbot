@@ -26,7 +26,7 @@ describe('LayerZero Routes & UI Module', () => {
       amount: '50.0',
     });
 
-    expect(menu.text).toContain('LayerZero & Stargate V2 Bridge');
+    expect(menu.text).toContain('LayerZero & Stargate Bridge');
     expect(menu.text).toContain(TEST_WALLET.address);
     expect(menu.text).toContain('Universal Sovereign EVM Wallet');
     expect(menu.text).toContain('funds cannot be trapped');
@@ -47,7 +47,7 @@ describe('LayerZero Routes & UI Module', () => {
 
     // Zero is not live yet (mainnet 2026-11-30): no Zero routes are offered
     expect(flattened.some((b: any) => /:zero[:$]|lz_route:zero/.test(b.callback_data || ''))).toBe(false);
-    expect(menu.text).not.toContain('ZRO');
+    expect(menu.text).not.toContain('<b>Zero:</b>'); // the Zero chain, not the ZRO token
   });
 
   it('registers commands and action handlers onto Telegraf bot', () => {

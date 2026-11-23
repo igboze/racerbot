@@ -152,7 +152,7 @@ export function isBridgeChainEnabled(chain: string): chain is LayerZeroChain {
   return (getBridgeChains() as string[]).includes(chain);
 }
 
-export type StargateAsset = 'USDC' | 'ETH' | 'USDT';
+export type StargateAsset = 'USDC' | 'ETH' | 'USDT' | 'ZRO';
 
 export interface StargatePoolInfo {
   poolAddress: string;
@@ -171,34 +171,48 @@ const pool = (poolAddress: string, tokenAddress: string, decimals: number): Star
   sharedDecimals: 6,
 });
 
-/** Canonical Stargate V2 Pool and Token Addresses */
+/**
+ * ZRO (LayerZero's token) is itself a LayerZero OFT: the same contract on every chain sends it
+ * (quoteSend / quoteOFT / send, like a Stargate pool), with no approval and no transfer fee.
+ * Checked on-chain 2026-11-23: symbol ZRO, 18 decimals, 6 shared, peers set between all these chains.
+ */
+export const ZRO_OFT_ADDRESS = '0x6985884C4392D348587B19cb9eAAf157F13271cd';
+const zro = pool(ZRO_OFT_ADDRESS, ZRO_OFT_ADDRESS, 18);
+
+/** Canonical Stargate V2 Pool and Token Addresses (plus the ZRO OFT) */
 export const STARGATE_V2_POOLS: Partial<Record<LayerZeroChain, Partial<Record<StargateAsset, StargatePoolInfo>>>> = {
   arbitrum: {
     ETH: pool('0xA45B5130f36CDcA45667738e2a258AB09f4A5f7F', ethers.ZeroAddress, 18),
     USDC: pool('0xe8CDF27AcD73a434D661C84887215F7598e7d0d3', '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', 6),
     USDT: pool('0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0', '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9', 6),
+    ZRO: zro,
   },
   base: {
     ETH: pool('0xdc181Bd607330aeeBEF6ea62e03e5e1Fb4B6F7C7', ethers.ZeroAddress, 18),
     USDC: pool('0x27a16dc786820B16E5c9028b75B99F6f604b5d26', '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', 6),
+    ZRO: zro,
   },
   ethereum: {
     ETH: pool('0x77b2043768d28E9C9aB44E1aBfC95944bcE57931', ethers.ZeroAddress, 18),
     USDC: pool('0xc026395860Db2d07ee33e05fE50ed7bD583189C7', '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 6),
     USDT: pool('0x933597a323Eb81cAe705C5bC29985172fd5A3973', '0xdAC17F958D2ee523a2206206994597C13D831ec7', 6),
+    ZRO: zro,
   },
   optimism: {
     ETH: pool('0xe8CDF27AcD73a434D661C84887215F7598e7d0d3', ethers.ZeroAddress, 18),
     USDC: pool('0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0', '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', 6),
     USDT: pool('0x19cFCE47eD54a88614648DC3f19A5980097007dD', '0x94b008aA00579c1307B0EF2c499aD98a8ce58e58', 6),
+    ZRO: zro,
   },
   bsc: {
     USDC: pool('0x962Bd449E630b0d928f308Ce63f1A21F02576057', '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', 18),
     USDT: pool('0x138EB30f73BC423c6455C53df6D89CB01d9eBc63', '0x55d398326f99059fF775485246999027B3197955', 18),
+    ZRO: zro,
   },
   polygon: {
     USDC: pool('0x9Aa02D4Fae7F58b8E8f34c66E756cC734DAc7fe4', '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', 6),
     USDT: pool('0xd47b03ee6d86Cf251ee7860FB2ACf9f91B9fD4d7', '0xc2132D05D31c914a87C6611C10748AEb04B58e8F', 6),
+    ZRO: zro,
   },
 };
 

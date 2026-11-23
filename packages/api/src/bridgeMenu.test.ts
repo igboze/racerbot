@@ -72,4 +72,22 @@ describe('bridge menu', () => {
     const menu = await buildBridgeMenu(1);
     expect(buttons(menu).map((b) => b.data)).toContain('lz_route:base:zero:USDC:25.0');
   });
+
+  it('bridges ZRO between any two chains, with ZRO amounts', async () => {
+    quoteStargateSend.mockResolvedValue({ humanNativeFee: '0.000149', amountReceivedLD: 10n * 10n ** 18n, approxDurationSec: 45 });
+    const menu = await buildBridgeMenu(1, { sourceChain: 'arbitrum', destChain: 'bsc', asset: 'ZRO', amount: '10.0' });
+    const all = buttons(menu);
+    expect(all.find((b) => b.data === 'lz_asset:arbitrum:bsc:ZRO')?.text).toContain('✅');
+    expect(all.filter((b) => b.data.startsWith('lz_amt:')).map((b) => b.text)).toEqual(['5 ZRO', '✅ 10 ZRO', '25 ZRO', '50 ZRO']);
+    expect(all.map((b) => b.data)).toContain('lz_confirm:arbitrum:bsc:ZRO:10.0');
+    expect(menu.text).toContain('You receive: <b>~10.0000 ZRO</b>');
+  });
+
+  it('moves a route the asset cannot take to one it can (USDT is not on Base)', async () => {
+    quoteStargateSend.mockResolvedValue(goodQuote);
+    const menu = await buildBridgeMenu(1, { sourceChain: 'base', destChain: 'arbitrum', asset: 'USDT', amount: '25.0' });
+    const confirm = buttons(menu).find((b) => b.data.startsWith('lz_confirm:'))!.data;
+    expect(confirm).not.toContain(':base:');
+    expect(confirm).toMatch(/:USDT:25\.0$/);
+  });
 });

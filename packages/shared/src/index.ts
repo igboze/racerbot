@@ -594,6 +594,7 @@ export {
   verifySovereignEvmWallet,
   buildStargateSendParam,
   quoteStargateSend,
+  ZRO_OFT_ADDRESS,
   getBridgeChains,
   isBridgeChainEnabled,
 } from './layerZero.js';

@@ -52,6 +52,9 @@ export interface EvmChainBalance {
   usdtBalance: string;
   usdtBalanceRaw: bigint;
   usdtUsd: number;
+  zroBalance: string;
+  zroBalanceRaw: bigint;
+  zroUsd: number;
   totalUsd: number;
 }
 
@@ -197,7 +200,16 @@ export async function scanCrossChainEvmBalances(
         const usdtHuman = ethers.formatUnits(usdtRaw, usdtDecimals);
         const usdtUsd = parseFloat(usdtHuman);
 
-        const totalChainUsd = nativeUsd + usdcUsd + usdtUsd;
+        let zroRaw = 0n;
+        const zroPool = STARGATE_V2_POOLS[chain]?.ZRO;
+        if (zroPool) {
+          const zroContract = new ethers.Contract(zroPool.tokenAddress, ERC20_ABI, provider);
+          zroRaw = await zroContract.balanceOf(cleanAddr).catch(() => 0n);
+        }
+        const zroHuman = ethers.formatUnits(zroRaw, 18);
+        const zroUsd = parseFloat(zroHuman) * zroUsdPrice;
+
+        const totalChainUsd = nativeUsd + usdcUsd + usdtUsd + zroUsd;
         totalPortfolioUsd += totalChainUsd;
 
         balances[chain] = {
@@ -213,6 +225,9 @@ export async function scanCrossChainEvmBalances(
           usdtBalance: usdtHuman,
           usdtBalanceRaw: usdtRaw,
           usdtUsd,
+          zroBalance: zroHuman,
+          zroBalanceRaw: zroRaw,
+          zroUsd,
           totalUsd: totalChainUsd,
         };
       } catch (err: any) {
@@ -230,6 +245,9 @@ export async function scanCrossChainEvmBalances(
           usdtBalance: '0.0',
           usdtBalanceRaw: 0n,
           usdtUsd: 0,
+          zroBalance: '0.0',
+          zroBalanceRaw: 0n,
+          zroUsd: 0,
           totalUsd: 0,
         };
       }
@@ -338,7 +356,9 @@ export async function executeLayerZeroBridge(params: {
   }
 
   // Step 3: Handle ERC20 Approval if needed
-  if (!isNativeTransfer) {
+  // An OFT that is its own token (ZRO) burns from the sender directly: nothing to approve
+  const selfOft = poolInfo.poolAddress.toLowerCase() === poolInfo.tokenAddress.toLowerCase();
+  if (!isNativeTransfer && !selfOft) {
     const tokenContract = new ethers.Contract(poolInfo.tokenAddress, ERC20_ABI, wallet);
     const currentAllowance: bigint = await tokenContract.allowance(wallet.address, poolInfo.poolAddress);
     if (currentAllowance < amountLD) {
