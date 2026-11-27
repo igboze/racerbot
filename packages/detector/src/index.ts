@@ -165,10 +165,31 @@ async function main() {
     }
   }
 
-  // Steady-state polling loop: fetch next block from neardata with automatic RPC fallback on 429/5xx
+  // Steady-state polling loop: fetch next block from neardata with automatic fallback on 401/402/403/429/5xx
   let lastTipCheckAt = Date.now();
   let neardataCooldownUntil = 0;
+  let neardataAuthBypassUntil = 0;
+  let lastNeardataAuthWarnAt = 0;
   let cachedTipHeight = 0;
+  const fetchNeardataBlock = async (height: number): Promise<Response | null> => {
+    const useAuth = Date.now() >= neardataAuthBypassUntil && Boolean((process.env.FASTNEAR_API_KEY || '').trim());
+    const url = `https://mainnet.neardata.xyz/v0/block/${height}`;
+    let res = await fetch(url, {
+      headers: useAuth ? getNeardataHeaders() : undefined,
+      signal: AbortSignal.timeout(2500),
+    }).catch(() => null);
+    // If paid FastNEAR key is out of credits or rejected (401/402/403), bypass the key temporarily
+    // and retry unauthenticated so execution logs (BUY/SELL alerts & copy-trades) keep flowing.
+    if (useAuth && res && (res.status === 401 || res.status === 402 || res.status === 403)) {
+      neardataAuthBypassUntil = Date.now() + 5 * 60_000;
+      if (Date.now() - lastNeardataAuthWarnAt > 60_000) {
+        lastNeardataAuthWarnAt = Date.now();
+        logger.warn(`Neardata rejected FASTNEAR_API_KEY (HTTP ${res.status}) — check detector FASTNEAR_API_KEY; falling back to unauthenticated stream for 5m`);
+      }
+      res = await fetch(url, { signal: AbortSignal.timeout(2500) }).catch(() => null);
+    }
+    return res;
+  };
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -204,12 +225,7 @@ async function main() {
 
       const nextHeight = lastBlock + 1;
       const inNeardataCooldown = Date.now() < neardataCooldownUntil;
-      const res = inNeardataCooldown
-        ? null
-        : await fetch(`https://mainnet.neardata.xyz/v0/block/${nextHeight}`, {
-            headers: getNeardataHeaders(),
-            signal: AbortSignal.timeout(2500),
-          }).catch(() => null);
+      const res = inNeardataCooldown ? null : await fetchNeardataBlock(nextHeight);
 
       if (!inNeardataCooldown && res && res.status === 404) {
         if (Date.now() - lastTipCheckAt > 2_000 || cachedTipHeight === 0) {
@@ -231,10 +247,10 @@ async function main() {
       }
 
       // Neardata enforces 30 blocks/min on free tier (HTTP 429) while NEAR produces ~100 blocks/min,
-      // and may also time out (!res) or return 5xx.
-      // Fall back to standard NEAR JSON-RPC immediately so the detector never stalls behind real-time.
-      if (inNeardataCooldown || !res || res.status === 429 || res.status >= 500) {
-        if (!inNeardataCooldown && (!res || res.status === 429 || res.status >= 500)) {
+      // and may also time out (!res) or return 401/402/403/5xx.
+      // Fall back to standard NEAR JSON-RPC on ANY non-OK status so the detector never stalls.
+      if (inNeardataCooldown || !res || !res.ok) {
+        if (!inNeardataCooldown && (!res || !res.ok)) {
           neardataCooldownUntil = Date.now() + 2_500;
         }
         if (Date.now() - lastTipCheckAt > 3_000 || cachedTipHeight === 0 || nextHeight > cachedTipHeight) {
@@ -394,10 +410,14 @@ async function fetchBlockHeight(): Promise<number> {
 async function processBlock(height: number): Promise<void> {
   // 1. Primary high-speed path: FastNEAR Neardata stream (complete block with all shard outcomes and logs)
   try {
-    const neardataRes = await fetch(`https://mainnet.neardata.xyz/v0/block/${height}`, {
+    const neardataUrl = `https://mainnet.neardata.xyz/v0/block/${height}`;
+    let neardataRes = await fetch(neardataUrl, {
       headers: getNeardataHeaders(),
       signal: AbortSignal.timeout(3000),
     });
+    if (neardataRes.status === 401 || neardataRes.status === 402 || neardataRes.status === 403) {
+      neardataRes = await fetch(neardataUrl, { signal: AbortSignal.timeout(3000) });
+    }
     if (neardataRes.ok) {
       const blockData = (await neardataRes.json()) as any;
       const shards = blockData?.shards ?? [];
@@ -1052,6 +1072,41 @@ async function parseEventLog(log: string, receiverId: string, txHash?: string, s
         ).catch(() => {});
       }
     }
+  } else if (
+    (receiverId === 'nearlytrade.near' ||
+      receiverId === 'launchpad.justhoot.near' ||
+      receiverId === 'v2-launchpad.justhoot.near' ||
+      receiverId === 'launch.intear.near' ||
+      receiverId === 'launch-v2.intear.near' ||
+      receiverId === 'nearpumpfun.near' ||
+      receiverId.endsWith('.nearpumpfun.near')) &&
+    (eventName === 'sell' || eventName === 'launch_sell' || eventName === 'token_sold')
+  ) {
+    const sellItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
+    for (const item of sellItems) {
+      if (item) {
+        const tokenIn =
+          item.token_in ||
+          item.token_id ||
+          item.token ||
+          item.token_address ||
+          (receiverId.endsWith('.nearpumpfun.near') ? receiverId : '');
+        const amountIn = item.amount_in || item.token_amount || item.tokens_in || item.sold || item.amount;
+        const amountOut = item.amount_out || item.near_amount || item.received || item.payout;
+        await handleSwapEvent(
+          {
+            ...item,
+            token_in: tokenIn,
+            token_out: item.token_out || 'wrap.near',
+            amount_in: amountIn,
+            amount_out: amountOut,
+            signer_id: item.signer_id || item.seller || item.account_id || signerId,
+          },
+          receiverId,
+          txHash
+        ).catch(() => {});
+      }
+    }
   } else if (receiverId === 'meme-cooking.near' && eventName === 'deposit') {
     const depItems = Array.isArray(event?.data) ? event.data : (event?.data ? [event.data] : []);
     for (const item of depItems) {
@@ -1561,84 +1616,95 @@ async function handleSwapEvent(data: any, venue: string, txHash?: string): Promi
   redis.publish(CHANNELS.PRICE_UPDATE, JSON.stringify(update)).catch(() => {});
   redis.set(`token:price:${tokenAddress}`, JSON.stringify(update), 300).catch(() => {});
 
-  // ── Emit Group Buy Alert if this was a BUY of the token ───────────────────
-  if (isBuy) {
-    try {
-      const nearPriceUsd = await getNearUsdPrice().catch(() => 0);
-      const effectiveNearPrice = nearPriceUsd > 0 ? nearPriceUsd : 5.16;
-      let spentNear = 0;
+  // ── Emit Group Buy Alert & Public Channel Whale BUY/SELL Alert ───────────
+  try {
+    const nearPriceUsd = await getNearUsdPrice().catch(() => 0);
+    const effectiveNearPrice = nearPriceUsd > 0 ? nearPriceUsd : 5.16;
+    let tradeNear = 0;
 
+    if (isBuy) {
       if (isNearIn && data?.amount_in) {
-        spentNear = parseFloat(data.amount_in) / 1e24;
+        tradeNear = parseFloat(data.amount_in) / 1e24;
       } else if (data?.amount_out) {
         const tokensReceivedNum = parseFloat(data.amount_out) / Math.pow(10, decimals ?? 18);
-        spentNear = tokensReceivedNum * price;
+        tradeNear = tokensReceivedNum * price;
       }
-
-      const spentUsd = Math.round(spentNear * effectiveNearPrice * 100) / 100;
-
-      if (spentUsd > 0 && !isNaN(spentUsd)) {
-        const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
-        const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
-        const isTracked = activeBuyAlertTokens.size > 0 && activeBuyAlertTokens.has(tokenAddress.toLowerCase());
-        // Whale buys go to the public alerts channel only for NEAR meme tokens and only
-        // with a live NEAR price, so a fallback price or stablecoin/bridged token never fires.
-        const isChannelWhale =
-          nearPriceUsd > 0 &&
-          spentUsd >= NEAR_WHALE_CHANNEL_MIN_USD &&
-          !isNonMemeOrQuoteToken(tokenAddress, tokenSymbol, tokenName);
-
-        if (isTracked || isChannelWhale) {
-          const tokensReceivedNum = parseFloat(data?.amount_out || '0') / Math.pow(10, decimals ?? 18);
-          const tokensReceivedStr = tokensReceivedNum > 0
-            ? `${tokensReceivedNum.toLocaleString('en-US', { maximumFractionDigits: tokensReceivedNum >= 100 ? 0 : 2 })} ${tokenSymbol}`
-            : `0 ${tokenSymbol}`;
-          const buyer = data?.swapper || data?.account_id || data?.trader || data?.signer_id || 'Unknown';
-          const priceUsd = price * nearPriceUsd;
-          const marketCapUsd = marketCap * nearPriceUsd;
-
-          // Fetch buyer's NEAR balance for whale detection (non-fatal)
-          let buyerNearBalance: number | undefined;
-          if (buyer && buyer !== 'Unknown') {
-            try {
-              const rawBal = await near.getNearBalance(buyer).catch(() => null);
-              if (rawBal) {
-                const { utils: nearUtils } = await import('near-api-js');
-                buyerNearBalance = parseFloat(nearUtils.format.formatNearAmount(rawBal, 4));
-              }
-            } catch { /* non-fatal */ }
-          }
-
-          const buyAlert: BuyAlertEvent = {
-            type: 'buy_alert',
-            chain: 'near',
-            token_address: tokenAddress,
-            token_name: tokenName,
-            token_symbol: tokenSymbol,
-            buyer_address: buyer,
-            spent_amount_native: `${spentNear.toFixed(4)} NEAR`,
-            spent_usd: spentUsd,
-            tokens_received: tokensReceivedStr,
-            price_usd: priceUsd > 0 ? priceUsd : undefined,
-            market_cap_usd: marketCapUsd > 0 ? marketCapUsd : undefined,
-            buyer_near_balance: buyerNearBalance,
-            tx_hash: txHash || '',
-            timestamp: Date.now(),
-          };
-
-          logger.info(`[DETECTOR] Emitting on-chain BUY alert for ${tokenAddress}: $${spentUsd} USD by ${buyer}`, {
-            tokenAddress,
-            spentUsd,
-            buyer,
-            txHash,
-          });
-
-          await redis.publish(CHANNELS.BUY_ALERT, JSON.stringify(buyAlert)).catch(() => {});
-        }
+    } else {
+      if (isNearOut && data?.amount_out) {
+        tradeNear = parseFloat(data.amount_out) / 1e24;
+      } else if (data?.amount_in) {
+        const tokensSoldNum = parseFloat(data.amount_in) / Math.pow(10, decimals ?? 18);
+        tradeNear = tokensSoldNum * price;
       }
-    } catch (err: any) {
-      logger.warn('[DETECTOR] Failed to process buy alert for swap', { error: err?.message });
     }
+
+    const tradeUsd = Math.round(tradeNear * effectiveNearPrice * 100) / 100;
+
+    if (tradeUsd > 0 && !isNaN(tradeUsd)) {
+      const tokenName = dbCache?.name || tokenNameCache.get(tokenAddress)?.name || tokenAddress;
+      const tokenSymbol = dbCache?.symbol || tokenNameCache.get(tokenAddress)?.symbol || 'TOKEN';
+      const isTrackedBuy = isBuy && activeBuyAlertTokens.size > 0 && activeBuyAlertTokens.has(tokenAddress.toLowerCase());
+      // Whale buys & sells go to the public alerts channel only for NEAR meme tokens and only
+      // with a live NEAR price, so a fallback price or stablecoin/bridged token never fires.
+      const isChannelWhale =
+        nearPriceUsd > 0 &&
+        tradeUsd >= NEAR_WHALE_CHANNEL_MIN_USD &&
+        !isNonMemeOrQuoteToken(tokenAddress, tokenSymbol, tokenName);
+
+      if (isTrackedBuy || isChannelWhale) {
+        const rawTokenAmt = isBuy ? (data?.amount_out || '0') : (data?.amount_in || '0');
+        const tokensNum = parseFloat(rawTokenAmt) / Math.pow(10, decimals ?? 18);
+        const tokensStr = tokensNum > 0
+          ? `${tokensNum.toLocaleString('en-US', { maximumFractionDigits: tokensNum >= 100 ? 0 : 2 })} ${tokenSymbol}`
+          : `0 ${tokenSymbol}`;
+        const trader = data?.swapper || data?.account_id || data?.trader || data?.signer_id || 'Unknown';
+        const priceUsd = price * nearPriceUsd;
+        const marketCapUsd = marketCap * nearPriceUsd;
+
+        // Fetch trader's NEAR balance for whale detection (non-fatal)
+        let traderNearBalance: number | undefined;
+        if (trader && trader !== 'Unknown') {
+          try {
+            const rawBal = await near.getNearBalance(trader).catch(() => null);
+            if (rawBal) {
+              const { utils: nearUtils } = await import('near-api-js');
+              traderNearBalance = parseFloat(nearUtils.format.formatNearAmount(rawBal, 4));
+            }
+          } catch { /* non-fatal */ }
+        }
+
+        const side: 'buy' | 'sell' = isBuy ? 'buy' : 'sell';
+        const buyAlert: BuyAlertEvent = {
+          type: 'buy_alert',
+          side,
+          chain: 'near',
+          token_address: tokenAddress,
+          token_name: tokenName,
+          token_symbol: tokenSymbol,
+          buyer_address: trader,
+          spent_amount_native: `${tradeNear.toFixed(4)} NEAR`,
+          spent_usd: tradeUsd,
+          tokens_received: tokensStr,
+          price_usd: priceUsd > 0 ? priceUsd : undefined,
+          market_cap_usd: marketCapUsd > 0 ? marketCapUsd : undefined,
+          buyer_near_balance: traderNearBalance,
+          tx_hash: txHash || '',
+          timestamp: Date.now(),
+        };
+
+        logger.info(`[DETECTOR] Emitting on-chain ${side.toUpperCase()} alert for ${tokenAddress}: $${tradeUsd} USD by ${trader}`, {
+          tokenAddress,
+          side,
+          spentUsd: tradeUsd,
+          buyer: trader,
+          txHash,
+        });
+
+        await redis.publish(CHANNELS.BUY_ALERT, JSON.stringify(buyAlert)).catch(() => {});
+      }
+    }
+  } catch (err: any) {
+    logger.warn('[DETECTOR] Failed to process trade alert for swap', { error: err?.message });
   }
 }
 

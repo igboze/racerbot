@@ -163,6 +163,8 @@ export interface NotifyUserEvent {
 
 export interface BuyAlertEvent {
   type: 'buy_alert';
+  /** Trade direction for channel alerts (defaults to 'buy' when omitted). */
+  side?: 'buy' | 'sell';
   chain: 'near' | 'sui' | 'starknet';
   token_address: string;
   token_name: string;

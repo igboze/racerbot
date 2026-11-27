@@ -493,5 +493,58 @@ describe('Group Buy Alerts Engine', () => {
 
       expect(mockSendMessage).not.toHaveBeenCalled();
     });
+
+    it('broadcasts NEAR meme whale sells to @racerbotalert and skips community group buy alerts', async () => {
+      const mockSendMessage = vi.fn().mockResolvedValue({});
+      const mockBot: any = {
+        botInfo: { username: 'racertradingbot' },
+        telegram: { sendMessage: mockSendMessage },
+      };
+      (await import('./buyAlerts.js')).setBotInstance(mockBot);
+      vi.mocked(db.getGroupBuyAlertsByToken).mockResolvedValue([
+        {
+          id: 'ba-group-1',
+          chat_id: '-1001234567890',
+          chat_title: 'Dragon Chat',
+          admin_id: '12345',
+          token_address: 'blackdragon.tkn.near',
+          chain: 'near',
+          min_buy_usd: 5.0,
+          emoji: '🏎️',
+          emoji_step_usd: 5.0,
+          media_type: 'none',
+          whale_threshold_usd: 200.0,
+          is_active: true,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+
+      await dispatchBuyAlert({
+        type: 'buy_alert',
+        side: 'sell',
+        chain: 'near',
+        token_address: 'blackdragon.tkn.near',
+        token_name: 'Black Dragon',
+        token_symbol: 'BLACKDRAGON',
+        buyer_address: 'dragonseller.near',
+        spent_amount_native: '300.0000 NEAR',
+        spent_usd: 900.00,
+        tokens_received: '30,000,000,000 BLACKDRAGON',
+        price_usd: 0.00000003,
+        market_cap_usd: 3000000,
+        tx_hash: 'tx-dragon-sell-1',
+        timestamp: Date.now(),
+      });
+
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+      const [channel, msgText, extra] = mockSendMessage.mock.calls[0];
+      expect(channel).toBe('@racerbotalert');
+      expect(msgText).toContain('<b>BLACK DRAGON SELL!</b>');
+      expect(msgText).toContain('<b>Received:</b> <b>$900.00</b>');
+      expect(msgText).toContain('<b>Sold:</b> <b>30,000,000,000 BLACKDRAGON</b>');
+      expect(msgText).toContain('<b>Seller:</b> <code>dragonseller.near</code>');
+      expect(extra.reply_markup.inline_keyboard[0][0].text).toBe('⚡ Trade $BLACKDRAGON on RacerBot');
+    });
   });
 });

@@ -357,6 +357,15 @@ export function getBuyAlertEmojiTheme(spentUsd: number): BuyAlertEmojiTheme {
   return { emoji: '🏎️', headerIcon: '🏎️💨', endEmoji: '🏁', tierLabel: 'BUY' };
 }
 
+export function getSellAlertEmojiTheme(usdValue: number): BuyAlertEmojiTheme {
+  const v = Number.isFinite(usdValue) && usdValue > 0 ? usdValue : 0;
+  if (v >= 25_000) return { emoji: '🐋', headerIcon: '🚨🐋', endEmoji: '🩸', tierLabel: 'WHALE SELL' };
+  if (v >= 10_000) return { emoji: '🩸', headerIcon: '🚨🩸', endEmoji: '📉', tierLabel: 'MEGA SELL' };
+  if (v >= 5_000)  return { emoji: '🔻', headerIcon: '🔻', endEmoji: '📉', tierLabel: 'HEAVY SELL' };
+  if (v >= 2_000)  return { emoji: '🔴', headerIcon: '🔴', endEmoji: '📉', tierLabel: 'BIG SELL' };
+  return { emoji: '🔴', headerIcon: '🔴🔻', endEmoji: '📉', tierLabel: 'SELL' };
+}
+
 export function generateEmojiWaterfall(spentUsd: number, emoji?: string, endEmoji?: string): string {
   const theme = getBuyAlertEmojiTheme(spentUsd);
   const activeEmoji = (!emoji || emoji === '🟢' || emoji === '🪙') ? theme.emoji : emoji;
@@ -478,8 +487,11 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     ? resolvedName.trim()
     : (event.token_address.split('.')[0] || symbol).toUpperCase();
 
-  const theme = getBuyAlertEmojiTheme(event.spent_usd);
-  const headingTitle = `${escapeHtml(cleanName.toUpperCase())} BUY!`;
+  const isSell = event.side === 'sell';
+  const theme = isSell
+    ? getSellAlertEmojiTheme(event.spent_usd)
+    : getBuyAlertEmojiTheme(event.spent_usd);
+  const headingTitle = `${escapeHtml(cleanName.toUpperCase())} ${isSell ? 'SELL!' : 'BUY!'}`;
 
   const whaleBar = generateEmojiWaterfall(event.spent_usd, theme.emoji, theme.endEmoji);
 
@@ -500,18 +512,22 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
   const isBondingCurve = event.token_address.endsWith('.nearlytrade.near') || event.token_address.endsWith('.meme-cooking.near');
   const mcapFormatted = formatDisplayMarketCap(mcapUsd, isBondingCurve);
 
+  const valueLabel = isSell ? 'Received' : 'Spent';
+  const qtyLabel = isSell ? 'Sold' : 'Bought';
+  const actorLabel = isSell ? 'Seller' : 'Buyer';
+
   const text =
     `${theme.headerIcon} <b>${headingTitle}</b>\n` +
     `${whaleBar}\n\n` +
     `<blockquote>` +
-    `💰 <b>Spent:</b> <b>$${spentUsdStr}</b> <code>(${escapeHtml(spentNativeClean)})</code>\n` +
-    `📦 <b>Bought:</b> <b>${escapeHtml(event.tokens_received)}</b>\n` +
+    `💰 <b>${valueLabel}:</b> <b>$${spentUsdStr}</b> <code>(${escapeHtml(spentNativeClean)})</code>\n` +
+    `📦 <b>${qtyLabel}:</b> <b>${escapeHtml(event.tokens_received)}</b>\n` +
     (priceFormatted ? `💵 <b>Price:</b> <code>$${priceFormatted}</code>\n` : '') +
     (mcapFormatted ? `📊 <b>Market Cap:</b> ${mcapFormatted}\n` : '') +
     `🏛️ <b>Venue:</b> ${venueLabel}` +
     `</blockquote>\n\n` +
     `🪙 <b>Token:</b> <b>${escapeHtml(cleanName)}</b> (<code>$${escapeHtml(symbol)}</code>)\n` +
-    `👤 <b>Buyer:</b> ${buyerDisplay}${buyerBalSuffix}\n` +
+    `👤 <b>${actorLabel}:</b> ${buyerDisplay}${buyerBalSuffix}\n` +
     `📄 <b>CA:</b> <code>${escapeHtml(event.token_address)}</code>`;
 
   const explorerUrl = event.tx_hash
@@ -522,9 +538,9 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     : `https://dexscreener.com/near/${event.token_address}`;
   const buyDeepLink = `https://t.me/${botUsername}?start=${getShortTokenKey(event.token_address)}`;
 
-  // Buyer is already a link in the text, so two buttons are enough here.
+  // Buyer/seller is already shown in the text, so two buttons are enough here.
   const keyboard = Markup.inlineKeyboard([
-    [Markup.button.url(`⚡ Buy $${symbol} on RacerBot`, buyDeepLink)],
+    [Markup.button.url(`⚡ ${isSell ? 'Trade' : 'Buy'} $${symbol} on RacerBot`, buyDeepLink)],
     [
       Markup.button.url('📈 Chart', chartUrl),
       Markup.button.url('🔍 Tx', explorerUrl),
@@ -536,7 +552,7 @@ async function sendNearWhaleChannelAlert(event: BuyAlertEvent): Promise<void> {
     link_preview_options: { is_disabled: true },
     ...keyboard,
   });
-  console.log(`[BUY_ALERTS] NEAR meme whale buy posted to ${NEAR_WHALE_CHANNEL}: $${event.spent_usd.toFixed(2)} on ${cleanName} (${symbol})`);
+  console.log(`[BUY_ALERTS] NEAR meme whale ${isSell ? 'sell' : 'buy'} posted to ${NEAR_WHALE_CHANNEL}: $${event.spent_usd.toFixed(2)} on ${cleanName} (${symbol})`);
 }
 
 /**
@@ -639,10 +655,11 @@ async function sendNearTokenLaunchChannelAlert(event: {
 export async function dispatchBuyAlert(event: BuyAlertEvent): Promise<void> {
   if (!_bot) return;
 
-  // Deduplicate alerts across executor and detector streams
+  // Deduplicate alerts across executor and detector streams (keyed by side so buy+sell in one tx don't collide)
+  const side = event.side === 'sell' ? 'sell' : 'buy';
   const dedupKey = event.tx_hash
-    ? `${event.tx_hash}:${event.token_address.toLowerCase()}`
-    : `${event.token_address.toLowerCase()}:${event.buyer_address}:${event.spent_amount_native}:${Math.floor(event.timestamp / 5000)}`;
+    ? `${side}:${event.tx_hash}:${event.token_address.toLowerCase()}`
+    : `${side}:${event.token_address.toLowerCase()}:${event.buyer_address}:${event.spent_amount_native}:${Math.floor(event.timestamp / 5000)}`;
 
   const now = Date.now();
   if (seenBuyAlerts.has(dedupKey) && (now - (seenBuyAlerts.get(dedupKey) || 0)) < 300_000) {
@@ -656,13 +673,16 @@ export async function dispatchBuyAlert(event: BuyAlertEvent): Promise<void> {
     }
   }
 
-  // Only NEAR whale buys ($500+) go to the public alerts channel.
-  // Starknet buys are intentionally NOT posted there any more.
+  // Only NEAR meme whale buys & sells ($500+) go to the public alerts channel.
+  // Starknet trades are intentionally NOT posted there any more.
   if (event.chain === 'near' && event.spent_usd >= NEAR_WHALE_CHANNEL_MIN_USD) {
     await sendNearWhaleChannelAlert(event).catch((e: any) =>
       console.warn('[BUY_ALERTS] NEAR whale channel broadcast failed:', e?.message)
     );
   }
+
+  // Community group buy-alert chats only track buys (not sells)
+  if (side === 'sell') return;
 
   const alerts = await getGroupBuyAlertsByToken(event.token_address).catch(() => []);
   if (!alerts || alerts.length === 0) return;
