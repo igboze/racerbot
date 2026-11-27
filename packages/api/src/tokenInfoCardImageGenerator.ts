@@ -94,7 +94,9 @@ export async function resolveTokenIconDataUri(tokenAddress: string, iconCandidat
   // Fallback: query FastNear metadata if candidate is missing and it's a NEAR token
   if (!src && normKey && !normKey.includes('::') && !normKey.startsWith('0x')) {
     try {
+      const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
       const res = await fetch(`https://api.fastnear.com/v1/ft/${encodeURIComponent(normKey)}`, {
+        headers: fastnearKey ? { Authorization: `Bearer ${fastnearKey}` } : undefined,
         signal: AbortSignal.timeout(1000),
       });
       if (res.ok) {

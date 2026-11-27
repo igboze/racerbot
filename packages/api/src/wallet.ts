@@ -179,10 +179,9 @@ export function formatNearRpcUrl(url: string): string {
     cleanUrl = cleanUrl.replace(DEPRECATED_FASTNEAR_KEY, fastnearApiKey);
   }
   if (cleanUrl.includes('rpc.mainnet.fastnear.com') && hasFastnearKey) {
-    if (!cleanUrl.includes('apiKey=')) {
-      const sep = cleanUrl.includes('?') ? '&' : '?';
-      cleanUrl = `${cleanUrl}${sep}apiKey=${fastnearApiKey}`;
-    }
+    const cleanBase = cleanUrl.replace(/([?&])apiKey=[^&]*/i, '$1').replace(/[?&]$/, '');
+    const sep = cleanBase.includes('?') ? '&' : '?';
+    cleanUrl = `${cleanBase}${sep}apiKey=${fastnearApiKey}`;
   }
   return cleanUrl;
 }
@@ -5426,7 +5425,10 @@ export async function syncUserTokenDeposits(userId: string, subaccountId: string
               const timeout = setTimeout(() => controller.abort(), indexerTimeoutMs);
               const apiKey = fastnearApiKey;
               const url = `https://api.fastnear.com/v1/account/${subaccountId}/ft${apiKey ? `?api_key=${apiKey}` : ''}`;
-              const res = await fetch(url, { signal: controller.signal });
+              const res = await fetch(url, {
+                headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+                signal: controller.signal,
+              });
               clearTimeout(timeout);
               if (res.ok) {
                 const parsed = (await res.json()) as any;
@@ -5978,7 +5980,10 @@ export async function findAccountsForNearPublicKey(publicKey: string): Promise<s
           const timeout = setTimeout(() => controller.abort(), 4000);
           const apiKey = fastnearApiKey;
           const url = `https://api.fastnear.com/v1/public_key/${encodeURIComponent(publicKey)}${apiKey ? `?api_key=${apiKey}` : ''}`;
-          const res = await fetch(url, { signal: controller.signal });
+          const res = await fetch(url, {
+            headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+            signal: controller.signal,
+          });
           clearTimeout(timeout);
           if (res.ok) {
             const data = (await res.json()) as any;

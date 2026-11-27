@@ -76,6 +76,18 @@ let activeRpcIndex = 0;
 function getNextRpcUrl(): string {
   return RPC_CANDIDATES[activeRpcIndex % RPC_CANDIDATES.length] || 'https://free.rpc.fastnear.com';
 }
+function createExecutorRpcProvider(rpcUrl: string): JsonRpcProvider {
+  const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
+  const isPaidFastnear = rpcUrl.includes('rpc.mainnet.fastnear.com');
+  if (isPaidFastnear && fastnearKey) {
+    const cleanUrl = rpcUrl.replace(/([?&])apiKey=[^&]*/i, '$1').replace(/[?&]$/, '');
+    return new JsonRpcProvider({
+      url: cleanUrl,
+      headers: { Authorization: `Bearer ${fastnearKey}` },
+    });
+  }
+  return new JsonRpcProvider({ url: rpcUrl });
+}
 const RPC_URL = getNextRpcUrl();
 const MASTER_KEY = process.env.KEY_ENCRYPTION_MASTER_KEY || process.env.ENCRYPTION_MASTER_KEY || '';
 
@@ -169,7 +181,7 @@ async function controllerTx(receiver: string, txActions: any[]): Promise<any> {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const currentRpc = getNextRpcUrl();
       try {
-        lane.account = new Account(EXECUTOR_CONTROLLER, new JsonRpcProvider({ url: currentRpc }), lane.key as any);
+        lane.account = new Account(EXECUTOR_CONTROLLER, createExecutorRpcProvider(currentRpc), lane.key as any);
         const result = await lane.account.signAndSendTransaction({ receiverId: receiver, actions: txActions, throwOnFailure: false });
         const outcomeErr = failureOf(result);
         const errStr = JSON.stringify(result || '');

@@ -468,12 +468,19 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
     throw new Error('The NEAR wallet signature is invalid.');
   }
 
+  const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
+  const formatCandidate = (u: string): string => {
+    if (!fastnearKey || !u.includes('rpc.mainnet.fastnear.com')) return u;
+    const base = u.replace(/([?&])apiKey=[^&]*/i, '$1').replace(/[?&]$/, '');
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}apiKey=${fastnearKey}`;
+  };
   const rpcCandidates = [
     process.env.NEAR_RPC_URL,
     ...(process.env.RPC_PROVIDERS || '').split(',').map(s => s.trim()),
     'https://rpc.mainnet.fastnear.com',
     'https://near.drpc.org',
-  ].filter((u): u is string => Boolean(u));
+  ].filter((u): u is string => Boolean(u)).map(formatCandidate);
 
   let ownsAccountKey = false;
   let lastRpcErr: any = null;
@@ -501,7 +508,11 @@ export async function verifyWalletAuthProof(proof: WalletAuthProof): Promise<{ c
     for (const nodeUrl of rpcCandidates) {
       try {
         const { providers } = await import('near-api-js');
-        const p = new providers.JsonRpcProvider({ url: nodeUrl });
+        const isPaidFastnear = nodeUrl.includes('rpc.mainnet.fastnear.com');
+        const p = new providers.JsonRpcProvider({
+          url: nodeUrl,
+          headers: isPaidFastnear && fastnearKey ? { Authorization: `Bearer ${fastnearKey}` } : undefined,
+        });
         const keyInfo = await p.query<any>({
           request_type: 'view_access_key',
           finality: 'final',

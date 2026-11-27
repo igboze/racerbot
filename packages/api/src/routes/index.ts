@@ -3126,7 +3126,10 @@ router.get('/wallet-forensics/:account', async (req, res) => {
     try {
       const bRes = await fetch('https://rpc.mainnet.fastnear.com', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(fastNearKey ? { Authorization: `Bearer ${fastNearKey}` } : {}),
+        },
         body: JSON.stringify({ jsonrpc: '2.0', id: 'bh', method: 'block', params: { finality: 'final' } }),
         signal: AbortSignal.timeout(1500),
       });

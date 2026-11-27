@@ -18,6 +18,10 @@ import { Account, JsonRpcProvider } from 'near-api-js-v7';
 const send = process.argv.includes('--send');
 
 const RPC = process.env.DEPLOY_RPC_URL || 'https://rpc.mainnet.fastnear.com';
+const FASTNEAR_API_KEY = (process.env.FASTNEAR_API_KEY || '').trim();
+const RPC_HEADERS = RPC.includes('rpc.mainnet.fastnear.com') && FASTNEAR_API_KEY
+  ? { Authorization: `Bearer ${FASTNEAR_API_KEY}` }
+  : undefined;
 // The global deploy burns NEAR from this account; the controller is the usual payer
 const deployerId = process.env.DEPLOYER_ACCOUNT_ID || process.env.EXECUTOR_CONTROLLER_ACCOUNT_ID || process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
 const deployerKey = (process.env.DEPLOYER_PRIVATE_KEY || process.env.EXECUTOR_CONTROLLER_PRIVATE_KEY || process.env.RELAYER_PRIVATE_KEY || '').trim();
@@ -27,7 +31,7 @@ const GLOBAL_BYTE_COST = 10n ** 20n; // 0.0001 NEAR per byte, burnt
 const near = (y) => (Number(BigInt(y) / 10n ** 18n) / 1e6).toFixed(4);
 
 async function viewAccount(id) {
-  const res = await fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  const res = await fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(RPC_HEADERS || {}) },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'query', params: { request_type: 'view_account', finality: 'final', account_id: id } }) });
   const j = await res.json();
   return j.error ? null : j.result;
@@ -53,7 +57,7 @@ if (!send) {
   console.log('Preview only. Re-run with --send to deploy.');
 } else {
   if (!deployerKey) throw new Error('Deployer key (DEPLOYER_PRIVATE_KEY, EXECUTOR_CONTROLLER_PRIVATE_KEY or RELAYER_PRIVATE_KEY) is not set');
-  const acct = new Account(deployerId, new JsonRpcProvider({ url: RPC }), deployerKey);
+  const acct = new Account(deployerId, new JsonRpcProvider({ url: RPC, headers: RPC_HEADERS }), deployerKey);
   const res = await acct.deployGlobalContract(new Uint8Array(code), 'codeHash');
   const tx = res?.transaction?.hash || res?.transaction_outcome?.id;
   console.log(`Deployed: ${tx ? `https://nearblocks.io/txns/${tx}` : '(no hash)'}`);

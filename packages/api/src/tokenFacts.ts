@@ -12,7 +12,6 @@ import { createLogger, getNear } from '@racerbot/shared';
 
 const logger = createLogger('token-facts');
 
-const FASTNEAR_KEY = (process.env.FASTNEAR_API_KEY || '').trim();
 const FASTNEAR_RPC = 'https://rpc.mainnet.fastnear.com';
 const FASTNEAR_TX_API = process.env.FASTNEAR_TX_API_URL || 'https://tx.main.fastnear.com';
 const REQUEST_TIMEOUT_MS = 6_000;
@@ -39,10 +38,13 @@ const queue: string[] = [];
 const queued = new Set<string>();
 let workers = 0;
 
-const authHeaders = (): Record<string, string> => ({
-  'Content-Type': 'application/json',
-  ...(FASTNEAR_KEY ? { Authorization: `Bearer ${FASTNEAR_KEY}` } : {}),
-});
+const authHeaders = (): Record<string, string> => {
+  const key = (process.env.FASTNEAR_API_KEY || '').trim();
+  return {
+    'Content-Type': 'application/json',
+    ...(key ? { Authorization: `Bearer ${key}` } : {}),
+  };
+};
 
 class MissingAccount extends Error {}
 

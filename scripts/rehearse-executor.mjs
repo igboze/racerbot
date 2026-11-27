@@ -28,6 +28,10 @@ const send = argv.includes('--send');
 const opt = (name) => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : undefined; };
 
 const RPC = process.env.DEPLOY_RPC_URL || 'https://rpc.mainnet.fastnear.com';
+const FASTNEAR_API_KEY = (process.env.FASTNEAR_API_KEY || '').trim();
+const RPC_HEADERS = RPC.includes('rpc.mainnet.fastnear.com') && FASTNEAR_API_KEY
+  ? { Authorization: `Bearer ${FASTNEAR_API_KEY}` }
+  : undefined;
 const ownerId = process.env.RACERBOT_PARENT_ACCOUNT || 'racerbot.near';
 const ownerKey = (process.env.RELAYER_PRIVATE_KEY || process.env.MAIN_WALLET_PRIVATE_KEY || '').trim();
 const execId = `${opt('name') || 'rehearse1'}.${ownerId}`;
@@ -90,9 +94,9 @@ function plan(buy, amount) {
 }
 
 // ── Chain helpers ─────────────────────────────────────────────────────────────
-const provider = new JsonRpcProvider({ url: RPC });
+const provider = new JsonRpcProvider({ url: RPC, headers: RPC_HEADERS });
 async function rpc(method, params) {
-  const res = await fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+  const res = await fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(RPC_HEADERS || {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
   const j = await res.json();
   if (j.error) throw new Error(JSON.stringify(j.error));
   return j.result;

@@ -418,15 +418,13 @@ export class MultiRpcNear {
       ? Array.from(new Set(allowedUrls))
       : fallbackUrls;
 
-    const fastnearPaidEndpoint = hasValidKey
-      ? `https://rpc.mainnet.fastnear.com?apiKey=${apiKey}`
-      : 'https://rpc.mainnet.fastnear.com';
-
     const normalizedUrls = sanitizedUrls
       .filter(u => !u.includes('near.org'))
       .map(u => {
-        if (u.includes('rpc.mainnet.fastnear.com') && hasValidKey && !u.includes('apiKey=')) {
-          return fastnearPaidEndpoint;
+        if (u.includes('rpc.mainnet.fastnear.com') && hasValidKey) {
+          const cleanBase = u.replace(/([?&])apiKey=[^&]*(&)?/gi, (_, p, t) => (t ? p : '')).replace(/[?&]$/, '');
+          const sep = cleanBase.includes('?') ? '&' : '?';
+          return `${cleanBase}${sep}apiKey=${apiKey}`;
         }
         return u;
       });
@@ -545,9 +543,10 @@ export class MultiRpcNear {
     }
     const isMainnetFastnear = nodeUrl.includes('rpc.mainnet.fastnear.com');
 
-    if (isMainnetFastnear && hasValidKey && !nodeUrl.includes('apiKey=')) {
-      const sep = nodeUrl.includes('?') ? '&' : '?';
-      nodeUrl = `${nodeUrl}${sep}apiKey=${apiKey}`;
+    if (isMainnetFastnear && hasValidKey) {
+      const cleanBase = nodeUrl.replace(/([?&])apiKey=[^&]*/i, '$1').replace(/[?&]$/, '');
+      const sep = cleanBase.includes('?') ? '&' : '?';
+      nodeUrl = `${cleanBase}${sep}apiKey=${apiKey}`;
     }
 
     const conn = await connect({
@@ -5926,7 +5925,10 @@ export async function getFastnearAccountTokens(
   if (inflight) return inflight;
 
   const promise = (async () => {
-    const res = await fetch(`${apiUrl}/v1/account/${accountId}/ft`);
+    const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    const res = await fetch(`${apiUrl}/v1/account/${accountId}/ft`, {
+      headers: fastnearKey ? { Authorization: `Bearer ${fastnearKey}` } : undefined,
+    });
     if (!res.ok) throw new Error(`FastNEAR API error: ${res.statusText}`);
     const data = (await res.json()) as { account_id: string; contract_ids: string[] };
     fastnearTokensCache.set(cacheKey, { at: Date.now(), data });
@@ -5958,7 +5960,10 @@ export async function getFastnearPublicKeyAccounts(
   if (inflight) return inflight;
 
   const promise = (async () => {
-    const res = await fetch(`${apiUrl}/v0/public_key/${publicKey}/all`);
+    const fastnearKey = (process.env.FASTNEAR_API_KEY || '').trim();
+    const res = await fetch(`${apiUrl}/v0/public_key/${publicKey}/all`, {
+      headers: fastnearKey ? { Authorization: `Bearer ${fastnearKey}` } : undefined,
+    });
     if (!res.ok) throw new Error(`FastNEAR API error: ${res.statusText}`);
     const data = (await res.json()) as { public_key: string; account_ids: string[] };
     fastnearPkCache.set(cacheKey, { at: Date.now(), data });
